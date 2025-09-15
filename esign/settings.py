@@ -161,6 +161,20 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# File storage
+# Development: use local file system storage (default)
+DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+
+# AWS S3 configuration (prepare for production; keep disabled in dev)
+# To enable later, install and configure:
+#   pip install django-storages boto3
+#   set DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+# and provide the credentials below via environment variables.
+AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
+AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
+AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
+AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
+
 
 # Custom user model
 AUTH_USER_MODEL = 'users.CustomUser'
