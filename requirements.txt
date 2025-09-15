@@ -10,4 +10,4 @@ pytest-django
 django-cors-headers
 django-storages
 boto3
-PyPDF2
+pypdf
