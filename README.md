@@ -20,4 +20,13 @@ A Django-based e-signature platform inspired by SignNow and DocuSign.
 5. Start the development server
    - python manage.py runserver
 
+### Auth Service
+
+JWT-based authentication endpoints:
+
+- POST /auth/register/
+- POST /auth/login/
+- POST /auth/logout/
+- GET /auth/profile/
+
 

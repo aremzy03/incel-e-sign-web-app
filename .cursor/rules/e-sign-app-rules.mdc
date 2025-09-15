@@ -1,0 +1,194 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+Project Cursor Rules for the E-Sign Application
+1. General Programming Practices
+
+Consistency over cleverness: Prioritize readability over fancy tricks. Anyone on the team should be able to glance at the code and understand what’s happening.
+
+Follow DRY (“Don’t Repeat Yourself”): Abstract reusable logic into helper functions or services.
+
+Fail fast, fail loud: Don’t silently ignore errors. Raise exceptions or return error responses explicitly.
+
+Use environment configs: Secrets (API keys, database URLs, signing certificates) must be in .env files, never hard-coded.
+
+2. Naming Conventions
+
+Variables:
+
+Use snake_case for Python, camelCase for JavaScript/TypeScript.
+
+Be descriptive: user_id, not u; signed_document_url, not sdUrl.
+
+Functions/Methods:
+
+Action-oriented verbs: upload_document(), generate_signature(), verify_user().
+
+Keep them short but explicit.
+
+Classes:
+
+Use PascalCase: DocumentManager, UserAuthService.
+
+Constants:
+
+Uppercase with underscores: MAX_FILE_SIZE_MB = 25.
+
+Database fields (schema):
+
+Singular, descriptive, consistent with API naming: user_id, created_at, document_status.
+
+3. Comments & Documentation
+
+Module header: At the top of every file, state its purpose in 1–2 lines.
+
+Function docstrings:
+
+def verify_signature(doc_id: str, user_id: str) -> bool:
+    """
+    Verifies whether the given document was signed by the specified user.
+
+    Args:
+        doc_id (str): The unique ID of the document.
+        user_id (str): The unique ID of the user.
+
+    Returns:
+        bool: True if verified, False otherwise.
+    """
+
+
+Inline comments: Explain why, not what.
+
+# Retry needed because external API sometimes drops requests
+response = api.send(payload)
+
+
+TODOs: Use # TODO: or // TODO: with your initials and date.
+
+4. Git & Branching
+
+Branch naming:
+
+feature/api-document-upload
+
+bugfix/fix-signature-placement
+
+chore/refactor-folder-structure
+
+Commits: Write atomic, meaningful messages. Example:
+
+✅ feat: add API endpoint for document upload
+
+❌ update stuff
+
+5. API Rules
+
+REST endpoints:
+
+/api/v1/users/login
+
+/api/v1/documents/{id}/sign
+
+/api/v1/documents/{id}/status
+
+Status codes:
+
+200 for success,
+
+400 for client errors,
+
+401 unauthorized,
+
+500 server error.
+
+Responses: Always return structured JSON:
+
+{
+  "success": true,
+  "message": "Document signed successfully",
+  "data": {
+      "document_id": "12345",
+      "status": "signed"
+  }
+}
+
+6. Tests & Test Cases
+
+Test structure:
+
+tests/ folder mirrors project structure.
+
+One test file per module: test_document_service.py.
+
+Naming:
+
+Functions: test_upload_valid_document().
+
+Should read like a sentence.
+
+Types of tests:
+
+Unit tests: Test isolated logic (e.g., hash generation).
+
+Integration tests: Test APIs with DB.
+
+E2E tests: Mock user flows (upload → sign → verify → download).
+
+Coverage goals: 80%+ for MVP, 90% for production.
+
+Example test (pytest style):
+
+def test_upload_invalid_file_format(client):
+    response = client.post("/api/v1/documents/upload", files={"file": "test.txt"})
+    assert response.status_code == 400
+    assert response.json()["message"] == "Unsupported file type"
+
+7. Debugging Practices
+
+Logs, not prints: Use logging with levels (DEBUG, INFO, WARNING, ERROR).
+
+Trace IDs: Tag logs with request_id or document_id to trace multi-step flows.
+
+Error handling: Wrap risky blocks with try/except and log details before raising.
+
+Reproduce bugs: Always create a failing test case before fixing a bug.
+
+8. Folder Structure (from PRD)
+e-sign-app/
+│── src/
+│   ├── api/
+│   │   ├── routes/
+│   │   ├── controllers/
+│   │   └── middleware/
+│   ├── services/
+│   ├── models/
+│   ├── utils/
+│   └── config/
+│── tests/
+│── migrations/
+│── docs/
+│── .env
+│── requirements.txt / package.json
+│── README.md
+
+9. Extra Essential Rules
+
+Code reviews: No code goes into main without peer review.
+
+Documentation: Update API docs (OpenAPI/Swagger) whenever endpoints change.
+
+Security:
+
+Validate all user inputs.
+
+Use HTTPS always.
+
+Store signatures securely (encrypted).
+
+Performance:
+
+Use pagination for large queries.
+
+Cache static assets (logo, templates).

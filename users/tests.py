@@ -60,6 +60,30 @@ class AuthTests(TestCase):
         refresh_attempt = self.client.post(reverse('token_refresh'), {'refresh': refresh}, format='json')
         self.assertEqual(refresh_attempt.status_code, 401)
 
+    def test_register_duplicate_email(self):
+        CustomUser.objects.create_user(username='dup@example.com', email='dup@example.com', full_name='Dup', password='StrongPassw0rd!')
+        res = self.client.post(reverse('auth-register'), {
+            'email': 'dup@example.com',
+            'full_name': 'Dup Two',
+            'password': 'StrongPassw0rd!'
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_login_inactive_user(self):
+        user = CustomUser.objects.create_user(username='inactive@example.com', email='inactive@example.com', full_name='Inactive', password='StrongPassw0rd!')
+        user.is_active = False
+        user.save()
+        res = self.client.post(reverse('auth-login'), {
+            'email': 'inactive@example.com',
+            'password': 'StrongPassw0rd!'
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Invalid credentials', str(res.data))
+
+    def test_profile_unauthenticated_401(self):
+        res = self.client.get(reverse('auth-profile'))
+        self.assertEqual(res.status_code, 401)
+
 from django.test import TestCase
 
 # Create your tests here.
