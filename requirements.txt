@@ -1,0 +1,9 @@
+django
+djangorestframework
+djangorestframework-simplejwt
+django-allauth
+django-rest-auth
+python-decouple
+psycopg2-binary
+pytest
+pytest-django
