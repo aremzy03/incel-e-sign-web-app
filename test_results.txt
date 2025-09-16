@@ -1,0 +1,14 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
+django: version: 5.2.6, settings: esign.settings (from ini)
+rootdir: /home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app
+configfile: pytest.ini
+plugins: django-4.11.1
+collected 132 items
+
+documents/tests/test_deletion.py ......
+
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app/.venv/lib/python3.12/site-packages/django/utils/crypto.py:77: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+============================== 6 passed in 9.51s ===============================
