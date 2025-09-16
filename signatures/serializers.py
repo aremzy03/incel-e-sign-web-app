@@ -62,7 +62,7 @@ class SignDocumentSerializer(serializers.Serializer):
         Validate the signature image data.
         
         Args:
-            value: Base64 encoded signature data
+            value: Base64 encoded signature data or data URL
             
         Returns:
             str: Validated signature data
@@ -70,11 +70,24 @@ class SignDocumentSerializer(serializers.Serializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Signature image is required.")
         
+        # Handle data URLs (data:image/png;base64,<data>)
+        if value.startswith('data:'):
+            if ';base64,' in value:
+                # Extract the base64 part after the comma
+                base64_data = value.split(';base64,', 1)[1]
+            else:
+                raise serializers.ValidationError(
+                    "Data URL must contain base64 encoded data."
+                )
+        else:
+            # Assume it's raw base64 data
+            base64_data = value
+        
         # Basic validation - check if it looks like base64
         import base64
         try:
             # Try to decode to validate base64 format
-            base64.b64decode(value, validate=True)
+            base64.b64decode(base64_data, validate=True)
         except Exception:
             raise serializers.ValidationError(
                 "Signature image must be valid base64 encoded data."

@@ -82,28 +82,43 @@ curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
   }'
 ```
 
-### Testing and Coverage
+### Testing & Integration
 
 #### Running Tests
 ```bash
-# Run all tests
-pytest
+# Run all tests with coverage (targets ≥95% coverage)
+pytest --cov
 
-# Run tests with coverage report
+# Run tests with detailed coverage report
 pytest --cov=. --cov-report=html --cov-report=term-missing
 
 # Run specific test modules
 pytest documents/tests/test_upload.py -v
 pytest envelopes/tests/test_creation.py -v
 pytest signatures/tests/test_signatures.py -v
+
+# Run integration tests specifically
+pytest tests/test_integration.py -v
 ```
 
+#### Integration Tests
+The comprehensive integration test suite (`tests/test_integration.py`) covers the complete signing lifecycle:
+
+- **Happy Path Flow**: Full sequential signing workflow from document upload to completion
+- **Decline Flow**: Signer declining to sign and proper notification handling
+- **Creator Rejection**: Creator rejecting envelope before signing
+- **Document Upload Edge Cases**: File size validation (≤20MB accepted, >20MB rejected)
+- **Audit Log Immutability**: Regular users cannot modify/delete audit logs, admin access
+- **User Registration & Authentication**: Complete auth flow testing
+- **Notification System**: Verification of notifications during workflow
+
 #### Coverage Report
-The test suite includes comprehensive coverage with a target of ≥90%:
+The test suite includes comprehensive coverage with a target of ≥95%:
 
 - **Document Tests**: Upload, retrieval, deletion, and model validation
 - **Envelope Tests**: Creation, sending, rejection, and access control
 - **Signature Tests**: Signing, declining, and turn-based validation
+- **Integration Tests**: End-to-end workflow testing with notifications and audit logs
 - **Edge Cases**: File size boundaries, non-sequential orders, permission violations
 
 Coverage reports are generated in both terminal and HTML format:
@@ -112,9 +127,9 @@ Coverage reports are generated in both terminal and HTML format:
 
 #### Test Categories
 - **Unit Tests**: Individual component testing
-- **Integration Tests**: API endpoint testing with database
+- **Integration Tests**: Complete API workflow testing with database, notifications, and audit logs
 - **Edge Case Tests**: Boundary conditions and error scenarios
-- **Security Tests**: Authentication and authorization validation
+- **Security Tests**: Authentication, authorization, and audit log immutability validation
 
 ### Auth Service
 

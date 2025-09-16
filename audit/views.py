@@ -3,6 +3,7 @@ API views for audit logging - admin-only access.
 """
 
 from rest_framework import generics, permissions, filters
+from rest_framework.response import Response
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 
@@ -31,6 +32,16 @@ class AuditLogListView(generics.ListAPIView):
     ]
     ordering = ["-created_at"]
     ordering_fields = ["created_at", "action"]
+    
+    def list(self, request, *args, **kwargs):
+        """Override to return data in expected format."""
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            "status": "success",
+            "message": "Audit logs retrieved successfully",
+            "data": serializer.data
+        })
 
 
 class AuditLogDetailView(generics.RetrieveAPIView):

@@ -65,7 +65,7 @@ class SignDocumentView(APIView):
             return Response({
                 "status": "error",
                 "message": "It's not your turn to sign yet. Please wait for your turn."
-            }, status=status.HTTP_403_FORBIDDEN)
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if already signed
         if signature.is_signed:
@@ -95,7 +95,7 @@ class SignDocumentView(APIView):
             request.user, 
             "SIGN_DOC", 
             signature, 
-            f"User {request.user.get_full_name() or request.user.username} signed envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} signed envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
             request=request
         )
         
@@ -218,7 +218,7 @@ class DeclineSignatureView(APIView):
             request.user, 
             "DECLINE_SIGN", 
             signature, 
-            f"User {request.user.get_full_name() or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
             request=request
         )
         

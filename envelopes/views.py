@@ -52,7 +52,7 @@ class EnvelopeCreateView(APIView):
                 request.user, 
                 "CREATE_ENVELOPE", 
                 envelope, 
-                f"User {request.user.get_full_name() or request.user.username} created envelope for document '{envelope.document.file_name}'.", 
+                f"User {request.user.full_name or request.user.username} created envelope for document '{envelope.document.file_name}'.", 
                 request=request
             )
             
@@ -121,7 +121,7 @@ class EnvelopeSendView(APIView):
             request.user, 
             "SEND_ENVELOPE", 
             envelope, 
-            f"User {request.user.get_full_name() or request.user.username} sent envelope for document '{envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} sent envelope {envelope.id} for document '{envelope.document.file_name}'.", 
             request=request
         )
         
@@ -208,7 +208,7 @@ class EnvelopeRejectView(APIView):
             request.user, 
             "REJECT_ENVELOPE", 
             envelope, 
-            f"User {request.user.get_full_name() or request.user.username} rejected envelope for document '{envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} rejected envelope for document '{envelope.document.file_name}'.", 
             request=request
         )
         

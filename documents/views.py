@@ -48,7 +48,7 @@ class DocumentUploadView(APIView):
                     request.user, 
                     "UPLOAD_DOC", 
                     document, 
-                    f"User {request.user.get_full_name() or request.user.username} uploaded document '{document.file_name}'.", 
+                    f"User {request.user.full_name or request.user.username} uploaded document '{document.file_name}'.", 
                     request=request
                 )
                 
@@ -74,7 +74,7 @@ class DocumentUploadView(APIView):
         
         return Response(
             {
-                'status': 'error',
+                'error': 'Invalid file data',
                 'message': 'Invalid file data',
                 'data': serializer.errors
             },
@@ -195,7 +195,7 @@ class DocumentDeleteView(DestroyAPIView):
                 request.user, 
                 "DELETE_DOC", 
                 document, 
-                f"User {request.user.get_full_name() or request.user.username} deleted document '{document.file_name}'.", 
+                f"User {request.user.full_name or request.user.username} deleted document '{document.file_name}'.", 
                 request=request
             )
             
