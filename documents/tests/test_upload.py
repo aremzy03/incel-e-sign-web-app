@@ -62,7 +62,7 @@ class DocumentUploadTest(TestCase):
         
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Document uploaded successfully')
         
         # Verify document data
@@ -96,10 +96,10 @@ class DocumentUploadTest(TestCase):
         
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'Invalid file data')
-        self.assertIn('file', response.data['errors'])
-        self.assertIn('Only PDF files are allowed', str(response.data['errors']['file']))
+        self.assertIn('file', response.data['data'])
+        self.assertIn('Only PDF files are allowed', str(response.data['data']['file']))
         
         # Verify no document was created
         self.assertEqual(Document.objects.count(), 0)
@@ -122,10 +122,10 @@ class DocumentUploadTest(TestCase):
         
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'Invalid file data')
-        self.assertIn('file', response.data['errors'])
-        self.assertIn('File size must not exceed 20MB', str(response.data['errors']['file']))
+        self.assertIn('file', response.data['data'])
+        self.assertIn('File size must not exceed 20MB', str(response.data['data']['file']))
         
         # Verify no document was created
         self.assertEqual(Document.objects.count(), 0)
@@ -162,9 +162,9 @@ class DocumentUploadTest(TestCase):
         
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'Invalid file data')
-        self.assertIn('file', response.data['errors'])
+        self.assertIn('file', response.data['data'])
         
         # Verify no document was created
         self.assertEqual(Document.objects.count(), 0)
@@ -187,7 +187,7 @@ class DocumentUploadTest(TestCase):
         
         # Verify response - empty files should be rejected as they're not valid PDFs
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'Invalid file data')
         
         # Verify no document was created

@@ -123,7 +123,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(len(response.data['data']), 1)
         
         envelope_data = response.data['data'][0]
@@ -139,7 +139,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(len(response.data['data']), 1)
         
         envelope_data = response.data['data'][0]
@@ -172,7 +172,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(len(response.data['data']), 2)
     
     def test_other_user_cannot_list_unrelated_envelopes(self):
@@ -183,7 +183,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         # Should only see their own envelope
         self.assertEqual(len(response.data['data']), 1)
         self.assertEqual(response.data['data'][0]['id'], str(self.other_envelope.id))
@@ -204,7 +204,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         
         envelope_data = response.data['data']
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
@@ -229,7 +229,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         
         envelope_data = response.data['data']
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
@@ -244,7 +244,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn('not found or access denied', response.data['message'])
     
     def test_unauthenticated_detail_request_returns_401(self):
@@ -264,7 +264,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
     
     def test_envelope_detail_includes_all_required_fields(self):
         """Test that envelope detail includes all required fields."""

@@ -137,7 +137,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope sent successfully')
         self.assertEqual(response.data['data']['status'], 'sent')
         
@@ -173,7 +173,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope rejected successfully')
         self.assertEqual(response.data['data']['status'], 'rejected')
         
@@ -209,7 +209,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'You can only send envelopes you created.')
         
         # Verify envelope status was not changed
@@ -226,7 +226,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], 'You can only reject envelopes you created.')
         
         # Verify envelope status was not changed
@@ -244,7 +244,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn('Only draft envelopes can be sent', response.data['message'])
         self.assertIn('Current status: sent', response.data['message'])
         
@@ -262,7 +262,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn('Only draft envelopes can be sent', response.data['message'])
         self.assertIn('Current status: completed', response.data['message'])
         
@@ -280,7 +280,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn('Only draft envelopes can be sent', response.data['message'])
         self.assertIn('Current status: rejected', response.data['message'])
         
@@ -299,7 +299,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['data']['status'], 'rejected')
         
         # Verify envelope status was updated
@@ -316,7 +316,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         response = self.client.post(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['data']['status'], 'rejected')
         
         # Verify envelope status was updated
@@ -389,7 +389,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Check response structure
-        self.assertIn('success', response.data)
+        self.assertIn('status', response.data)
         self.assertIn('message', response.data)
         self.assertIn('data', response.data)
         
@@ -419,7 +419,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Check response structure
-        self.assertIn('success', response.data)
+        self.assertIn('status', response.data)
         self.assertIn('message', response.data)
         self.assertIn('data', response.data)
         
@@ -442,7 +442,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for other_user (not the creator)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_user_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_token}')
         
         response = self.client.post(url)
         
@@ -460,7 +460,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for other_user (not the creator)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_user_token}')
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_token}')
         
         response = self.client.post(url)
         

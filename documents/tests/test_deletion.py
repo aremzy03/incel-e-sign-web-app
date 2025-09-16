@@ -77,7 +77,7 @@ class DocumentDeletionTest(TestCase):
         
         # Verify response
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Document deleted successfully')
         
         # Verify document no longer exists in database
@@ -207,9 +207,9 @@ class DocumentDeletionTest(TestCase):
         
         # Verify response structure
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertIn('success', response.data)
+        self.assertIn('status', response.data)
         self.assertIn('message', response.data)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Document deleted successfully')
     
     def test_delete_document_with_different_statuses(self):

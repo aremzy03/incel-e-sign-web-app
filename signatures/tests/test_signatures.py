@@ -139,7 +139,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Document signed successfully')
         self.assertEqual(response.data['data']['status'], 'signed')
         
@@ -169,7 +169,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         
         # Verify second signer is signed
         self.signature2.refresh_from_db()
@@ -198,7 +198,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         
         # Verify envelope is now completed
         self.envelope.refresh_from_db()
@@ -218,7 +218,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Document declined successfully. Envelope has been rejected.')
         self.assertEqual(response.data['data']['status'], 'declined')
         
@@ -241,7 +241,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "It's not your turn to sign yet. Please wait for your turn.")
         
         # Verify signature was not updated
@@ -258,7 +258,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "It's not your turn to decline yet. Please wait for your turn.")
         
         # Verify signature was not updated
@@ -276,7 +276,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "You are not authorized to sign this document.")
     
     def test_unauthorized_user_attempting_decline_returns_403(self):
@@ -289,7 +289,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "You are not authorized to decline this document.")
     
     def test_unauthenticated_sign_request_returns_401(self):
@@ -335,7 +335,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn("must be in 'sent' status", response.data['message'])
     
     def test_declining_draft_envelope_returns_400(self):
@@ -357,7 +357,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertIn("must be in 'sent' status", response.data['message'])
     
     def test_signing_already_signed_document_returns_403(self):
@@ -373,7 +373,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "It's not your turn to sign yet. Please wait for your turn.")
     
     def test_declining_already_signed_document_returns_403(self):
@@ -390,7 +390,7 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(decline_url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(response.data['success'])
+        self.assertEqual(response.data['status'], 'error')
         self.assertEqual(response.data['message'], "It's not your turn to decline yet. Please wait for your turn.")
     
     def test_signing_with_invalid_signature_image_returns_400(self):
@@ -404,16 +404,16 @@ class SignatureTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signature_image', response.data['errors'])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signature_image', response.data['data'])
         
         # Test with invalid base64
         payload = {'signature_image': 'invalid-base64-data!'}
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('valid base64', response.data['errors']['signature_image'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('valid base64', response.data['data']['signature_image'][0])
     
     def test_signing_nonexistent_envelope_returns_404(self):
         """Test that signing nonexistent envelope returns 404."""
@@ -450,7 +450,7 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Check response structure
-        self.assertIn('success', response.data)
+        self.assertIn('status', response.data)
         self.assertIn('message', response.data)
         self.assertIn('data', response.data)
         
@@ -483,7 +483,7 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # Check response structure
-        self.assertIn('success', response.data)
+        self.assertIn('status', response.data)
         self.assertIn('message', response.data)
         self.assertIn('data', response.data)
         

@@ -86,7 +86,7 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope created successfully')
         
         # Check envelope was created in database
@@ -121,9 +121,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('document_id', response.data['errors'])
-        self.assertIn('own documents', response.data['errors']['document_id'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('document_id', response.data['data'])
+        self.assertIn('own documents', response.data['data']['document_id'][0])
     
     def test_envelope_creation_fails_if_invalid_user_id_in_signing_order(self):
         """Test creation fails if invalid user_id is in signing_order."""
@@ -142,9 +142,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('Users not found', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('Users not found', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signing_order_has_duplicate_orders(self):
         """Test creation fails if signing_order has duplicate orders."""
@@ -161,9 +161,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('Duplicate order found', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('Duplicate order found', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signing_order_has_duplicate_signer_ids(self):
         """Test creation fails if signing_order has duplicate signer_ids."""
@@ -180,9 +180,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('Duplicate signer_id found', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('Duplicate signer_id found', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signing_order_has_gaps(self):
         """Test creation fails if signing_order has gaps in order numbers."""
@@ -199,9 +199,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('no gaps', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('no gaps', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signing_order_doesnt_start_from_1(self):
         """Test creation fails if signing_order doesn't start from 1."""
@@ -218,9 +218,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('start from 1', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('start from 1', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signing_order_missing_required_keys(self):
         """Test creation fails if signing_order entries missing required keys."""
@@ -236,9 +236,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('must have both', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('must have both', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signer_id_invalid_uuid_format(self):
         """Test creation fails if signer_id is not a valid UUID format."""
@@ -254,9 +254,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('valid UUID', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('valid UUID', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_order_not_positive_integer(self):
         """Test creation fails if order is not a positive integer."""
@@ -272,9 +272,9 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('signing_order', response.data['errors'])
-        self.assertIn('positive integer', response.data['errors']['signing_order'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('positive integer', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_succeeds_with_empty_signing_order(self):
         """Test creation succeeds with empty signing_order."""
@@ -288,7 +288,7 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['status'], 'success')
         
         # Check envelope was created with empty signing order
         envelope = Envelope.objects.get(id=response.data['data']['id'])
