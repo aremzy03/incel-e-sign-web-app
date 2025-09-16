@@ -20,6 +20,102 @@ A Django-based e-signature platform inspired by SignNow and DocuSign.
 5. Start the development server
    - python manage.py runserver
 
+### Quickstart Walkthrough
+
+Follow this step-by-step guide to test the complete e-signature workflow:
+
+#### 1. Create a User
+```bash
+curl -X POST http://localhost:8000/auth/register/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "full_name": "Test User",
+    "password": "securepass123"
+  }'
+```
+
+#### 2. Login and Get JWT Token
+```bash
+curl -X POST http://localhost:8000/auth/login/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "securepass123"
+  }'
+```
+Save the `access` token from the response for the next steps.
+
+#### 3. Upload a Document
+```bash
+curl -X POST http://localhost:8000/documents/upload/ \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "file=@document.pdf"
+```
+
+#### 4. Create an Envelope
+```bash
+curl -X POST http://localhost:8000/envelopes/create/ \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_id": "DOCUMENT_ID_FROM_STEP_3",
+    "signing_order": [
+      {"signer_id": "SIGNER_USER_ID", "order": 1}
+    ]
+  }'
+```
+
+#### 5. Send the Envelope
+```bash
+curl -X POST http://localhost:8000/envelopes/ENVELOPE_ID/send/ \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### 6. Sign the Document (as the signer)
+```bash
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  }'
+```
+
+### Testing and Coverage
+
+#### Running Tests
+```bash
+# Run all tests
+pytest
+
+# Run tests with coverage report
+pytest --cov=. --cov-report=html --cov-report=term-missing
+
+# Run specific test modules
+pytest documents/tests/test_upload.py -v
+pytest envelopes/tests/test_creation.py -v
+pytest signatures/tests/test_signatures.py -v
+```
+
+#### Coverage Report
+The test suite includes comprehensive coverage with a target of ≥90%:
+
+- **Document Tests**: Upload, retrieval, deletion, and model validation
+- **Envelope Tests**: Creation, sending, rejection, and access control
+- **Signature Tests**: Signing, declining, and turn-based validation
+- **Edge Cases**: File size boundaries, non-sequential orders, permission violations
+
+Coverage reports are generated in both terminal and HTML format:
+- Terminal: `--cov-report=term-missing`
+- HTML: `--cov-report=html` (opens `htmlcov/index.html`)
+
+#### Test Categories
+- **Unit Tests**: Individual component testing
+- **Integration Tests**: API endpoint testing with database
+- **Edge Case Tests**: Boundary conditions and error scenarios
+- **Security Tests**: Authentication and authorization validation
+
 ### Auth Service
 
 JWT-based authentication endpoints:
@@ -68,7 +164,7 @@ curl -X POST http://localhost:8000/documents/upload/ \
 **Response (Success - 201):**
 ```json
 {
-  "success": true,
+  "status": "success",
   "message": "Document uploaded successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
@@ -444,9 +540,9 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 Document not owned by user:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Validation failed",
-  "errors": {
+  "data": {
     "document_id": ["You can only create envelopes for your own documents."]
   }
 }
@@ -455,9 +551,9 @@ Document not owned by user:
 Invalid signing order:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Validation failed",
-  "errors": {
+  "data": {
     "signing_order": ["Orders must start from 1 and have no gaps."]
   }
 }
@@ -466,9 +562,9 @@ Invalid signing order:
 Non-existent signer:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Validation failed",
-  "errors": {
+  "data": {
     "signing_order": ["Users not found: ['550e8400-e29b-41d4-a716-446655440999']"]
   }
 }
@@ -607,7 +703,7 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
 Non-creator attempting to send:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "You can only send envelopes you created."
 }
 ```
@@ -615,7 +711,7 @@ Non-creator attempting to send:
 Sending non-draft envelope:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Only draft envelopes can be sent. Current status: sent"
 }
 ```
@@ -805,7 +901,7 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000
 Unauthorized access (404):
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Envelope not found or access denied"
 }
 ```
@@ -1359,7 +1455,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 Not current signer:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "It's not your turn to sign yet. Please wait for your turn."
 }
 ```
@@ -1367,9 +1463,9 @@ Not current signer:
 Invalid signature data:
 ```json
 {
-  "success": false,
+  "status": "error",
   "message": "Validation failed",
-  "errors": {
+  "data": {
     "signature_image": ["Signature image must be valid base64 encoded data."]
   }
 }

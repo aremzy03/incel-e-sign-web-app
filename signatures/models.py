@@ -80,6 +80,11 @@ class Signature(models.Model):
         verbose_name_plural = "Signatures"
         # Ensure one signature per signer per envelope
         unique_together = [['envelope', 'signer']]
+        indexes = [
+            models.Index(fields=['envelope', 'status']),
+            models.Index(fields=['signer', 'status']),
+            models.Index(fields=['status']),
+        ]
     
     def __str__(self) -> str:
         return f"Signature for {self.signer.email} in {self.envelope}"

@@ -74,6 +74,11 @@ class Document(models.Model):
         ordering = ['-created_at']
         verbose_name = 'Document'
         verbose_name_plural = 'Documents'
+        indexes = [
+            models.Index(fields=['owner', 'status']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self):
         return f"{self.file_name} ({self.status})"

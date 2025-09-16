@@ -231,3 +231,22 @@ class DocumentDeletionTest(TestCase):
         
         # Verify user2's completed document still exists
         self.assertTrue(Document.objects.filter(id=self.doc1_user2.id).exists())
+    
+    def test_non_owner_cannot_delete_document(self):
+        """Test that non-owner cannot delete document (returns 404)."""
+        # Authenticate as user2 (not the owner of doc1_user1)
+        self.client.force_authenticate(user=self.user2)
+        
+        # Try to delete user1's document
+        url = reverse('documents:document_delete', kwargs={'pk': self.doc1_user1.id})
+        response = self.client.delete(url)
+        
+        # Should return 404 (not found or access denied)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        
+        # Verify document still exists in database
+        self.assertTrue(Document.objects.filter(id=self.doc1_user1.id).exists())
+        
+        # Verify document owner is still user1
+        document = Document.objects.get(id=self.doc1_user1.id)
+        self.assertEqual(document.owner, self.user1)

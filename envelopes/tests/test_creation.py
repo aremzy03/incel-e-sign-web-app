@@ -328,6 +328,47 @@ class EnvelopeCreationTestCase(APITestCase):
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(response.data['success'])
-        self.assertIn('document_id', response.data['errors'])
-        self.assertIn('Document not found', response.data['errors']['document_id'][0])
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('document_id', response.data['data'])
+        self.assertIn('Document not found', response.data['data']['document_id'][0])
+    
+    def test_envelope_creation_with_non_sequential_signing_order(self):
+        """Test envelope creation fails with non-sequential signing order."""
+        url = reverse('envelopes:envelope_create')
+        
+        # Test with non-sequential order (1, 3, 5 - missing 2, 4)
+        payload = {
+            'document_id': str(self.document.id),
+            'signing_order': [
+                {'signer_id': str(self.signer1.id), 'order': 1},
+                {'signer_id': str(self.signer2.id), 'order': 3},  # Gap: missing order 2
+                {'signer_id': str(self.creator.id), 'order': 5}   # Gap: missing order 4
+            ]
+        }
+        
+        response = self.client.post(url, payload, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('Orders must start from 1 and have no gaps', response.data['data']['signing_order'][0])
+    
+    def test_envelope_creation_with_duplicate_orders(self):
+        """Test envelope creation fails with duplicate signing orders."""
+        url = reverse('envelopes:envelope_create')
+        
+        # Test with duplicate orders
+        payload = {
+            'document_id': str(self.document.id),
+            'signing_order': [
+                {'signer_id': str(self.signer1.id), 'order': 1},
+                {'signer_id': str(self.signer2.id), 'order': 1}  # Duplicate order
+            ]
+        }
+        
+        response = self.client.post(url, payload, format='json')
+        
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('signing_order', response.data['data'])
+        self.assertIn('Duplicate order found', response.data['data']['signing_order'][0])

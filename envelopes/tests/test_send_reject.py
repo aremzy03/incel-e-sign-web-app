@@ -436,3 +436,39 @@ class EnvelopeSendRejectTestCase(APITestCase):
         # Verify data values
         self.assertEqual(data['id'], str(self.draft_envelope.id))
         self.assertEqual(data['status'], 'rejected')
+    
+    def test_non_owner_cannot_send_envelope(self):
+        """Test that non-owner cannot send envelope."""
+        url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
+        
+        # Set authentication header for other_user (not the creator)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_user_token}')
+        
+        response = self.client.post(url)
+        
+        # Should return 403 Forbidden
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('You can only send envelopes you created', response.data['message'])
+        
+        # Verify envelope status is still draft
+        self.draft_envelope.refresh_from_db()
+        self.assertEqual(self.draft_envelope.status, 'draft')
+    
+    def test_non_owner_cannot_reject_envelope(self):
+        """Test that non-owner cannot reject envelope."""
+        url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
+        
+        # Set authentication header for other_user (not the creator)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_user_token}')
+        
+        response = self.client.post(url)
+        
+        # Should return 403 Forbidden
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('You can only reject envelopes you created', response.data['message'])
+        
+        # Verify envelope status is still draft
+        self.draft_envelope.refresh_from_db()
+        self.assertEqual(self.draft_envelope.status, 'draft')

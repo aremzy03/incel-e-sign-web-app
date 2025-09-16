@@ -67,6 +67,11 @@ class Envelope(models.Model):
         ordering = ["-created_at"]
         verbose_name = "Envelope"
         verbose_name_plural = "Envelopes"
+        indexes = [
+            models.Index(fields=['creator', 'status']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self) -> str:
         return f"Envelope for {self.document.file_name} ({self.status})"

@@ -46,7 +46,7 @@ class DocumentUploadView(APIView):
                 document_serializer = DocumentSerializer(document)
                 return Response(
                     {
-                        'success': True,
+                        'status': 'success',
                         'message': 'Document uploaded successfully',
                         'data': document_serializer.data
                     },
@@ -56,7 +56,7 @@ class DocumentUploadView(APIView):
             except Exception as e:
                 return Response(
                     {
-                        'success': False,
+                        'status': 'error',
                         'message': f'Error uploading document: {str(e)}'
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -64,9 +64,9 @@ class DocumentUploadView(APIView):
         
         return Response(
             {
-                'success': False,
+                'status': 'error',
                 'message': 'Invalid file data',
-                'errors': serializer.errors
+                'data': serializer.errors
             },
             status=status.HTTP_400_BAD_REQUEST
         )
@@ -181,7 +181,7 @@ class DocumentDeleteView(DestroyAPIView):
             document.delete()
             return Response(
                 {
-                    'success': True,
+                    'status': 'success',
                     'message': 'Document deleted successfully'
                 },
                 status=status.HTTP_204_NO_CONTENT
@@ -193,7 +193,7 @@ class DocumentDeleteView(DestroyAPIView):
                 raise
             return Response(
                 {
-                    'success': False,
+                    'status': 'error',
                     'message': f'Error deleting document: {str(e)}'
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

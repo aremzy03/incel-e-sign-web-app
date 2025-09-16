@@ -9,6 +9,13 @@ from django.utils import timezone
 
 
 class CustomUser(AbstractUser):
+    """
+    Custom user model for the E-Sign application.
+    
+    Extends Django's AbstractUser to use UUID as primary key
+    and adds email as the username field.
+    """
+    
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -26,7 +33,3 @@ class CustomUser(AbstractUser):
 
     def __str__(self) -> str:
         return self.email
-
-from django.db import models
-
-# Create your models here.

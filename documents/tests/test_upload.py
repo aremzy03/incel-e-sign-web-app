@@ -38,6 +38,9 @@ class DocumentUploadTest(TestCase):
         # Create a large file for testing (>20MB)
         self.large_file_content = b'X' * (21 * 1024 * 1024)  # 21MB
         
+        # Create a file at exactly 20MB boundary
+        self.boundary_file_content = b'X' * (20 * 1024 * 1024)  # Exactly 20MB
+        
         # Create a non-PDF file for testing
         self.txt_content = b'This is a text file, not a PDF.'
     
@@ -268,3 +271,61 @@ class DocumentUploadTest(TestCase):
         doc2 = Document.objects.get(id=response2.data['data']['id'])
         self.assertEqual(doc1.owner, self.user)
         self.assertEqual(doc2.owner, user2)
+    
+    def test_upload_pdf_at_20mb_boundary(self):
+        """Test upload of PDF at exactly 20MB boundary (should be accepted)."""
+        # Authenticate user
+        self.client.force_authenticate(user=self.user)
+        
+        # Create PDF file at exactly 20MB
+        boundary_pdf = SimpleUploadedFile(
+            "boundary_document.pdf",
+            self.boundary_file_content,
+            content_type="application/pdf"
+        )
+        
+        # Upload file
+        url = reverse('documents:document_upload')
+        response = self.client.post(url, {'file': boundary_pdf}, format='multipart')
+        
+        # Verify response - should be accepted
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'success')
+        self.assertEqual(response.data['message'], 'Document uploaded successfully')
+        
+        # Verify document data
+        document_data = response.data['data']
+        self.assertEqual(document_data['file_name'], 'boundary_document.pdf')
+        self.assertEqual(document_data['file_size'], len(self.boundary_file_content))
+        self.assertEqual(document_data['status'], 'draft')
+        
+        # Verify document was created in database
+        document = Document.objects.get(id=document_data['id'])
+        self.assertEqual(document.owner, self.user)
+        self.assertEqual(document.file_size, len(self.boundary_file_content))
+    
+    def test_rejection_for_pdf_over_20mb(self):
+        """Test rejection for PDF file over 20MB (should be rejected)."""
+        # Authenticate user
+        self.client.force_authenticate(user=self.user)
+        
+        # Create PDF file over 20MB
+        large_pdf = SimpleUploadedFile(
+            "large_document.pdf",
+            self.large_file_content,
+            content_type="application/pdf"
+        )
+        
+        # Upload file
+        url = reverse('documents:document_upload')
+        response = self.client.post(url, {'file': large_pdf}, format='multipart')
+        
+        # Verify response - should be rejected
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertEqual(response.data['message'], 'Invalid file data')
+        self.assertIn('file', response.data['data'])
+        self.assertIn('File size must not exceed 20MB', str(response.data['data']['file']))
+        
+        # Verify no document was created
+        self.assertEqual(Document.objects.count(), 0)

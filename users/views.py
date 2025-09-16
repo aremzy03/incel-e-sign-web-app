@@ -1,4 +1,3 @@
-from django.shortcuts import render
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
@@ -19,8 +18,8 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             data = UserSerializer(user).data
-            return Response({"success": True, "message": "Registered successfully", "data": data}, status=status.HTTP_201_CREATED)
-        return Response({"success": False, "message": "Validation error", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "success", "message": "Registered successfully", "data": data}, status=status.HTTP_201_CREATED)
+        return Response({"status": "error", "message": "Validation error", "data": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoginView(APIView):
@@ -29,11 +28,11 @@ class LoginView(APIView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response({"success": False, "message": "Invalid credentials", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "message": "Invalid credentials", "data": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
         user = serializer.validated_data["user"]
         refresh = RefreshToken.for_user(user)
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Login successful",
             "data": {
                 "access": str(refresh.access_token),
@@ -48,13 +47,13 @@ class LogoutView(APIView):
     def post(self, request):
         refresh_token = request.data.get("refresh")
         if not refresh_token:
-            return Response({"success": False, "message": "Refresh token required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "message": "Refresh token required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
             token = RefreshToken(refresh_token)
             token.blacklist()
-            return Response({"success": True, "message": "Logged out successfully"}, status=status.HTTP_200_OK)
+            return Response({"status": "success", "message": "Logged out successfully"}, status=status.HTTP_200_OK)
         except Exception:
-            return Response({"success": False, "message": "Invalid refresh token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"status": "error", "message": "Invalid refresh token"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ProfileView(APIView):
@@ -62,4 +61,4 @@ class ProfileView(APIView):
 
     def get(self, request):
         data = UserSerializer(request.user).data
-        return Response({"success": True, "data": data}, status=status.HTTP_200_OK)
+        return Response({"status": "success", "data": data}, status=status.HTTP_200_OK)

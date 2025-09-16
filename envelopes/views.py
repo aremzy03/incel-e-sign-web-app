@@ -50,15 +50,15 @@ class EnvelopeCreateView(APIView):
             detail_serializer = EnvelopeDetailSerializer(envelope)
             
             return Response({
-                "success": True,
+                "status": "success",
                 "message": "Envelope created successfully",
                 "data": detail_serializer.data
             }, status=status.HTTP_201_CREATED)
         
         return Response({
-            "success": False,
+            "status": "error",
             "message": "Validation failed",
-            "errors": serializer.errors
+            "data": serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -90,14 +90,14 @@ class EnvelopeSendView(APIView):
         # Check if user is the creator
         if envelope.creator != request.user:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "You can only send envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
         
         # Check if envelope is in draft status
         if envelope.status != "draft":
             return Response({
-                "success": False,
+                "status": "error",
                 "message": f"Only draft envelopes can be sent. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
@@ -129,7 +129,7 @@ class EnvelopeSendView(APIView):
         serializer = EnvelopeSerializer(envelope)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Envelope sent successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
@@ -163,7 +163,7 @@ class EnvelopeRejectView(APIView):
         # Check if user is the creator
         if envelope.creator != request.user:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "You can only reject envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
         
@@ -175,7 +175,7 @@ class EnvelopeRejectView(APIView):
         serializer = EnvelopeSerializer(envelope)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Envelope rejected successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
@@ -230,7 +230,7 @@ class EnvelopeListView(ListAPIView):
         serializer = self.get_serializer(queryset, many=True)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Envelopes retrieved successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
@@ -287,7 +287,7 @@ class EnvelopeDetailView(RetrieveAPIView):
             envelope = Envelope.objects.get(pk=kwargs['pk'])
         except Envelope.DoesNotExist:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "Envelope not found or access denied"
             }, status=status.HTTP_404_NOT_FOUND)
         
@@ -307,14 +307,14 @@ class EnvelopeDetailView(RetrieveAPIView):
         
         if not has_access:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "Envelope not found or access denied"
             }, status=status.HTTP_404_NOT_FOUND)
         
         serializer = self.get_serializer(envelope)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Envelope retrieved successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)

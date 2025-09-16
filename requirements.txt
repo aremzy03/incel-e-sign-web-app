@@ -7,6 +7,7 @@ python-decouple
 psycopg2-binary
 pytest
 pytest-django
+pytest-cov
 django-cors-headers
 django-storages
 boto3

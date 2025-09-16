@@ -44,7 +44,7 @@ class SignDocumentView(APIView):
         # Check if envelope is in sent status
         if envelope.status != "sent":
             return Response({
-                "success": False,
+                "status": "error",
                 "message": f"Envelope must be in 'sent' status to sign. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
@@ -56,21 +56,21 @@ class SignDocumentView(APIView):
             )
         except Signature.DoesNotExist:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "You are not authorized to sign this document."
             }, status=status.HTTP_403_FORBIDDEN)
         
         # Check if this signer is the current signer
         if not signature.is_current_signer():
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "It's not your turn to sign yet. Please wait for your turn."
             }, status=status.HTTP_403_FORBIDDEN)
         
         # Check if already signed
         if signature.is_signed:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "You have already signed this document."
             }, status=status.HTTP_400_BAD_REQUEST)
         
@@ -78,9 +78,9 @@ class SignDocumentView(APIView):
         serializer = SignDocumentSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "Validation failed",
-                "errors": serializer.errors
+                "data": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Update the signature
@@ -104,7 +104,7 @@ class SignDocumentView(APIView):
         signature_serializer = SignatureSerializer(signature)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Document signed successfully",
             "data": signature_serializer.data
         }, status=status.HTTP_200_OK)
@@ -139,7 +139,7 @@ class DeclineSignatureView(APIView):
         # Check if envelope is in sent status
         if envelope.status != "sent":
             return Response({
-                "success": False,
+                "status": "error",
                 "message": f"Envelope must be in 'sent' status to decline. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
@@ -151,21 +151,21 @@ class DeclineSignatureView(APIView):
             )
         except Signature.DoesNotExist:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "You are not authorized to decline this document."
             }, status=status.HTTP_403_FORBIDDEN)
         
         # Check if this signer is the current signer
         if not signature.is_current_signer():
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "It's not your turn to decline yet. Please wait for your turn."
             }, status=status.HTTP_403_FORBIDDEN)
         
         # Check if already signed or declined
         if signature.is_signed or signature.is_declined:
             return Response({
-                "success": False,
+                "status": "error",
                 "message": f"You have already {signature.status} this document."
             }, status=status.HTTP_400_BAD_REQUEST)
         
@@ -173,9 +173,9 @@ class DeclineSignatureView(APIView):
         serializer = DeclineSignatureSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
-                "success": False,
+                "status": "error",
                 "message": "Validation failed",
-                "errors": serializer.errors
+                "data": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Update the signature
@@ -190,7 +190,7 @@ class DeclineSignatureView(APIView):
         signature_serializer = SignatureSerializer(signature)
         
         return Response({
-            "success": True,
+            "status": "success",
             "message": "Document declined successfully. Envelope has been rejected.",
             "data": signature_serializer.data
         }, status=status.HTTP_200_OK)

@@ -504,3 +504,47 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(data['status'], 'declined')
         self.assertEqual(data['signer_email'], self.signer1.email)
         self.assertEqual(data['signing_order'], 1)
+    
+    def test_signer_attempting_to_sign_out_of_turn(self):
+        """Test that signer attempting to sign out of turn is rejected."""
+        url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
+        
+        # Try to sign as signer2 (order 2) before signer1 (order 1) has signed
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        payload = {'signature_image': self.test_signature_image}
+        
+        response = self.client.post(url, payload, format='json')
+        
+        # Should be rejected - it's not signer2's turn yet
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('not your turn to sign yet', response.data['message'])
+        
+        # Verify signer2's signature is still pending
+        signer2_signature = Signature.objects.get(
+            envelope=self.envelope,
+            signer=self.signer2
+        )
+        self.assertEqual(signer2_signature.status, 'pending')
+        self.assertIsNone(signer2_signature.signed_at)
+    
+    def test_signer_attempting_to_decline_out_of_turn(self):
+        """Test that signer attempting to decline out of turn is rejected."""
+        url = reverse('signatures:decline_signature', kwargs={'envelope_id': self.envelope.id})
+        
+        # Try to decline as signer2 (order 2) before signer1 (order 1) has acted
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        
+        response = self.client.post(url, {}, format='json')
+        
+        # Should be rejected - it's not signer2's turn yet
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('not your turn to decline yet', response.data['message'])
+        
+        # Verify signer2's signature is still pending
+        signer2_signature = Signature.objects.get(
+            envelope=self.envelope,
+            signer=self.signer2
+        )
+        self.assertEqual(signer2_signature.status, 'pending')
