@@ -1563,4 +1563,391 @@ pytest
 
 **Total Test Coverage:** 114 tests covering all core functionality, security, and edge cases.
 
+### Asynchronous Tasks
+
+The E-Sign application uses Celery with Redis for asynchronous task processing, enabling background operations for document processing, email notifications, and other time-consuming tasks.
+
+#### Setup
+
+**Dependencies:**
+- `celery`: Distributed task queue
+- `redis`: Message broker and result backend
+
+**Installation:**
+```bash
+pip install celery redis
+```
+
+**Configuration:**
+The Celery configuration is set in `esign/settings.py`:
+```python
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+```
+
+#### Running Celery
+
+**Start Redis Server:**
+```bash
+redis-server
+```
+
+**Start Celery Worker:**
+```bash
+celery -A esign worker -l info
+```
+
+**Start Celery Beat Scheduler (Optional):**
+```bash
+celery -A esign beat -l info
+```
+
+#### Available Tasks
+
+**Test Task:**
+```python
+from core.tasks import test_task
+
+# Execute task asynchronously
+result = test_task.delay()
+print(result.get())  # "Task executed"
+```
+
+#### Testing Celery Tasks
+
+Run Celery tests with eager execution:
+```bash
+pytest core/tests/test_celery.py -v
+```
+
+The test configuration uses `CELERY_TASK_ALWAYS_EAGER=True` to run tasks synchronously during testing.
+
+### In-App Notifications
+
+The E-Sign application includes a comprehensive in-app notification system that keeps users informed about envelope and signature status changes in real-time using Celery background tasks.
+
+#### Features
+
+- **Real-time Notifications**: Users receive instant notifications for envelope and signature events
+- **User-specific**: Each user only sees their own notifications
+- **Read Status Tracking**: Notifications can be marked as read/unread
+- **Background Processing**: Notifications are created asynchronously using Celery
+- **Comprehensive Coverage**: Notifications for all major workflow events
+
+#### Endpoints
+
+**List Notifications:**
+```bash
+GET /notifications/
+```
+Returns all notifications for the authenticated user, ordered by creation date (newest first).
+
+**Response:**
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "message": "John Doe has requested you to sign the document 'contract.pdf'.",
+    "is_read": false,
+    "created_at": "2024-01-01T12:00:00Z"
+  }
+]
+```
+
+**Mark Notification as Read:**
+```bash
+PATCH /notifications/{id}/read/
+```
+Marks a specific notification as read for the authenticated user.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Notification marked as read",
+    "data": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "message": "John Doe has requested you to sign the document 'contract.pdf'.",
+      "is_read": true,
+      "created_at": "2024-01-01T12:00:00Z"
+    }
+}
+```
+
+#### Notification Triggers
+
+The system automatically sends notifications for the following events with actor identity and document information:
+
+**Envelope Events:**
+- **Envelope Sent**: Notifies the first signer when an envelope is sent
+  - Message: "[Creator Name] has requested you to sign the document '[File Name]'."
+  - Example: "John Doe has requested you to sign the document 'contract.pdf'."
+
+- **Envelope Rejected**: Notifies all signers when creator rejects an envelope
+  - Message: "[Creator Name] has cancelled the envelope for '[File Name]'."
+  - Example: "John Doe has cancelled the envelope for 'contract.pdf'."
+
+**Signature Events:**
+- **Document Signed (Next Signer)**: Notifies the next signer in sequence
+  - Message: "It is now your turn to sign the document '[File Name]'."
+  - Example: "It is now your turn to sign the document 'contract.pdf'."
+
+- **Document Signed (Last Signer)**: Notifies creator that envelope is completed
+  - Message: "Your envelope for '[File Name]' has been fully signed and completed."
+  - Example: "Your envelope for 'contract.pdf' has been fully signed and completed."
+
+- **Signature Declined**: Notifies the envelope creator
+  - Message: "Signer [Signer Name] declined to sign the document '[File Name]'. The envelope has been rejected."
+  - Example: "Signer Jane Smith declined to sign the document 'contract.pdf'. The envelope has been rejected."
+
+#### Usage Examples
+
+**List User Notifications:**
+```bash
+curl -X GET http://localhost:8000/notifications/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Mark Notification as Read:**
+```bash
+curl -X PATCH http://localhost:8000/notifications/550e8400-e29b-41d4-a716-446655440000/read/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Programmatic Notification Creation:**
+```python
+from notifications.utils import create_notification, create_envelope_sent_notification
+
+# Create custom notification asynchronously
+create_notification.delay(
+    str(user.id),
+    "Custom notification message"
+)
+
+# Create notification using template functions
+envelope = Envelope.objects.get(id=envelope_id)
+message = create_envelope_sent_notification(envelope)
+create_notification.delay(str(signer.id), message)
+```
+
+#### Notification Model
+
+The `Notification` model includes:
+- `id`: Unique identifier (UUID)
+- `user`: User who receives the notification (ForeignKey)
+- `message`: Notification content (TextField)
+- `is_read`: Read status (BooleanField, default=False)
+- `created_at`: Creation timestamp (DateTimeField, auto_now_add=True)
+
+#### Notification Template System
+
+The notification system uses a unified template approach that ensures consistency between in-app and email notifications:
+
+**Template Functions:**
+- `create_envelope_sent_notification(envelope)` - For envelope sent notifications
+- `create_signer_turn_notification(envelope)` - For signer turn notifications  
+- `create_envelope_completed_notification(envelope)` - For envelope completion
+- `create_signer_declined_notification(envelope, signer)` - For signature declines
+- `create_envelope_rejected_notification(envelope)` - For envelope rejections
+
+**Template Features:**
+- **Actor Identity**: Always includes the relevant user's name (creator/signer)
+- **Document Context**: Always includes the document file name
+- **Consistent Formatting**: Standardized message structure across all notification types
+- **Reusable**: Same templates can be used for both in-app and email notifications
+
+#### Testing Notifications
+
+Run notification tests:
+```bash
+pytest notifications/tests/test_notifications.py -v
+```
+
+Test coverage includes:
+- ✅ **Model Tests (3 tests):**
+  - Notification creation and validation
+  - String representation
+  - Ordering by creation date
+
+- ✅ **Utility Tests (2 tests):**
+  - Celery task execution
+  - Error handling for invalid users
+
+- ✅ **Template Tests (5 tests):**
+  - Envelope sent notification template
+  - Signer turn notification template
+  - Envelope completed notification template
+  - Signer declined notification template
+  - Envelope rejected notification template
+
+- ✅ **API Tests (6 tests):**
+  - List notifications for authenticated users
+  - Authentication requirements
+  - User isolation (users only see their own notifications)
+  - Mark notifications as read
+  - Permission validation
+
+- ✅ **Integration Tests (5 tests):**
+  - Envelope send notifies first signer with creator name and file name
+  - Envelope reject notifies all signers with creator name and file name
+  - Signing notifies next signer with file name
+  - Last signer signing notifies creator with file name
+  - Declining notifies creator with signer name and file name
+
+**Total Coverage:** 21 tests covering all notification functionality, templates, API endpoints, and workflow integration.
+
+### 🔍 Audit Logging
+
+The E-Sign application includes comprehensive audit logging to track all user actions and system events. This ensures compliance, security, and provides a complete audit trail for all document and signature operations.
+
+#### Purpose and Features
+
+The audit logging system provides:
+- **Immutable Records**: All audit logs are read-only and cannot be modified or deleted
+- **Complete Action Tracking**: Records all significant user actions and system events
+- **IP and User Agent Logging**: Captures request metadata for security analysis
+- **Admin-Only Access**: Audit logs are only accessible to administrators
+- **Generic Target Support**: Can track actions on any model instance
+
+#### Audit Log Fields
+
+Each audit log entry contains:
+- **`id`**: Unique UUID identifier
+- **`actor`**: User who performed the action (null for system actions)
+- **`action`**: Action type (e.g., "UPLOAD_DOC", "SEND_ENVELOPE", "SIGN_DOC")
+- **`target_object`**: The model instance being acted upon
+- **`message`**: Descriptive message about the action
+- **`ip_address`**: IP address of the request (supports X-Forwarded-For)
+- **`user_agent`**: Browser/client user agent string
+- **`created_at`**: Timestamp when the action occurred
+
+#### Tracked Actions
+
+The system automatically logs the following actions:
+
+1. **Document Operations:**
+   - `UPLOAD_DOC`: When a user uploads a document
+   - `DELETE_DOC`: When a user deletes a document
+
+2. **Envelope Operations:**
+   - `CREATE_ENVELOPE`: When a user creates an envelope
+   - `SEND_ENVELOPE`: When a user sends an envelope for signing
+   - `REJECT_ENVELOPE`: When a user rejects an envelope
+
+3. **Signature Operations:**
+   - `SIGN_DOC`: When a user signs a document
+   - `DECLINE_SIGN`: When a user declines to sign a document
+
+#### Sample Audit Log Entries
+
+```
+2024-01-15T10:30:45Z | Abdulmalik | UPLOAD_DOC
+User Abdulmalik uploaded document 'Contract.pdf'.
+
+2024-01-15T10:35:12Z | Fatima | SIGN_DOC  
+User Fatima signed envelope #123 for document 'Agreement.pdf'.
+
+2024-01-15T10:40:22Z | John Doe | DECLINE_SIGN
+User John Doe declined to sign envelope #456 for document 'Proposal.pdf'.
+```
+
+#### Accessing Audit Logs
+
+**Django Admin Interface:**
+- Navigate to `/admin/` and login as an admin user
+- Go to "Audit Logs" section
+- View all audit entries in read-only format
+- Search and filter by action, user, or date
+
+**API Endpoints (Admin Only):**
+- `GET /audit/logs/` - List all audit logs with search and filtering
+- `GET /audit/logs/{id}/` - Retrieve specific audit log details
+
+Example API usage:
+```bash
+# List audit logs (admin only)
+curl -X GET http://localhost:8000/audit/logs/ \
+  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
+
+# Search audit logs
+curl -X GET "http://localhost:8000/audit/logs/?search=upload" \
+  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
+
+# Get specific audit log
+curl -X GET http://localhost:8000/audit/logs/{audit_log_id}/ \
+  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
+```
+
+#### Security and Immutability
+
+- **Read-Only Design**: Audit logs cannot be modified or deleted through normal application flows
+- **Admin Protection**: Only admin users can access audit logs via API or admin interface
+- **Exception Handling**: Audit logging failures do not break user workflows
+- **IP Tracking**: Captures both direct IP and X-Forwarded-For headers for proxy scenarios
+
+#### Testing Audit Logging
+
+Run audit logging tests:
+```bash
+pytest audit/tests/test_audit.py -v
+```
+
+Test coverage includes:
+- ✅ **Model Tests (3 tests):**
+  - Audit log creation and validation
+  - String representation with and without actor
+  - Generic foreign key relationships
+
+- ✅ **Utility Tests (5 tests):**
+  - log_action function creates entries correctly
+  - Request metadata extraction (IP, user agent)
+  - X-Forwarded-For header handling
+  - Unauthenticated user handling
+  - Exception handling and graceful failures
+
+- ✅ **API Tests (4 tests):**
+  - Admin-only access enforcement
+  - Audit log list and detail views
+  - Search functionality
+  - Proper serialization of audit data
+
+- ✅ **Integration Tests (7 tests):**
+  - Document upload creates audit log
+  - Document deletion creates audit log
+  - Envelope creation creates audit log
+  - Envelope send creates audit log
+  - Envelope rejection creates audit log
+  - Document signing creates audit log
+  - Signature decline creates audit log
+
+- ✅ **Admin Tests (4 tests):**
+  - Read-only field enforcement
+  - Add permission blocking
+  - Change permission blocking
+  - Delete permission blocking
+
+**Total Coverage:** 23 tests covering all audit logging functionality, API endpoints, admin interface, and workflow integration.
+
+#### Developer Usage
+
+To add audit logging to new actions, use the `log_action` utility:
+
+```python
+from audit.utils import log_action
+
+# Log a user action
+log_action(
+    actor=request.user,
+    action="CUSTOM_ACTION",
+    target=model_instance,
+    message=f"User {request.user.get_full_name()} performed custom action on {model_instance}.",
+    request=request  # Optional: for IP and user agent extraction
+)
+```
+
+The audit logging system ensures complete traceability of all user actions while maintaining security and immutability of the audit trail.
+
 

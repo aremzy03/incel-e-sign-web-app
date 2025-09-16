@@ -42,6 +42,16 @@ class DocumentUploadView(APIView):
                 # Save the document
                 document = serializer.save(owner=request.user)
                 
+                # Log the document upload action
+                from audit.utils import log_action
+                log_action(
+                    request.user, 
+                    "UPLOAD_DOC", 
+                    document, 
+                    f"User {request.user.get_full_name() or request.user.username} uploaded document '{document.file_name}'.", 
+                    request=request
+                )
+                
                 # Return document details
                 document_serializer = DocumentSerializer(document)
                 return Response(
@@ -178,6 +188,17 @@ class DocumentDeleteView(DestroyAPIView):
         """
         try:
             document = self.get_object()
+            
+            # Log the document deletion action
+            from audit.utils import log_action
+            log_action(
+                request.user, 
+                "DELETE_DOC", 
+                document, 
+                f"User {request.user.get_full_name() or request.user.username} deleted document '{document.file_name}'.", 
+                request=request
+            )
+            
             document.delete()
             return Response(
                 {

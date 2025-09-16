@@ -12,3 +12,5 @@ django-cors-headers
 django-storages
 boto3
 pypdf
+celery
+redis

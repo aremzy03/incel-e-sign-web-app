@@ -89,16 +89,46 @@ class SignDocumentView(APIView):
         signature.signature_image = serializer.validated_data['signature_image']
         signature.save()
         
+        # Log the signature action
+        from audit.utils import log_action
+        log_action(
+            request.user, 
+            "SIGN_DOC", 
+            signature, 
+            f"User {request.user.get_full_name() or request.user.username} signed envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            request=request
+        )
+        
         # Check if this was the last signer
         remaining_pending = Signature.objects.filter(
             envelope=envelope,
             status='pending'
         ).count()
         
+        # Send notifications
+        from notifications.utils import create_notification, create_envelope_completed_notification, create_signer_turn_notification
+        from django.contrib.auth import get_user_model
+        
+        User = get_user_model()
+        
         if remaining_pending == 0:
             # All signers have signed - mark envelope as completed
             envelope.status = "completed"
             envelope.save()
+            
+            # Notify creator that envelope is completed
+            message = create_envelope_completed_notification(envelope)
+            create_notification.delay(str(envelope.creator.id), message)
+        else:
+            # Notify next signer
+            next_signature = Signature.objects.filter(
+                envelope=envelope,
+                status='pending'
+            ).order_by('signer__id').first()
+            
+            if next_signature:
+                message = create_signer_turn_notification(envelope)
+                create_notification.delay(str(next_signature.signer.id), message)
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)
@@ -182,9 +212,25 @@ class DeclineSignatureView(APIView):
         signature.status = "declined"
         signature.save()
         
+        # Log the signature decline action
+        from audit.utils import log_action
+        log_action(
+            request.user, 
+            "DECLINE_SIGN", 
+            signature, 
+            f"User {request.user.get_full_name() or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            request=request
+        )
+        
         # Mark envelope as rejected
         envelope.status = "rejected"
         envelope.save()
+        
+        # Notify creator about decline
+        from notifications.utils import create_notification, create_signer_declined_notification
+        
+        message = create_signer_declined_notification(envelope, request.user)
+        create_notification.delay(str(envelope.creator.id), message)
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)

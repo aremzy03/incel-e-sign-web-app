@@ -1,0 +1,7 @@
+#!/home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app/.venv/bin/python
+import sys
+from celery.__main__ import main
+if __name__ == '__main__':
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
+    sys.exit(main())

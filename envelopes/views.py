@@ -46,6 +46,16 @@ class EnvelopeCreateView(APIView):
         if serializer.is_valid():
             envelope = serializer.save()
             
+            # Log the envelope creation action
+            from audit.utils import log_action
+            log_action(
+                request.user, 
+                "CREATE_ENVELOPE", 
+                envelope, 
+                f"User {request.user.get_full_name() or request.user.username} created envelope for document '{envelope.document.file_name}'.", 
+                request=request
+            )
+            
             # Return envelope details using the detail serializer
             detail_serializer = EnvelopeDetailSerializer(envelope)
             
@@ -105,11 +115,32 @@ class EnvelopeSendView(APIView):
         envelope.status = "sent"
         envelope.save()
         
+        # Log the envelope send action
+        from audit.utils import log_action
+        log_action(
+            request.user, 
+            "SEND_ENVELOPE", 
+            envelope, 
+            f"User {request.user.get_full_name() or request.user.username} sent envelope for document '{envelope.document.file_name}'.", 
+            request=request
+        )
+        
         # Create Signature records for each signer in signing_order
         from signatures.models import Signature
         from django.contrib.auth import get_user_model
+        from notifications.utils import create_notification, create_envelope_sent_notification
         
         User = get_user_model()
+        
+        # Notify first signer
+        if envelope.signing_order:
+            first_signer_id = envelope.signing_order[0]['signer_id']
+            try:
+                first_signer = User.objects.get(id=first_signer_id)
+                message = create_envelope_sent_notification(envelope)
+                create_notification.delay(str(first_signer.id), message)
+            except User.DoesNotExist:
+                pass
         
         for signer_entry in envelope.signing_order:
             signer_id = signer_entry['signer_id']
@@ -170,6 +201,31 @@ class EnvelopeRejectView(APIView):
         # Update envelope status to rejected
         envelope.status = "rejected"
         envelope.save()
+        
+        # Log the envelope rejection action
+        from audit.utils import log_action
+        log_action(
+            request.user, 
+            "REJECT_ENVELOPE", 
+            envelope, 
+            f"User {request.user.get_full_name() or request.user.username} rejected envelope for document '{envelope.document.file_name}'.", 
+            request=request
+        )
+        
+        # Notify all signers about rejection
+        from django.contrib.auth import get_user_model
+        from notifications.utils import create_notification, create_envelope_rejected_notification
+        
+        User = get_user_model()
+        
+        message = create_envelope_rejected_notification(envelope)
+        for signer_entry in envelope.signing_order:
+            signer_id = signer_entry['signer_id']
+            try:
+                signer = User.objects.get(id=signer_id)
+                create_notification.delay(str(signer.id), message)
+            except User.DoesNotExist:
+                continue
         
         # Return updated envelope details
         serializer = EnvelopeSerializer(envelope)

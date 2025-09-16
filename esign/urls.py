@@ -23,4 +23,6 @@ urlpatterns = [
     path('documents/', include('documents.urls')),
     path('envelopes/', include('envelopes.urls')),
     path('signatures/', include('signatures.urls')),
+    path('notifications/', include('notifications.urls')),
+    path('audit/', include('audit.urls')),
 ]
