@@ -44,6 +44,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'users',
     'documents',
+    'envelopes',
+    'signatures',
 ]
 
 MIDDLEWARE = [

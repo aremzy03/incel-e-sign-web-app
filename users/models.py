@@ -2,12 +2,19 @@
 User models for authentication and profile management.
 """
 
+import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
 
 
 class CustomUser(AbstractUser):
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for the user."
+    )
     email = models.EmailField(unique=True)
     full_name = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
