@@ -1,26 +1,181 @@
-## E-Sign Application (MVP)
+# E-Sign Application
 
-A Django-based e-signature platform inspired by SignNow and DocuSign.
+A comprehensive Django-based e-signature platform inspired by SignNow and DocuSign, providing secure document signing workflows with sequential signing, notifications, and audit logging.
 
-### Setup Instructions
+## 🚀 Project Overview
 
-1. Clone the repository
-   - git clone <repo_url>
-   - cd incel-e-sign-web-app
+The E-Sign Application is a full-featured electronic signature platform that enables users to upload documents, create signing workflows, and manage the complete document signing process. Built with Django and Django REST Framework, it provides a robust API for document management, envelope creation, sequential signing, and comprehensive audit trails.
 
-2. Install dependencies
-   - pip install -r requirements.txt
+### Core Features
 
-3. Create a .env file with environment variables
-   - DB_NAME, DB_USER, DB_PASS, SECRET_KEY, DEBUG
+- **📄 Document Management**: Upload, store, and manage PDF documents with size and type validation
+- **📮 Envelope System**: Create signing workflows with multiple signers and sequential signing order
+- **✍️ Sequential Signing**: Enforce proper signing order with turn-based validation
+- **🔔 Real-time Notifications**: In-app and email notifications powered by Celery background tasks
+- **📋 Audit Logging**: Immutable audit trails for compliance and security
+- **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
+- **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
+- **⚡ Async Processing**: Background task processing with Celery and Redis
 
-4. Run migrations
-   - python manage.py migrate
+## 🛠️ Tech Stack
 
-5. Start the development server
-   - python manage.py runserver
+### Backend Framework
+- **Django 5.2.6**: Web framework for rapid development
+- **Django REST Framework**: Powerful API framework for building RESTful APIs
+- **Django REST Framework SimpleJWT**: JWT authentication with token blacklisting
 
-### Quickstart Walkthrough
+### Database & Storage
+- **PostgreSQL**: Primary database for production
+- **SQLite**: Used for testing (automatic fallback)
+- **Django Storages**: File storage abstraction (local/S3 support)
+
+### Task Queue & Caching
+- **Celery**: Distributed task queue for background processing
+- **Redis**: Message broker and result backend for Celery
+
+### Authentication & Security
+- **JWT (JSON Web Tokens)**: Stateless authentication
+- **Token Blacklisting**: Secure token revocation
+- **CORS Headers**: Cross-origin resource sharing support
+
+### Testing & Development
+- **Pytest**: Testing framework with Django integration
+- **Pytest-Cov**: Code coverage reporting
+- **Python Decouple**: Environment variable management
+
+### Additional Libraries
+- **PyPDF**: PDF document processing
+- **Boto3**: AWS S3 integration (optional)
+- **Django Allauth**: Authentication utilities
+
+## 🚀 Setup Instructions
+
+### Prerequisites
+- Python 3.8+
+- PostgreSQL 12+
+- Redis 6+
+- Git
+
+### 1. Clone Repository
+```bash
+git clone <repo-url>
+cd incel-e-sign-web-app
+```
+
+### 2. Create Virtual Environment
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Environment Configuration
+Create a `.env` file in the project root:
+```bash
+cp .env.example .env  # If example exists, or create manually
+```
+
+Required environment variables:
+```env
+# Database Configuration
+DB_NAME=esign_db
+DB_USER=esign_user
+DB_PASSWORD=esign_pass
+DB_HOST=localhost
+DB_PORT=5432
+
+# Django Configuration
+SECRET_KEY=your-secret-key-here
+DEBUG=True
+ALLOWED_HOSTS=127.0.0.1,localhost
+
+# Redis Configuration (for Celery)
+REDIS_URL=redis://localhost:6379/0
+
+# Email Configuration (optional)
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your-email@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+
+# AWS S3 Configuration (optional, for production)
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_STORAGE_BUCKET_NAME=your-bucket-name
+AWS_S3_REGION_NAME=us-east-1
+```
+
+### 5. Database Setup
+```bash
+# Create PostgreSQL database
+createdb esign_db
+
+# Run migrations
+python manage.py migrate
+```
+
+### 6. Start Services
+
+#### Start Redis Server
+```bash
+redis-server
+```
+
+#### Start Celery Worker (in a new terminal)
+```bash
+celery -A esign worker -l info
+```
+
+#### Start Django Development Server
+```bash
+python manage.py runserver
+```
+
+The application will be available at `http://localhost:8000`
+
+## 🧪 Running Tests
+
+### Test Suite Overview
+The application includes comprehensive test coverage with 114+ tests covering all core functionality, security, and edge cases.
+
+### Running Tests
+```bash
+# Run all tests with coverage
+pytest --cov
+
+# Run tests with detailed coverage report
+pytest --cov=. --cov-report=html --cov-report=term-missing
+
+# Run specific test modules
+pytest documents/tests/ -v
+pytest envelopes/tests/ -v
+pytest signatures/tests/ -v
+pytest notifications/tests/ -v
+pytest audit/tests/ -v
+
+# Run integration tests
+pytest tests/test_integration.py -v
+```
+
+### Test Coverage
+- **Authentication & User Management**: 11 tests
+- **Document Management**: 36 tests
+- **Envelope Management**: 47 tests
+- **Signature Management**: 19 tests
+- **Notification System**: 21 tests
+- **Audit Logging**: 23 tests
+- **Integration Tests**: Complete workflow testing
+
+### Coverage Goals
+- **MVP**: ≥80% coverage
+- **Production**: ≥90% coverage
+
+## 🚀 Quickstart Walkthrough
 
 Follow this step-by-step guide to test the complete e-signature workflow:
 
@@ -74,15 +229,152 @@ curl -X POST http://localhost:8000/envelopes/ENVELOPE_ID/send/ \
 
 #### 6. Sign the Document (as the signer)
 ```bash
+# Option 1: Sign with inline signature image
 curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
   -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
   }'
+
+# Option 2: Sign with reusable signature ID
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_id": "USER_SIGNATURE_UUID"
+  }'
+
+# Option 3: Sign with default signature (no parameters needed)
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
-### Testing & Integration
+## 📚 Features & API Overview
+
+### Authentication Endpoints
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/auth/register/` | User registration | ❌ |
+| `POST` | `/auth/login/` | User login (JWT tokens) | ❌ |
+| `POST` | `/auth/logout/` | User logout (blacklist token) | ✅ |
+| `GET` | `/auth/profile/` | Get user profile | ✅ |
+
+### Document Management
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/documents/upload/` | Upload PDF document (≤20MB) | ✅ |
+| `GET` | `/documents/` | List user's documents | ✅ |
+| `GET` | `/documents/{id}/` | Retrieve single document | ✅ |
+| `DELETE` | `/documents/{id}/delete/` | Delete document | ✅ |
+
+### Envelope Management
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/envelopes/create/` | Create envelope with signing order | ✅ |
+| `POST` | `/envelopes/{id}/send/` | Send envelope to signers | ✅ |
+| `POST` | `/envelopes/{id}/reject/` | Reject envelope | ✅ |
+| `GET` | `/envelopes/` | List envelopes (creator + signer) | ✅ |
+| `GET` | `/envelopes/{id}/` | Retrieve envelope details | ✅ |
+
+### Signature Operations
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
+| `POST` | `/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
+
+### Reusable Signatures
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/signatures/user/` | List user's signatures | ✅ |
+| `POST` | `/signatures/user/` | Upload new signature | ✅ |
+| `GET` | `/signatures/user/{id}/` | Get signature details | ✅ |
+| `PATCH` | `/signatures/user/{id}/` | Update signature (set default) | ✅ |
+| `DELETE` | `/signatures/user/{id}/` | Delete signature | ✅ |
+
+### Notifications
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/notifications/` | List user notifications | ✅ |
+| `PATCH` | `/notifications/{id}/read/` | Mark notification as read | ✅ |
+
+### Audit Logs (Admin Only)
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/audit/logs/` | List audit logs | ✅ (Admin) |
+| `GET` | `/audit/logs/{id}/` | Get audit log details | ✅ (Admin) |
+
+## 🔄 Workflow
+
+### Document Signing Lifecycle
+
+```
+Draft → Sent → Completed / Rejected
+  ↓       ↓         ↓
+Create   Send    All Signers
+Envelope  to      Complete
+         Signers  or Any
+                  Declines
+```
+
+### Sequential Signing Process
+
+1. **Document Upload**: User uploads PDF document
+2. **Envelope Creation**: Create envelope with signing order
+3. **Envelope Sending**: Send to first signer in sequence
+4. **Sequential Signing**: Each signer signs in order
+5. **Completion**: All signers complete or any declines
+
+### Signing Order Logic
+- Signers must sign in the order specified in `signing_order`
+- Only the current signer (lowest pending order) can act
+- Signing moves to the next signer automatically
+- Declining cancels the entire envelope
+
+### Notification Flow
+- **Envelope Sent**: Notifies first signer
+- **Turn-based**: Notifies next signer when previous completes
+- **Completion**: Notifies creator when all signers complete
+- **Decline**: Notifies creator when any signer declines
+
+### Audit Log Entries
+Every significant action generates an immutable audit log:
+- Document uploads/deletions
+- Envelope creation/sending/rejection
+- Document signing/declining
+- User authentication events
+
+## 🖊️ Reusable Signatures
+
+### Features
+- **Multiple Signatures**: Upload and manage multiple signature images
+- **Default Signature**: Set one signature as default for automatic use
+- **File Validation**: Size (≤1MB) and format (JPEG, PNG, GIF, BMP, WEBP) validation
+- **User Isolation**: Users can only access their own signatures
+
+### Usage in Document Signing
+When signing documents, you can use signatures in three ways:
+
+1. **Inline Signature**: Provide base64-encoded signature image
+2. **Signature ID**: Reference a specific reusable signature
+3. **Default Signature**: Use your default signature automatically
+
+### Signature Priority Logic
+1. Explicit `signature_image` (if provided)
+2. Explicit `signature_id` (if provided)
+3. Default signature (if user has one)
+4. Error (if none available)
+
+## 🧪 Testing & Integration
 
 #### Running Tests
 ```bash
@@ -1964,5 +2256,449 @@ log_action(
 ```
 
 The audit logging system ensures complete traceability of all user actions while maintaining security and immutability of the audit trail.
+
+## 🤝 Contributing
+
+We welcome contributions to the E-Sign Application! Please follow these guidelines:
+
+### Development Workflow
+1. **Fork the repository** and create a feature branch
+2. **Follow naming conventions**:
+   - Branches: `feature/description`, `bugfix/description`, `chore/description`
+   - Commits: Use conventional commit format (`feat:`, `fix:`, `docs:`, etc.)
+
+### Coding Standards
+- **Python**: Follow PEP 8, use snake_case for variables
+- **Django**: Follow Django best practices and conventions
+- **Tests**: Write tests for new features (aim for ≥90% coverage)
+- **Documentation**: Update API docs and README for changes
+
+### Code Review Process
+- All code must pass peer review before merging
+- Ensure all tests pass: `pytest --cov`
+- Update documentation for API changes
+- Follow the project's coding style guidelines
+
+### Reporting Issues
+- Use GitHub Issues for bug reports and feature requests
+- Provide clear reproduction steps for bugs
+- Include relevant logs and environment details
+
+### Pull Request Guidelines
+- Write clear, descriptive commit messages
+- Include tests for new functionality
+- Update documentation as needed
+- Ensure CI/CD checks pass
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+### MIT License Summary
+- ✅ Commercial use allowed
+- ✅ Modification allowed
+- ✅ Distribution allowed
+- ✅ Private use allowed
+- ❌ No liability or warranty provided
+
+---
+
+## 📞 Support
+
+For support and questions:
+- Create an issue on GitHub
+- Check the documentation above
+- Review the test cases for usage examples
+
+---
+
+**Built with ❤️ using Django, Django REST Framework, and modern web technologies.**
+
+### ✍️ Reusable Signatures
+
+The E-Sign application supports reusable signatures, allowing users to upload and manage multiple signature images that can be reused across different documents. This feature enhances user experience by eliminating the need to create new signatures for each document.
+
+#### Features
+
+- **Multiple Signatures**: Users can upload one or more signature images
+- **Default Signature**: Users can set one signature as their default
+- **Automatic Fallback**: When signing documents, the system automatically uses the default signature if no specific signature is provided
+- **Signature ID Support**: Users can specify which signature to use when signing documents
+- **File Validation**: Signature images are validated for size (≤1MB) and format (JPEG, PNG, GIF, BMP, WEBP)
+- **User Isolation**: Users can only access and manage their own signatures
+
+#### Endpoints Overview
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/signatures/user/` | List user's signatures | ✅ |
+| `POST` | `/signatures/user/` | Upload new signature | ✅ |
+| `GET` | `/signatures/user/{id}/` | Get signature details | ✅ |
+| `PATCH` | `/signatures/user/{id}/` | Update signature (e.g., set as default) | ✅ |
+| `DELETE` | `/signatures/user/{id}/` | Delete signature | ✅ |
+
+#### 1. List User Signatures
+
+**Endpoint:** `GET /signatures/user/`
+
+Retrieve all signatures owned by the authenticated user.
+
+**Request:**
+```bash
+curl -X GET http://localhost:8000/signatures/user/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 200):**
+```json
+{
+  "results": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "image": "/media/user_signatures/signature1.png",
+      "is_default": true,
+      "created_at": "2024-01-01T12:00:00Z"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "image": "/media/user_signatures/signature2.png",
+      "is_default": false,
+      "created_at": "2024-01-01T11:00:00Z"
+    }
+  ]
+}
+```
+
+#### 2. Upload New Signature
+
+**Endpoint:** `POST /signatures/user/`
+
+Upload a new signature image.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/signatures/user/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "image=@signature.png" \
+  -F "is_default=true"
+```
+
+**Request Details:**
+- Content-Type: `multipart/form-data`
+- Authentication: Required (JWT Bearer token)
+- Body: Form data with `image` file and optional `is_default` boolean
+
+**Constraints:**
+- File size: ≤ 1MB
+- File formats: JPEG, JPG, PNG, GIF, BMP, WEBP
+- Authentication: Required
+
+**Response (Success - 201):**
+```json
+{
+  "status": "success",
+  "message": "Signature created successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "image": "/media/user_signatures/signature.png",
+    "is_default": true,
+    "created_at": "2024-01-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Invalid file type, size, or format
+- `401 Unauthorized`: Missing or invalid authentication
+
+#### 3. Get Signature Details
+
+**Endpoint:** `GET /signatures/user/{id}/`
+
+Retrieve details of a specific signature.
+
+**Request:**
+```bash
+curl -X GET http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 200):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "image": "/media/user_signatures/signature.png",
+  "is_default": true,
+  "created_at": "2024-01-01T12:00:00Z"
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid authentication
+- `404 Not Found`: Signature not found or user is not the owner
+
+#### 4. Update Signature
+
+**Endpoint:** `PATCH /signatures/user/{id}/`
+
+Update signature properties (e.g., set as default).
+
+**Request:**
+```bash
+curl -X PATCH http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "is_default": true
+  }'
+```
+
+**Response (Success - 200):**
+```json
+{
+  "status": "success",
+  "message": "Signature updated successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "image": "/media/user_signatures/signature.png",
+    "is_default": true,
+    "created_at": "2024-01-01T12:00:00Z"
+  }
+}
+```
+
+**Note:** When setting a signature as default, all other signatures for the user are automatically set to non-default.
+
+#### 5. Delete Signature
+
+**Endpoint:** `DELETE /signatures/user/{id}/`
+
+Delete a signature.
+
+**Request:**
+```bash
+curl -X DELETE http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 204):**
+```json
+{
+  "status": "success",
+  "message": "Signature deleted successfully"
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid authentication
+- `404 Not Found`: Signature not found or user is not the owner
+
+#### Using Reusable Signatures in Document Signing
+
+The document signing endpoint now supports three ways to provide signatures:
+
+**1. Inline Signature Image (Original Method):**
+```bash
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  }'
+```
+
+**2. Reusable Signature ID:**
+```bash
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_id": "550e8400-e29b-41d4-a716-446655440000"
+  }'
+```
+
+**3. Default Signature (No Parameters):**
+```bash
+curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+#### Signature Priority Logic
+
+When signing documents, the system follows this priority order:
+
+1. **Explicit signature_image**: If provided, use the inline signature
+2. **Explicit signature_id**: If provided, use the specified UserSignature
+3. **Default signature**: If user has a default signature, use it automatically
+4. **Error**: If none of the above are available, return an error
+
+#### Constraints and Validation
+
+**File Upload Constraints:**
+- Maximum file size: 1MB
+- Allowed formats: JPEG, JPG, PNG, GIF, BMP, WEBP
+- File must be a valid image
+
+**Default Signature Constraints:**
+- Only one signature can be default per user
+- Setting a signature as default automatically unsets all others
+- Users can have zero or one default signature
+
+**Access Control:**
+- Users can only access their own signatures
+- Attempting to access another user's signature returns 404
+- All operations require valid JWT authentication
+
+#### Testing Reusable Signatures
+
+**Run User Signature Tests:**
+```bash
+# Run all user signature tests
+pytest signatures/tests/test_user_signatures.py -v
+
+# Run all signature tests
+pytest signatures/tests/ -v
+```
+
+**Test Coverage:**
+- ✅ **Model Tests (3 tests):**
+  - User signature creation and validation
+  - Default signature constraint enforcement
+  - String representation
+
+- ✅ **Serializer Tests (2 tests):**
+  - File size validation (≤1MB)
+  - File format validation (image formats only)
+
+- ✅ **API Tests (8 tests):**
+  - Create user signature with authentication
+  - List user signatures (user isolation)
+  - Update signature (set as default)
+  - Delete signature
+  - Unauthorized access prevention
+  - Cross-user access prevention
+
+- ✅ **Document Signing Integration Tests (6 tests):**
+  - Sign document with signature_id
+  - Sign document with default signature
+  - Sign document with no signature provided (error)
+  - Sign document with invalid signature_id
+  - Sign document with another user's signature_id
+  - Sign document with both signature_image and signature_id (error)
+
+**Total Coverage:** 19 tests covering all reusable signature functionality, API endpoints, and document signing integration.
+
+#### User Signature Model
+
+The `UserSignature` model includes:
+- `id`: Unique identifier (UUID)
+- `user`: User who owns this signature (ForeignKey)
+- `image`: Signature image file (ImageField)
+- `is_default`: Whether this is the user's default signature (BooleanField)
+- `created_at`: Creation timestamp (DateTimeField, auto_now_add=True)
+
+**Features:**
+- Automatic UUID generation for signature IDs
+- Cascade delete when user is deleted
+- Database constraint ensuring only one default signature per user
+- Model-level logic to automatically unset other defaults when setting a new default
+- Indexes for efficient querying by user and default status
+
+## Integration Tests for Reusable Signatures
+
+The application includes comprehensive integration tests for the reusable signatures feature located in `tests/test_user_signatures_integration.py`. These tests validate the complete workflow of the UserSignature feature using Django REST Framework's APITestCase and APIClient.
+
+### Test Coverage
+
+The integration tests cover the following scenarios:
+
+#### 1. Upload Reusable Signature (`UploadReusableSignatureTest`)
+- **Success Case**: Upload signature with base64 image, verify it's saved and belongs to user, assert it appears in GET `/signatures/user/`
+- **Unauthorized Access**: Test uploading without authentication (401 Unauthorized)
+- **Invalid File Format**: Test uploading non-image files (400 Bad Request)
+
+#### 2. Set Default Signature (`SetDefaultSignatureTest`)
+- **Multiple Signatures**: Upload 2 signatures, set one as default
+- **Single Default Constraint**: Assert only one signature can be default at a time
+- **Default Switching**: Change default signature and verify previous default is unset
+
+#### 3. Sign with Explicit Signature ID (`SignWithExplicitSignatureTest`)
+- **Successful Signing**: Create envelope requiring signer, signer uploads reusable signature, signer signs using signature_id
+- **Signature Record Creation**: Assert Signature record created with image copied from UserSignature
+- **Invalid Signature ID**: Test signing with non-existent signature_id (400 Bad Request)
+- **Other User's Signature**: Test signing with another user's signature_id (400 Bad Request)
+
+#### 4. Sign with Auto-Default (`SignWithAutoDefaultTest`)
+- **Auto-Default Usage**: Upload default signature, create envelope, sign without providing signature
+- **Default Applied**: Assert default signature is used automatically
+- **No Default Available**: Test signing with no signature provided and no default signature (400 Bad Request)
+
+#### 5. Delete Reusable Signature (`DeleteReusableSignatureTest`)
+- **Successful Deletion**: Upload signature, DELETE `/signatures/user/<id>/`, assert removed from database
+- **Deletion Impact**: Attempt to sign with deleted signature_id → 400 Bad Request
+- **Unauthorized Deletion**: Another user tries to delete your UserSignature → 404 Not Found
+
+#### 6. Permission Enforcement (`PermissionEnforcementTest`)
+- **Access Control**: Users can only access their own signatures
+- **Cross-User Access**: Another user tries to GET or UPDATE your UserSignature → 404 Not Found
+- **Data Isolation**: Verify users cannot see each other's signatures
+
+#### 7. Complete Workflow Integration (`UserSignatureWorkflowIntegrationTest`)
+- **End-to-End Flow**: Upload → set default → sign → delete
+- **Multiple Signatures**: Upload multiple signatures, set one as default
+- **Explicit vs Auto**: Sign using explicit signature_id, then sign using default
+- **Deletion Verification**: Delete signature and verify it can't be used
+
+#### 8. Edge Cases (`UserSignatureEdgeCasesTest`)
+- **Conflicting Parameters**: Test signing with both signature_image and signature_id provided
+- **Large File Upload**: Test uploading signature exceeding size limit
+- **User Isolation**: Verify multiple users can have default signatures independently
+
+### Test Setup and Fixtures
+
+The tests use the following setup:
+- **Test Users**: Creator and two signers with JWT authentication
+- **Test Images**: Generated PNG images in different colors for signature testing
+- **Test Documents**: PDF content for envelope creation
+- **Mock Celery**: Celery tasks are mocked to avoid Redis dependency in tests
+
+### Authentication and Authorization
+
+All tests use JWT token authentication:
+```python
+self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+```
+
+### Database Verification
+
+Tests verify both API responses and database state:
+- Signature records are created with correct status
+- UserSignature records are properly associated with users
+- Audit logs are created for all major actions
+- Cascade deletions work correctly
+
+### Running the Tests
+
+```bash
+# Run all user signature integration tests
+python -m pytest tests/test_user_signatures_integration.py -v
+
+# Run with coverage
+python -m pytest tests/test_user_signatures_integration.py --cov=signatures --cov-report=term-missing
+
+# Run specific test class
+python -m pytest tests/test_user_signatures_integration.py::UploadReusableSignatureTest -v
+```
+
+### Test Validation
+
+These integration tests ensure that:
+- The reusable signature workflow functions correctly end-to-end
+- Security and permission enforcement work as expected
+- Database integrity is maintained throughout operations
+- Error handling provides appropriate responses
+- Audit trails are properly maintained
 
 

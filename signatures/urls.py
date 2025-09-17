@@ -11,6 +11,11 @@ from . import views
 app_name = 'signatures'
 
 urlpatterns = [
+    # User signature management
+    path('user/', views.UserSignatureListCreateView.as_view(), name='user-signatures'),
+    path('user/<uuid:id>/', views.UserSignatureDetailView.as_view(), name='user-signature-detail'),
+    
+    # Document signing
     path('<uuid:envelope_id>/sign/', views.SignDocumentView.as_view(), name='sign_document'),
     path('<uuid:envelope_id>/decline/', views.DeclineSignatureView.as_view(), name='decline_signature'),
 ]

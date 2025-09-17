@@ -146,3 +146,74 @@ class Signature(models.Model):
         )
         
         return self.id == current_signature.id
+
+
+class UserSignature(models.Model):
+    """
+    Model representing a reusable signature for a user.
+    
+    Users can upload multiple signatures and set one as default.
+    These signatures can be reused when signing documents.
+    """
+    
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for the user signature."
+    )
+    
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="user_signatures",
+        help_text="The user who owns this signature."
+    )
+    
+    image = models.ImageField(
+        upload_to="user_signatures/",
+        help_text="The signature image file."
+    )
+    
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Whether this is the user's default signature."
+    )
+    
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when the signature was created."
+    )
+    
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "User Signature"
+        verbose_name_plural = "User Signatures"
+        # Ensure only one default signature per user
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=models.Q(is_default=True),
+                name='unique_default_signature_per_user'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['user', 'is_default']),
+            models.Index(fields=['user', 'created_at']),
+        ]
+    
+    def __str__(self) -> str:
+        return f"Signature for {self.user.email} ({'default' if self.is_default else 'custom'})"
+    
+    def save(self, *args, **kwargs):
+        """
+        Override save to ensure only one default signature per user.
+        """
+        if self.is_default:
+            # Set all other signatures for this user to non-default
+            UserSignature.objects.filter(
+                user=self.user,
+                is_default=True
+            ).exclude(id=self.id).update(is_default=False)
+        
+        super().save(*args, **kwargs)
