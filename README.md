@@ -181,7 +181,7 @@ Follow this step-by-step guide to test the complete e-signature workflow:
 
 #### 1. Create a User
 ```bash
-curl -X POST http://localhost:8000/auth/register/ \
+curl -X POST http://localhost:8000/api/auth/register/ \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -192,7 +192,7 @@ curl -X POST http://localhost:8000/auth/register/ \
 
 #### 2. Login and Get JWT Token
 ```bash
-curl -X POST http://localhost:8000/auth/login/ \
+curl -X POST http://localhost:8000/api/auth/login/ \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
@@ -203,14 +203,14 @@ Save the `access` token from the response for the next steps.
 
 #### 3. Upload a Document
 ```bash
-curl -X POST http://localhost:8000/documents/upload/ \
+curl -X POST http://localhost:8000/api/documents/upload/ \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -F "file=@document.pdf"
 ```
 
 #### 4. Create an Envelope
 ```bash
-curl -X POST http://localhost:8000/envelopes/create/ \
+curl -X POST http://localhost:8000/api/envelopes/create/ \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -223,14 +223,14 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 
 #### 5. Send the Envelope
 ```bash
-curl -X POST http://localhost:8000/envelopes/ENVELOPE_ID/send/ \
+curl -X POST http://localhost:8000/api/envelopes/ENVELOPE_ID/send/ \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
 #### 6. Sign the Document (as the signer)
 ```bash
 # Option 1: Sign with inline signature image
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
   -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -238,7 +238,7 @@ curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
   }'
 
 # Option 2: Sign with reusable signature ID
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
   -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -246,7 +246,7 @@ curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
   }'
 
 # Option 3: Sign with default signature (no parameters needed)
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
+curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
   -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
@@ -258,60 +258,60 @@ curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/auth/register/` | User registration | ❌ |
-| `POST` | `/auth/login/` | User login (JWT tokens) | ❌ |
-| `POST` | `/auth/logout/` | User logout (blacklist token) | ✅ |
-| `GET` | `/auth/profile/` | Get user profile | ✅ |
+| `POST` | `/api/auth/register/` | User registration | ❌ |
+| `POST` | `/api/auth/login/` | User login (JWT tokens) | ❌ |
+| `POST` | `/api/auth/logout/` | User logout (blacklist token) | ✅ |
+| `GET` | `/api/auth/profile/` | Get user profile | ✅ |
 
 ### Document Management
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/documents/upload/` | Upload PDF document (≤20MB) | ✅ |
-| `GET` | `/documents/` | List user's documents | ✅ |
-| `GET` | `/documents/{id}/` | Retrieve single document | ✅ |
-| `DELETE` | `/documents/{id}/delete/` | Delete document | ✅ |
+| `POST` | `/api/documents/upload/` | Upload PDF document (≤20MB) | ✅ |
+| `GET` | `/api/documents/` | List user's documents | ✅ |
+| `GET` | `/api/documents/{id}/` | Retrieve single document | ✅ |
+| `DELETE` | `/api/documents/{id}/delete/` | Delete document | ✅ |
 
 ### Envelope Management
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/envelopes/create/` | Create envelope with signing order | ✅ |
-| `POST` | `/envelopes/{id}/send/` | Send envelope to signers | ✅ |
-| `POST` | `/envelopes/{id}/reject/` | Reject envelope | ✅ |
-| `GET` | `/envelopes/` | List envelopes (creator + signer) | ✅ |
-| `GET` | `/envelopes/{id}/` | Retrieve envelope details | ✅ |
+| `POST` | `/api/envelopes/create/` | Create envelope with signing order | ✅ |
+| `POST` | `/api/envelopes/{id}/send/` | Send envelope to signers | ✅ |
+| `POST` | `/api/envelopes/{id}/reject/` | Reject envelope | ✅ |
+| `GET` | `/api/envelopes/` | List envelopes (creator + signer) | ✅ |
+| `GET` | `/api/envelopes/{id}/` | Retrieve envelope details | ✅ |
 
 ### Signature Operations
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
-| `POST` | `/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
+| `POST` | `/api/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
+| `POST` | `/api/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
 
 ### Reusable Signatures
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `GET` | `/signatures/user/` | List user's signatures | ✅ |
-| `POST` | `/signatures/user/` | Upload new signature | ✅ |
-| `GET` | `/signatures/user/{id}/` | Get signature details | ✅ |
-| `PATCH` | `/signatures/user/{id}/` | Update signature (set default) | ✅ |
-| `DELETE` | `/signatures/user/{id}/` | Delete signature | ✅ |
+| `GET` | `/api/signatures/user/` | List user's signatures | ✅ |
+| `POST` | `/api/signatures/user/` | Upload new signature | ✅ |
+| `GET` | `/api/signatures/user/{id}/` | Get signature details | ✅ |
+| `PATCH` | `/api/signatures/user/{id}/` | Update signature (set default) | ✅ |
+| `DELETE` | `/api/signatures/user/{id}/` | Delete signature | ✅ |
 
 ### Notifications
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `GET` | `/notifications/` | List user notifications | ✅ |
-| `PATCH` | `/notifications/{id}/read/` | Mark notification as read | ✅ |
+| `GET` | `/api/notifications/` | List user notifications | ✅ |
+| `PATCH` | `/api/notifications/{id}/read/` | Mark notification as read | ✅ |
 
 ### Audit Logs (Admin Only)
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `GET` | `/audit/logs/` | List audit logs | ✅ (Admin) |
-| `GET` | `/audit/logs/{id}/` | Get audit log details | ✅ (Admin) |
+| `GET` | `/api/audit/logs/` | List audit logs | ✅ (Admin) |
+| `GET` | `/api/audit/logs/{id}/` | Get audit log details | ✅ (Admin) |
 
 ## 🔄 Workflow
 

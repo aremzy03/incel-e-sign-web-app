@@ -1,4 +1,4 @@
-#!/home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app/.venv/bin/python
+#!/home/aremzy03/Document/cursor_projects/incel_apps/incel_esign_app/incel-e-sign-web-app/.venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

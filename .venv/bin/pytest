@@ -1,4 +1,4 @@
-#!/home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app/.venv/bin/python
+#!/home/aremzy03/Document/cursor_projects/incel_apps/incel_esign_app/incel-e-sign-web-app/.venv/bin/python3
 import sys
 from pytest import console_main
 if __name__ == '__main__':

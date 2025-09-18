@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/aremzy03/Document/cursor_projects/incel_apps/incel-e-sign-web-app/.venv
+set -gx VIRTUAL_ENV /home/aremzy03/Document/cursor_projects/incel_apps/incel_esign_app/incel-e-sign-web-app/.venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH
