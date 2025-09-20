@@ -6,7 +6,7 @@ in the e-signature workflow.
 """
 
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -374,3 +374,84 @@ class EnvelopeDetailView(RetrieveAPIView):
             "message": "Envelope retrieved successfully",
             "data": serializer.data
         }, status=status.HTTP_200_OK)
+
+
+class EnvelopeDeleteView(DestroyAPIView):
+    """
+    API view for deleting an envelope.
+    
+    Users can only delete envelopes they created.
+    Returns 404 Not Found if envelope doesn't exist or user is not the creator.
+    Requires authentication.
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """
+        Return envelopes created by the authenticated user.
+        
+        Returns:
+            QuerySet: Envelopes created by the current user
+        """
+        return Envelope.objects.filter(creator=self.request.user)
+    
+    def get_object(self):
+        """
+        Get the envelope object, ensuring user can only delete envelopes they created.
+        
+        Returns:
+            Envelope: The requested envelope
+            
+        Raises:
+            Http404: If envelope doesn't exist or user is not the creator
+        """
+        queryset = self.get_queryset()
+        envelope_id = self.kwargs.get('pk')
+        return get_object_or_404(queryset, id=envelope_id)
+    
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete the envelope and return appropriate response.
+        
+        Args:
+            request: HTTP request
+            *args: Additional arguments
+            **kwargs: Additional keyword arguments
+            
+        Returns:
+            Response: 204 No Content on successful deletion
+        """
+        try:
+            envelope = self.get_object()
+            
+            # Log the envelope deletion action
+            from audit.utils import log_action
+            log_action(
+                request.user, 
+                "DELETE_ENV", 
+                envelope, 
+                f"User {request.user.full_name or request.user.username} deleted envelope for document '{envelope.document.file_name}'.", 
+                request=request
+            )
+            
+            envelope.delete()
+            return Response(
+                {
+                    'status': 'success',
+                    'message': 'Envelope deleted successfully'
+                },
+                status=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            # Let 404 errors pass through (handled by get_object_or_404)
+            from django.http import Http404
+            if isinstance(e, Http404):
+                raise
+            return Response(
+                {
+                    'status': 'error',
+                    'message': f'Error deleting envelope: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

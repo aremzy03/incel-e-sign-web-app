@@ -48,3 +48,17 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'full_name', 'is_active', 'created_at', 'updated_at']
 
 
+class UserSearchSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user search results.
+    
+    Provides limited user information suitable for search results,
+    excluding sensitive data like password hashes.
+    """
+    
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'email', 'full_name', 'is_active', 'created_at']
+        read_only_fields = ['id', 'email', 'full_name', 'is_active', 'created_at']
+
+

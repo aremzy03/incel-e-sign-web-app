@@ -16,4 +16,5 @@ urlpatterns = [
     path('create/', views.EnvelopeCreateView.as_view(), name='envelope_create'),
     path('<uuid:pk>/send/', views.EnvelopeSendView.as_view(), name='envelope_send'),
     path('<uuid:pk>/reject/', views.EnvelopeRejectView.as_view(), name='envelope_reject'),
+    path('<uuid:pk>/delete/', views.EnvelopeDeleteView.as_view(), name='envelope_delete'),
 ]

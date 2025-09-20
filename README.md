@@ -262,6 +262,7 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 | `POST` | `/api/auth/login/` | User login (JWT tokens) | ❌ |
 | `POST` | `/api/auth/logout/` | User logout (blacklist token) | ✅ |
 | `GET` | `/api/auth/profile/` | Get user profile | ✅ |
+| `GET` | `/api/auth/users/` | Search users by email/name | ✅ |
 
 ### Document Management
 
@@ -281,6 +282,7 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 | `POST` | `/api/envelopes/{id}/reject/` | Reject envelope | ✅ |
 | `GET` | `/api/envelopes/` | List envelopes (creator + signer) | ✅ |
 | `GET` | `/api/envelopes/{id}/` | Retrieve envelope details | ✅ |
+| `DELETE` | `/api/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 
 ### Signature Operations
 
@@ -431,6 +433,67 @@ JWT-based authentication endpoints:
 - POST /auth/login/
 - POST /auth/logout/
 - GET /auth/profile/
+- GET /auth/users/ - Search users by email or full name
+
+#### User Search Endpoint
+
+**GET /api/auth/users/?search=query&page_size=10**
+
+Search for users by email address or full name with pagination support.
+
+**Request Details:**
+- Method: GET
+- Authentication: Required (JWT Bearer token)
+- Query Parameters:
+  - `search` (optional): Search query for email or full name
+  - `page_size` (optional): Number of results per page (default: 10, max: 100)
+
+**Example Request:**
+```bash
+curl -X GET "http://localhost:8000/api/auth/users/?search=user@example.com&page_size=10" \
+  -H "Authorization: Bearer <your-jwt-token>"
+```
+
+**Response (Success - 200):**
+```json
+{
+  "status": "success",
+  "message": "Users retrieved successfully",
+  "data": {
+    "count": 2,
+    "next": null,
+    "previous": null,
+    "results": [
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174000",
+        "email": "user@example.com",
+        "full_name": "John Doe",
+        "is_active": true,
+        "created_at": "2024-01-15T10:30:00Z"
+      },
+      {
+        "id": "987fcdeb-51a2-43d1-b789-123456789abc",
+        "email": "another.user@example.com",
+        "full_name": "Jane Smith",
+        "is_active": true,
+        "created_at": "2024-01-14T15:45:00Z"
+      }
+    ]
+  }
+}
+```
+
+**Features:**
+- **Case-insensitive search**: Searches both email and full_name fields
+- **Pagination**: Configurable page size with next/previous links
+- **Active users only**: Returns only active users
+- **Ordered results**: Results ordered by email for consistency
+- **Security**: Only authenticated users can search
+
+**Use Cases:**
+- Finding users to add to signing workflows
+- User lookup during envelope creation
+- General user directory functionality
 
 ### 📄 Document Handling
 
@@ -765,6 +828,7 @@ Complete envelope management system for creating signing workflows around docume
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
 | `POST` | `/envelopes/create/` | Create new envelope for document | ✅ |
+| `DELETE` | `/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 
 #### 1. Create Envelope
 
@@ -1271,6 +1335,7 @@ Complete workflow system for document signing from envelope creation to final si
 | `POST` | `/envelopes/{id}/reject/` | Reject envelope (creator only) | ✅ |
 | `GET` | `/envelopes/` | List envelopes (for creators + signers) | ✅ |
 | `GET` | `/envelopes/{id}/` | Retrieve full envelope details with signatures | ✅ |
+| `DELETE` | `/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 | `POST` | `/signatures/{envelope_id}/sign/` | Current signer signs document | ✅ |
 | `POST` | `/signatures/{envelope_id}/decline/` | Current signer declines (envelope rejected) | ✅ |
 
@@ -1497,7 +1562,38 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003
 }
 ```
 
-#### 6. Sign Document
+#### 6. Delete Envelope
+
+**Endpoint:** `DELETE /envelopes/{id}/delete/`
+
+Permanently delete an envelope. Only the envelope creator can delete it.
+
+**Request:**
+```bash
+curl -X DELETE http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/delete/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 204 No Content):**
+```json
+{
+  "status": "success",
+  "message": "Envelope deleted successfully"
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid authentication
+- `404 Not Found`: Envelope not found or user is not the creator
+- `500 Internal Server Error`: Server error during deletion
+
+**Features:**
+- Only envelope creators can delete their envelopes
+- Returns 404 (not 403) for security (doesn't reveal envelope existence)
+- Logs deletion action for audit purposes
+- Cascade deletes associated signatures
+
+#### 7. Sign Document
 
 **Endpoint:** `POST /signatures/{envelope_id}/sign/`
 
@@ -1529,7 +1625,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 }
 ```
 
-#### 7. Decline Signature
+#### 8. Decline Signature
 
 **Endpoint:** `POST /signatures/{envelope_id}/decline/`
 
