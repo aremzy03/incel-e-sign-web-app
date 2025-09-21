@@ -3,10 +3,11 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.generics import ListAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 
 from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, UserSearchSerializer
 
@@ -141,3 +142,41 @@ class UserSearchView(ListAPIView):
                 "results": serializer.data
             }
         }, status=status.HTTP_200_OK)
+
+
+class UserDetailView(RetrieveAPIView):
+    """
+    API view for retrieving a specific user by ID.
+    
+    Endpoint: GET /api/auth/users/{user_id}/
+    Requires authentication.
+    Returns details of the specified user.
+    """
+    
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserSearchSerializer
+    lookup_field = 'id'
+    
+    def get_queryset(self):
+        """
+        Return active users only.
+        """
+        return get_user_model().objects.filter(is_active=True)
+    
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Retrieve user details with custom response format.
+        """
+        try:
+            user = self.get_object()
+            serializer = self.get_serializer(user)
+            return Response({
+                "status": "success",
+                "message": "User retrieved successfully",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({
+                "status": "error",
+                "message": "User not found"
+            }, status=status.HTTP_404_NOT_FOUND)

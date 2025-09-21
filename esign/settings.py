@@ -122,7 +122,29 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
 ]
+
+# Additional CORS settings for file uploads
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # Only in development
+CORS_ALLOWED_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# File upload settings
+FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 
 
 # Password validation
@@ -160,6 +182,11 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Media files (User uploads)
+# https://docs.djangoproject.com/en/5.2/topics/files/
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

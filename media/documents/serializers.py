@@ -8,7 +8,7 @@ functionality in the e-signature workflow.
 import os
 from rest_framework import serializers
 from django.core.files.storage import default_storage
-from django.conf import settings
+from django.core.files.base import ContentFile
 from .models import Document
 
 
@@ -70,11 +70,17 @@ class DocumentUploadSerializer(serializers.Serializer):
         # Save file using Django storage
         file_path = default_storage.save(
             f"documents/{unique_filename}",
-            file
+            ContentFile(file.read())
         )
         
-        # Construct file URL manually to avoid URL encoding issues
-        file_url = f"{settings.MEDIA_URL}{file_path}"
+        # Get file URL
+        file_url = default_storage.url(file_path)
+        
+        # Debug logging
+        print(f"DEBUG UPLOAD: file_path = {file_path}")
+        print(f"DEBUG UPLOAD: file_url = {file_url}")
+        print(f"DEBUG UPLOAD: MEDIA_ROOT = {settings.MEDIA_ROOT}")
+        print(f"DEBUG UPLOAD: MEDIA_URL = {settings.MEDIA_URL}")
         
         # Create Document record
         document = Document.objects.create(

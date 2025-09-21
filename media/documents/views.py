@@ -11,10 +11,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from rest_framework.parsers import MultiPartParser, FormParser
 from django.http import FileResponse, Http404
 import os
-from urllib.parse import unquote
 from django.conf import settings
 from .models import Document
 from .serializers import DocumentUploadSerializer, DocumentSerializer
@@ -29,7 +27,6 @@ class DocumentUploadView(APIView):
     """
     
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
     
     def post(self, request):
         """
@@ -41,20 +38,6 @@ class DocumentUploadView(APIView):
         Returns:
             Response: JSON response with document details or error
         """
-        # Debug: Log request data
-        print(f"DEBUG: Request method: {request.method}")
-        print(f"DEBUG: Request content type: {request.content_type}")
-        print(f"DEBUG: Request data keys: {list(request.data.keys()) if hasattr(request, 'data') else 'No data attr'}")
-        print(f"DEBUG: Request files keys: {list(request.FILES.keys()) if hasattr(request, 'FILES') else 'No FILES attr'}")
-        print(f"DEBUG: User: {request.user}")
-        
-        if 'file' in request.FILES:
-            file = request.FILES['file']
-            print(f"DEBUG: File details - Name: {file.name}, Size: {file.size}, Type: {file.content_type}")
-        else:
-            print("DEBUG: No 'file' key in request.FILES")
-        
-        # Create serializer with request data (includes files when multipart/form-data)
         serializer = DocumentUploadSerializer(data=request.data)
         
         if serializer.is_valid():
@@ -92,22 +75,11 @@ class DocumentUploadView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
         
-        # Log serializer errors for debugging
-        print(f"DEBUG: Serializer validation failed")
-        print(f"DEBUG: Serializer errors: {serializer.errors}")
-        print(f"DEBUG: Request data: {request.data}")
-        
         return Response(
             {
-                'status': 'error',
+                'error': 'Invalid file data',
                 'message': 'Invalid file data',
-                'errors': serializer.errors,
-                'debug_info': {
-                    'content_type': request.content_type,
-                    'has_files': bool(request.FILES),
-                    'files_keys': list(request.FILES.keys()) if request.FILES else [],
-                    'data_keys': list(request.data.keys()) if hasattr(request, 'data') else []
-                }
+                'data': serializer.errors
             },
             status=status.HTTP_400_BAD_REQUEST
         )
@@ -277,11 +249,16 @@ class DocumentDownloadView(APIView):
             # Get the document, ensuring user can only download their own documents
             document = get_object_or_404(Document, id=pk, owner=request.user)
             
+            # Debug logging
+            print(f"DEBUG: Document found: {document.file_name}")
+            print(f"DEBUG: Document file_url: {document.file_url}")
+            print(f"DEBUG: MEDIA_ROOT: {settings.MEDIA_ROOT}")
+            print(f"DEBUG: MEDIA_URL: {settings.MEDIA_URL}")
+            
             # Get the full file path
             if document.file_url.startswith('/media/'):
                 # For local files, construct the full path
-                # Decode URL-encoded filename (e.g., %20 -> space)
-                file_path = os.path.join(settings.MEDIA_ROOT, unquote(document.file_url[7:]))  # Remove '/media/' prefix and decode URL
+                file_path = os.path.join(settings.MEDIA_ROOT, document.file_url[7:])  # Remove '/media/' prefix
             elif document.file_url.startswith('http'):
                 # For S3 or other remote storage, redirect to the URL
                 from django.http import HttpResponseRedirect
@@ -293,20 +270,12 @@ class DocumentDownloadView(APIView):
                 else:
                     file_path = os.path.join(settings.MEDIA_ROOT, document.file_url)
             
+            print(f"DEBUG: Constructed file_path: {file_path}")
+            
             # Check if file exists
             if not os.path.exists(file_path):
-                # Try alternative path construction for backwards compatibility
-                alt_path = os.path.join(settings.MEDIA_ROOT, 'documents', document.file_name)
-                if os.path.exists(alt_path):
-                    file_path = alt_path
-                else:
-                    return Response(
-                        {
-                            'status': 'error',
-                            'message': 'Document file not found on server'
-                        },
-                        status=status.HTTP_404_NOT_FOUND
-                    )
+                print(f"DEBUG: File does not exist at: {file_path}")
+                raise Http404("Document file not found")
             
             # Create file response
             response = FileResponse(

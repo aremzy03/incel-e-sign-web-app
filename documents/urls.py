@@ -15,4 +15,5 @@ urlpatterns = [
     path('', views.DocumentListView.as_view(), name='document_list'),
     path('<uuid:pk>/', views.DocumentDetailView.as_view(), name='document_detail'),
     path('<uuid:pk>/delete/', views.DocumentDeleteView.as_view(), name='document_delete'),
+    path('<uuid:pk>/download/', views.DocumentDownloadView.as_view(), name='document_download'),
 ]
