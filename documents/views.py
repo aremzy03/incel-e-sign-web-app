@@ -17,7 +17,9 @@ import os
 from urllib.parse import unquote
 from django.conf import settings
 from .models import Document
+from envelopes.models import Envelope
 from .serializers import DocumentUploadSerializer, DocumentSerializer
+from django.db import models
 
 
 class DocumentUploadView(APIView):
@@ -148,12 +150,26 @@ class DocumentDetailView(RetrieveAPIView):
     
     def get_queryset(self):
         """
-        Return documents owned by the authenticated user.
+        Return documents accessible to the authenticated user.
         
-        Returns:
-            QuerySet: Documents owned by the current user
+        A document is accessible if:
+        - The user is the owner of the document, or
+        - The user is the creator of an envelope that contains the document, or
+        - The user is listed as a signer in an envelope that contains the document.
         """
-        return Document.objects.filter(owner=self.request.user)
+        user = self.request.user
+        # Collect document ids from envelopes where user is creator
+        creator_env_docs = Envelope.objects.filter(creator=user).values_list('document_id', flat=True)
+        # Collect document ids from envelopes where user is a signer (based on JSONField signing_order)
+        # We have to filter in Python due to JSON structure portability
+        signer_env_docs = []
+        for env in Envelope.objects.all():
+            for signer_entry in env.signing_order:
+                if signer_entry.get('signer_id') == str(user.id):
+                    signer_env_docs.append(env.document_id)
+                    break
+        accessible_ids = set(list(creator_env_docs) + signer_env_docs)
+        return Document.objects.filter(models.Q(owner=user) | models.Q(id__in=accessible_ids))
     
     def get_object(self):
         """
@@ -274,8 +290,29 @@ class DocumentDownloadView(APIView):
             FileResponse: PDF file download or 404 error
         """
         try:
-            # Get the document, ensuring user can only download their own documents
-            document = get_object_or_404(Document, id=pk, owner=request.user)
+            # Get the document, ensuring user has access via ownership or envelope participation
+            user = request.user
+            # Quick check for ownership
+            document = Document.objects.filter(id=pk, owner=user).first()
+            if not document:
+                # Check envelope creator access
+                creator_env = Envelope.objects.filter(document_id=pk, creator=user).exists()
+                if creator_env:
+                    document = get_object_or_404(Document, id=pk)
+                else:
+                    # Check signer access by scanning envelopes for this document
+                    has_signer_access = False
+                    for env in Envelope.objects.filter(document_id=pk):
+                        for signer_entry in env.signing_order:
+                            if signer_entry.get('signer_id') == str(user.id):
+                                has_signer_access = True
+                                break
+                        if has_signer_access:
+                            break
+                    if has_signer_access:
+                        document = get_object_or_404(Document, id=pk)
+                    else:
+                        raise Http404
             
             # Get the full file path
             if document.file_url.startswith('/media/'):
