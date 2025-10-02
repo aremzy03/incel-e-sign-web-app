@@ -1,0 +1,7 @@
+#!/home/aremzy03/Document/cursor_projects/incel_apps/incel_esign_app/incel-e-sign-web-app/.venv/bin/python
+import sys
+from charset_normalizer.cli import cli_detect
+if __name__ == '__main__':
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
+    sys.exit(cli_detect())

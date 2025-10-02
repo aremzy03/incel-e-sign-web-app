@@ -213,6 +213,29 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
         ]
 
 
+class EnvelopeUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating draft envelopes.
+    
+    Only allows updating `signing_order` while the envelope is in draft
+    and owned by the authenticated user (enforced in the view).
+    """
+    signing_order = EnvelopeCreateSerializer().fields['signing_order']
+
+    class Meta:
+        model = Envelope
+        fields = ['signing_order']
+
+    def validate_signing_order(self, value):
+        # Reuse the same validation logic as creation
+        return EnvelopeCreateSerializer(context=self.context).validate_signing_order(value)
+
+    def update(self, instance, validated_data):
+        instance.signing_order = validated_data.get('signing_order', instance.signing_order)
+        instance.full_clean()
+        instance.save(update_fields=['signing_order', 'updated_at'])
+        return instance
+
 class SignatureSerializer(serializers.ModelSerializer):
     """
     Serializer for signature details (read-only).

@@ -13,7 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from .models import Envelope
-from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, EnvelopeSerializer
+from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, EnvelopeSerializer, EnvelopeUpdateSerializer
+from documents.serializers import DocumentSerializer
 
 
 class EnvelopeCreateView(APIView):
@@ -138,7 +139,11 @@ class EnvelopeSendView(APIView):
             try:
                 first_signer = User.objects.get(id=first_signer_id)
                 message = create_envelope_sent_notification(envelope)
-                create_notification.delay(str(first_signer.id), message)
+                try:
+                    create_notification.delay(str(first_signer.id), message)
+                except Exception:
+                    # Fallback to synchronous notification if Celery fails
+                    create_notification(str(first_signer.id), message)
             except User.DoesNotExist:
                 pass
         
@@ -154,7 +159,25 @@ class EnvelopeSendView(APIView):
                 )
             except User.DoesNotExist:
                 # This should not happen due to validation, but handle gracefully
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"User {signer_id} not found when creating signature for envelope {envelope.id}")
                 continue
+            except Exception as e:
+                # Log any other errors during signature creation
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error creating signature for user {signer_id} in envelope {envelope.id}: {e}")
+                continue
+        
+        # Verify that Signature records were created
+        created_signatures = Signature.objects.filter(envelope=envelope).count()
+        expected_signatures = len(envelope.signing_order)
+        
+        if created_signatures != expected_signatures:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Signature creation mismatch: expected {expected_signatures}, created {created_signatures} for envelope {envelope.id}")
         
         # Return updated envelope details
         serializer = EnvelopeSerializer(envelope)
@@ -376,6 +399,61 @@ class EnvelopeDetailView(RetrieveAPIView):
         }, status=status.HTTP_200_OK)
 
 
+class EnvelopeDocumentView(APIView):
+    """
+    API view for retrieving the document of a specific envelope.
+    
+    Endpoint: GET /envelopes/{id}/document/
+    Requires authentication.
+    Creator and assigned signers can access.
+    Returns the document details serialized via DocumentSerializer.
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, pk):
+        """
+        Retrieve the document attached to the given envelope if the user has access.
+        
+        Args:
+            request: HTTP request
+            pk: Envelope ID
+            
+        Returns:
+            Response with document details or error message
+        """
+        # Check if envelope exists
+        try:
+            envelope = Envelope.objects.get(pk=pk)
+        except Envelope.DoesNotExist:
+            return Response({
+                "status": "error",
+                "message": "Envelope not found or access denied"
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check access (creator or listed signer)
+        user = request.user
+        has_access = envelope.creator == user
+        if not has_access:
+            for signer_entry in envelope.signing_order:
+                if signer_entry.get('signer_id') == str(user.id):
+                    has_access = True
+                    break
+        
+        if not has_access:
+            return Response({
+                "status": "error",
+                "message": "Envelope not found or access denied"
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Serialize and return the document details
+        doc_serializer = DocumentSerializer(envelope.document)
+        return Response({
+            "status": "success",
+            "message": "Envelope document retrieved successfully",
+            "data": doc_serializer.data
+        }, status=status.HTTP_200_OK)
+
 class EnvelopeDeleteView(DestroyAPIView):
     """
     API view for deleting an envelope.
@@ -455,3 +533,63 @@ class EnvelopeDeleteView(DestroyAPIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class EnvelopeEditView(APIView):
+    """
+    API view for editing draft envelopes.
+    
+    Endpoint: PATCH /envelopes/{id}/edit/
+    Requires authentication. Only the envelope creator can edit.
+    Only envelopes in status "draft" can be edited.
+    Accepts payload: { signing_order: [ { signer_id, order }, ... ] }
+    Returns updated envelope details.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        envelope = get_object_or_404(Envelope, pk=pk)
+
+        if envelope.creator != request.user:
+            return Response({
+                "status": "error",
+                "message": "You can only edit envelopes you created."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if envelope.status != "draft":
+            return Response({
+                "status": "error",
+                "message": f"Only draft envelopes can be edited. Current status: {envelope.status}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = EnvelopeUpdateSerializer(
+            instance=envelope,
+            data=request.data,
+            partial=True,
+            context={"request": request}
+        )
+
+        if serializer.is_valid():
+            updated_envelope = serializer.save()
+
+            from audit.utils import log_action
+            log_action(
+                request.user,
+                "EDIT_ENVELOPE",
+                updated_envelope,
+                f"User {request.user.full_name or request.user.username} edited envelope for document '{updated_envelope.document.file_name}'.",
+                request=request
+            )
+
+            response_serializer = EnvelopeDetailSerializer(updated_envelope)
+            return Response({
+                "status": "success",
+                "message": "Envelope updated successfully",
+                "data": response_serializer.data
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            "status": "error",
+            "message": "Validation failed",
+            "data": serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)

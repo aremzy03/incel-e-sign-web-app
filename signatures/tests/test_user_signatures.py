@@ -423,7 +423,14 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         self.client.force_authenticate(user=self.user)
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
-        data = {'signature_id': str(user_signature.id)}
+        data = {
+            'signature_id': str(user_signature.id),
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, data)
         
@@ -451,7 +458,13 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         self.client.force_authenticate(user=self.user)
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
-        data = {}  # No signature provided, should use default
+        data = {
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }  # No signature provided, should use default
         
         response = self.client.post(url, data)
         
@@ -478,7 +491,14 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         """Test signing document with invalid signature_id."""
         self.client.force_authenticate(user=self.user)
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
-        data = {'signature_id': str(uuid.uuid4())}  # Non-existent ID
+        data = {
+            'signature_id': str(uuid.uuid4()),  # Non-existent ID
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, data)
         
@@ -505,7 +525,14 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         self.client.force_authenticate(user=self.user)
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
-        data = {'signature_id': str(other_signature.id)}
+        data = {
+            'signature_id': str(other_signature.id),
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, data)
         
@@ -527,7 +554,12 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
         data = {
             'signature_id': str(user_signature.id),
-            'signature_image': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+            'signature_image': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
         }
         
         response = self.client.post(url, data)

@@ -13,4 +13,7 @@ django-storages
 boto3
 pypdf
 celery
+requests
 redis
+reportlab
+pillow

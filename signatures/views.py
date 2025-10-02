@@ -14,6 +14,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Signature, UserSignature
 from .serializers import SignatureSerializer, SignDocumentSerializer, DeclineSignatureSerializer, UserSignatureSerializer
+from .utils.pdf_signing import embed_signature, get_media_absolute_path_from_url
+from django.conf import settings
+import os
 
 
 class SignDocumentView(APIView):
@@ -145,6 +148,61 @@ class SignDocumentView(APIView):
                     "message": "No signature provided and no default signature found. Please provide signature_image, signature_id, or set a default signature."
                 }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Embed signature into the PDF
+        document = envelope.document
+        # Always start from the latest available file: previously signed version if present
+        source_url = document.signed_file_url or document.file_url
+        input_pdf_path = get_media_absolute_path_from_url(source_url)
+        output_dir = os.path.join(str(settings.MEDIA_ROOT), 'signed_docs')
+        os.makedirs(output_dir, exist_ok=True)
+        output_pdf_path = os.path.join(output_dir, f"{envelope.id}_signed.pdf")
+
+        # Ensure we have a local input PDF; download if it's a remote URL
+        if not os.path.exists(input_pdf_path):
+            try:
+                if isinstance(source_url, str) and (source_url.startswith('http://') or source_url.startswith('https://')):
+                    import requests
+                    tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp')
+                    os.makedirs(tmp_dir, exist_ok=True)
+                    tmp_input = os.path.join(tmp_dir, f"{envelope.id}_current.pdf")
+                    with requests.get(source_url, stream=True, timeout=15) as r:
+                        r.raise_for_status()
+                        with open(tmp_input, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                    input_pdf_path = tmp_input
+            except Exception:
+                # If download fails, we will skip embedding below
+                pass
+
+        # Try to embed; if it fails, continue workflow without blocking
+        if os.path.exists(input_pdf_path):
+            try:
+                embed_signature(
+                    pdf_path=input_pdf_path,
+                    output_path=output_pdf_path,
+                    signature_image=signature_image_data,
+                    page=validated_data['page'],
+                    x=validated_data['x'],
+                    y=validated_data['y'],
+                    width=validated_data['width'],
+                    height=validated_data['height'],
+                )
+                relative_output = os.path.relpath(output_pdf_path, str(settings.MEDIA_ROOT))
+                new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
+                # Override document with newly signed file so next signer sees prior signatures
+                document.signed_file_url = new_signed_url
+                document.file_url = new_signed_url
+            except Exception:
+                # On failure, proceed without blocking signing
+                document.signed_file_url = document.signed_file_url or None
+        else:
+            # Could not obtain local source; keep existing URLs
+            document.signed_file_url = document.signed_file_url or None
+
+        document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
+
         # Update the signature
         signature.status = "signed"
         signature.signed_at = timezone.now()
@@ -180,7 +238,11 @@ class SignDocumentView(APIView):
             
             # Notify creator that envelope is completed
             message = create_envelope_completed_notification(envelope)
-            create_notification.delay(str(envelope.creator.id), message)
+            try:
+                create_notification.delay(str(envelope.creator.id), message)
+            except Exception:
+                # Fallback to synchronous notification if Celery fails
+                create_notification(str(envelope.creator.id), message)
         else:
             # Notify next signer
             next_signature = Signature.objects.filter(
@@ -190,7 +252,11 @@ class SignDocumentView(APIView):
             
             if next_signature:
                 message = create_signer_turn_notification(envelope)
-                create_notification.delay(str(next_signature.signer.id), message)
+                try:
+                    create_notification.delay(str(next_signature.signer.id), message)
+                except Exception:
+                    # Fallback to synchronous notification if Celery fails
+                    create_notification(str(next_signature.signer.id), message)
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)
@@ -292,7 +358,11 @@ class DeclineSignatureView(APIView):
         from notifications.utils import create_notification, create_signer_declined_notification
         
         message = create_signer_declined_notification(envelope, request.user)
-        create_notification.delay(str(envelope.creator.id), message)
+        try:
+            create_notification.delay(str(envelope.creator.id), message)
+        except Exception:
+            # Fallback to synchronous notification if Celery fails
+            create_notification(str(envelope.creator.id), message)
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)

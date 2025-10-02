@@ -133,7 +133,12 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
         
         payload = {
-            'signature_image': self.test_signature_image
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
         }
         
         response = self.client.post(url, payload, format='json')
@@ -155,7 +160,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         response = self.client.post(url, payload, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -179,7 +191,14 @@ class SignatureTestCase(APITestCase):
         """Test that final signer signing marks envelope as completed."""
         # First two signers sign
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         # Signer 1 signs
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
@@ -236,7 +255,14 @@ class SignatureTestCase(APITestCase):
         
         # Try to sign with second signer (not current)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -271,7 +297,14 @@ class SignatureTestCase(APITestCase):
         
         # Try to sign with user not in signing order
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -298,7 +331,14 @@ class SignatureTestCase(APITestCase):
         
         # Remove authentication
         self.client.credentials()
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -330,7 +370,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': draft_envelope.id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -366,7 +413,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         self.client.post(url, payload, format='json')
         
         # Try to sign again (now signer1 is no longer current signer)
@@ -382,7 +436,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         self.client.post(url, payload, format='json')
         
         # Try to decline (now signer1 is no longer current signer)
@@ -421,7 +482,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': nonexistent_id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -443,7 +511,14 @@ class SignatureTestCase(APITestCase):
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         
@@ -511,7 +586,14 @@ class SignatureTestCase(APITestCase):
         
         # Try to sign as signer2 (order 2) before signer1 (order 1) has signed
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
-        payload = {'signature_image': self.test_signature_image}
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         
         response = self.client.post(url, payload, format='json')
         

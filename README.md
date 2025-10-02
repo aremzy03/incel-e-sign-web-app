@@ -47,6 +47,8 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **PyPDF**: PDF document processing
 - **Boto3**: AWS S3 integration (optional)
 - **Django Allauth**: Authentication utilities
+- **ReportLab**: PDF canvas generation for overlays
+- **Pillow**: Image handling for signature processing
 
 ## 🚀 Setup Instructions
 
@@ -280,8 +282,10 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 | `POST` | `/api/envelopes/create/` | Create envelope with signing order | ✅ |
 | `POST` | `/api/envelopes/{id}/send/` | Send envelope to signers | ✅ |
 | `POST` | `/api/envelopes/{id}/reject/` | Reject envelope | ✅ |
+| `PATCH` | `/api/envelopes/{id}/edit/` | Edit draft envelope (creator only) | ✅ |
 | `GET` | `/api/envelopes/` | List envelopes (creator + signer) | ✅ |
 | `GET` | `/api/envelopes/{id}/` | Retrieve envelope details | ✅ |
+| `GET` | `/api/envelopes/{id}/document/` | Retrieve envelope's document details | ✅ |
 | `DELETE` | `/api/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 
 ### Signature Operations
@@ -1022,6 +1026,59 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
 - `404 Not Found`: Envelope not found
 
 #### 3. Reject Envelope
+#### 3a. Edit Draft Envelope
+
+**Endpoint:** `PATCH /envelopes/{id}/edit/`
+
+Edit an existing draft envelope. Only the envelope creator can edit, and only when the envelope is in the `draft` status. Currently supports updating `signing_order`.
+
+**Request:**
+```bash
+curl -X PATCH http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/edit/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+    ]
+  }'
+```
+
+**Constraints:**
+- Only creator can edit
+- Envelope must be in `draft` status
+- `signing_order` must follow validation rules (sequential orders starting at 1, valid UUID users, no duplicates)
+
+**Response (Success - 200):**
+```json
+{
+  "status": "success",
+  "message": "Envelope updated successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    "document": "550e8400-e29b-41d4-a716-446655440000",
+    "document_file_name": "contract.pdf",
+    "creator": "550e8400-e29b-41d4-a716-446655440004",
+    "creator_email": "creator@example.com",
+    "status": "draft",
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+    ],
+    "signer_count": 2,
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:05:00Z"
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Envelope not in draft status or invalid `signing_order`
+- `401 Unauthorized`: Missing or invalid authentication
+- `403 Forbidden`: User is not the envelope creator
+- `404 Not Found`: Envelope not found
+
 
 **Endpoint:** `POST /envelopes/{id}/reject/`
 
@@ -1254,6 +1311,40 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
+#### 2a. Retrieve Envelope Document
+
+**Endpoint:** `GET /api/envelopes/{id}/document/`
+
+Fetch the document attached to an envelope (creator or assigned signer only). Useful for obtaining `file_url` for the signer UI before posting to the sign endpoint.
+
+**Request:**
+```bash
+curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/document/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 200):**
+```json
+{
+  "status": "success",
+  "message": "Envelope document retrieved successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "file_name": "contract.pdf",
+    "file_url": "/media/documents/550e8400-e29b-41d4-a716-446655440000_contract.pdf",
+    "signed_file_url": null,
+    "file_size": 1024000,
+    "status": "draft",
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid authentication
+- `404 Not Found`: Envelope not found or access denied
+
 **Response Fields:**
 - `id`: Unique envelope identifier
 - `document`: Document ID being signed
@@ -1333,8 +1424,10 @@ Complete workflow system for document signing from envelope creation to final si
 | `POST` | `/envelopes/create/` | Create envelope with document + signing_order | ✅ |
 | `POST` | `/envelopes/{id}/send/` | Send envelope (creator only) | ✅ |
 | `POST` | `/envelopes/{id}/reject/` | Reject envelope (creator only) | ✅ |
+| `PATCH` | `/envelopes/{id}/edit/` | Edit draft envelope (creator only) | ✅ |
 | `GET` | `/envelopes/` | List envelopes (for creators + signers) | ✅ |
 | `GET` | `/envelopes/{id}/` | Retrieve full envelope details with signatures | ✅ |
+| `GET` | `/envelopes/{id}/document/` | Retrieve envelope's document details | ✅ |
 | `DELETE` | `/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 | `POST` | `/signatures/{envelope_id}/sign/` | Current signer signs document | ✅ |
 | `POST` | `/signatures/{envelope_id}/decline/` | Current signer declines (envelope rejected) | ✅ |
@@ -1605,7 +1698,12 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "page": 1,
+    "x": 100,
+    "y": 100,
+    "width": 120,
+    "height": 40
   }'
 ```
 
@@ -1734,7 +1832,12 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "signature_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    "signature_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "page": 1,
+    "x": 100,
+    "y": 100,
+    "width": 120,
+    "height": 40
   }'
 ```
 
@@ -1742,12 +1845,17 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 - Method: POST
 - Authentication: Required (JWT Bearer token)
 - URL Parameter: `{envelope_id}` - UUID of the envelope
-- Body: JSON with `signature_image` (base64 encoded)
+- Body: JSON with `signature_image` (base64 encoded), `page`, `x`, `y`, `width`, `height`
 
 **Payload Structure:**
 ```json
 {
-  "signature_image": "base64-encoded-signature-data"
+  "signature_image": "base64-encoded-signature-data",
+  "page": 1,
+  "x": 100,
+  "y": 100,
+  "width": 120,
+  "height": 40
 }
 ```
 
@@ -1756,6 +1864,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 - Envelope must be in "sent" status
 - Signature image must be valid base64 encoded data
 - Authentication required
+- Optional placement fields: `page`, `x`, `y`, `width`, `height` (defaults applied if omitted)
 
 **Response (Success - 200):**
 ```json
@@ -2796,5 +2905,13 @@ These integration tests ensure that:
 - Database integrity is maintained throughout operations
 - Error handling provides appropriate responses
 - Audit trails are properly maintained
+
+### Embedded PDF Signatures
+
+When a user signs, the backend embeds the provided signature image directly onto the original PDF at the specified coordinates using ReportLab overlays merged via PyPDF. The signed PDF is stored at `/media/signed_docs/{envelope_id}_signed.pdf` and its path is recorded on the `Document` as `signed_file_url`.
+
+Notes:
+- Placement expects PDF points (origin at bottom-left). If placement fields are not provided, defaults are applied.
+- If the original PDF is stored remotely or not accessible on disk in the current environment, embedding may be skipped, but the signing workflow still completes. The `signed_file_url` will only be set when embedding succeeds.
 
 

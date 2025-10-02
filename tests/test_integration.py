@@ -204,7 +204,12 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
         
         sign_data = {
-            'signature_image': f'data:image/png;base64,{self.test_signature_image}'
+            'signature_image': f'data:image/png;base64,{self.test_signature_image}',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
         }
         
         sign1_response = self.client.post(
@@ -749,7 +754,12 @@ class NotificationSystemTest(ESignIntegrationTestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
         
         sign_data = {
-            'signature_image': f'data:image/png;base64,{self.test_signature_image}'
+            'signature_image': f'data:image/png;base64,{self.test_signature_image}',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
         }
         
         sign_response = self.client.post(
@@ -795,7 +805,14 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
     def test_out_of_order_signing_blocked(self):
         """Signer2 should not be able to sign before signer1."""
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
-        sign_data = {'signature_image': f'data:image/png;base64,{self.test_signature_image}'}
+        sign_data = {
+            'signature_image': f'data:image/png;base64,{self.test_signature_image}',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         resp = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope_id}),
             sign_data, format='json'
@@ -805,7 +822,14 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
     def test_duplicate_signing_blocked(self):
         """Signer1 cannot sign twice."""
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        sign_data = {'signature_image': f'data:image/png;base64,{self.test_signature_image}'}
+        sign_data = {
+            'signature_image': f'data:image/png;base64,{self.test_signature_image}',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         self.client.post(reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope_id}), sign_data, format='json')
         # Try again
         resp2 = self.client.post(
@@ -818,7 +842,14 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
         """No further actions should be possible once envelope is completed."""
         # signer1 signs
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        sign_data = {'signature_image': f'data:image/png;base64,{self.test_signature_image}'}
+        sign_data = {
+            'signature_image': f'data:image/png;base64,{self.test_signature_image}',
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
         self.client.post(reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope_id}), sign_data, format='json')
 
         # signer2 signs

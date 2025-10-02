@@ -53,6 +53,13 @@ class Document(models.Model):
         help_text="Size of the file in bytes"
     )
     
+    signed_file_url = models.CharField(
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text="File path or URL to the signed PDF version if available"
+    )
+    
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,

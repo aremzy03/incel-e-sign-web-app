@@ -64,6 +64,13 @@ class SignDocumentSerializer(serializers.Serializer):
         help_text="UUID of a UserSignature to use for signing."
     )
     
+    # Placement fields (optional; defaults applied server-side for backward compatibility)
+    page = serializers.IntegerField(required=False, min_value=1, help_text="1-based page number")
+    x = serializers.FloatField(required=False, help_text="X coordinate in PDF points (from bottom-left)")
+    y = serializers.FloatField(required=False, help_text="Y coordinate in PDF points (from bottom-left)")
+    width = serializers.FloatField(required=False, min_value=1, help_text="Signature width in points")
+    height = serializers.FloatField(required=False, min_value=1, help_text="Signature height in points")
+    
     def validate(self, data):
         """
         Validate that either signature_image or signature_id is provided.
@@ -155,6 +162,16 @@ class SignDocumentSerializer(serializers.Serializer):
                     )
         
         return value
+
+    def to_internal_value(self, data):
+        # Apply defaults for placement if not provided
+        obj = super().to_internal_value(data)
+        obj.setdefault('page', 1)
+        obj.setdefault('x', 100.0)
+        obj.setdefault('y', 100.0)
+        obj.setdefault('width', 120.0)
+        obj.setdefault('height', 40.0)
+        return obj
 
 
 class DeclineSignatureSerializer(serializers.Serializer):

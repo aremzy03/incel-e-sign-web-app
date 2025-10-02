@@ -101,6 +101,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'id',
             'file_name',
             'file_url',
+            'signed_file_url',
             'file_size',
             'status',
             'created_at',
@@ -110,6 +111,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'id',
             'file_name',
             'file_url',
+            'signed_file_url',
             'file_size',
             'created_at',
             'updated_at'

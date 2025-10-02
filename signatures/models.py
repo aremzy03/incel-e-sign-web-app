@@ -114,8 +114,17 @@ class Signature(models.Model):
         if not self.envelope.signing_order:
             return 0
         
+        # Prefer explicit 'order' field defined in signing_order
         for i, signer_entry in enumerate(self.envelope.signing_order, 1):
-            if str(self.signer.id) == signer_entry.get('signer_id'):
+            # Convert both to strings for consistent comparison
+            stored_signer_id = str(signer_entry.get('signer_id'))
+            current_signer_id = str(self.signer.id)
+            
+            if current_signer_id == stored_signer_id:
+                explicit_order = signer_entry.get('order')
+                if isinstance(explicit_order, int) and explicit_order >= 1:
+                    return explicit_order
+                # Fallback to positional index if 'order' is missing/invalid
                 return i
         
         return 0
