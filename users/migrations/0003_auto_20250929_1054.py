@@ -3,6 +3,20 @@
 from django.db import migrations
 
 
+def convert_m2m_tables_to_uuid(apps, schema_editor):
+    if schema_editor.connection.vendor != 'postgresql':
+        return
+    with schema_editor.connection.cursor() as cursor:
+        # users_customuser_groups
+        cursor.execute("ALTER TABLE users_customuser_groups DROP CONSTRAINT IF EXISTS users_customuser_groups_customuser_id_fkey;")
+        cursor.execute("ALTER TABLE users_customuser_groups ALTER COLUMN customuser_id TYPE UUID USING customuser_id::text::UUID;")
+        cursor.execute("ALTER TABLE users_customuser_groups ADD CONSTRAINT users_customuser_groups_customuser_id_fkey FOREIGN KEY (customuser_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;")
+        # users_customuser_user_permissions
+        cursor.execute("ALTER TABLE users_customuser_user_permissions DROP CONSTRAINT IF EXISTS users_customuser_user_permissions_customuser_id_fkey;")
+        cursor.execute("ALTER TABLE users_customuser_user_permissions ALTER COLUMN customuser_id TYPE UUID USING customuser_id::text::UUID;")
+        cursor.execute("ALTER TABLE users_customuser_user_permissions ADD CONSTRAINT users_customuser_user_permissions_customuser_id_fkey FOREIGN KEY (customuser_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;")
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,31 +24,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Fix users_customuser_groups table
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_groups DROP CONSTRAINT IF EXISTS users_customuser_groups_customuser_id_fkey;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_groups ALTER COLUMN customuser_id TYPE UUID USING customuser_id::text::UUID;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_groups ADD CONSTRAINT users_customuser_groups_customuser_id_fkey FOREIGN KEY (customuser_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        
-        # Fix users_customuser_user_permissions table
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_user_permissions DROP CONSTRAINT IF EXISTS users_customuser_user_permissions_customuser_id_fkey;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_user_permissions ALTER COLUMN customuser_id TYPE UUID USING customuser_id::text::UUID;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        migrations.RunSQL(
-            "ALTER TABLE users_customuser_user_permissions ADD CONSTRAINT users_customuser_user_permissions_customuser_id_fkey FOREIGN KEY (customuser_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;",
-            reverse_sql="-- No reverse operation needed"
-        ),
+        migrations.RunPython(convert_m2m_tables_to_uuid, migrations.RunPython.noop),
     ]

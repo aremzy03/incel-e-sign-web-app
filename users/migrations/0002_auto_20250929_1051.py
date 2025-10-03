@@ -3,6 +3,19 @@
 from django.db import migrations
 
 
+def convert_admin_log_user_to_uuid(apps, schema_editor):
+    # Execute only on PostgreSQL where ALTER TYPE operations are valid
+    if schema_editor.connection.vendor != 'postgresql':
+        return
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("DELETE FROM django_admin_log;")
+        cursor.execute("ALTER TABLE django_admin_log DROP CONSTRAINT IF EXISTS django_admin_log_user_id_fkey;")
+        cursor.execute("ALTER TABLE django_admin_log ALTER COLUMN user_id TYPE UUID USING user_id::text::UUID;")
+        cursor.execute(
+            "ALTER TABLE django_admin_log ADD CONSTRAINT django_admin_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -11,24 +24,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # Clear the admin log table to avoid data conflicts during type conversion
-        migrations.RunSQL(
-            "DELETE FROM django_admin_log;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        # Drop the foreign key constraint first
-        migrations.RunSQL(
-            "ALTER TABLE django_admin_log DROP CONSTRAINT IF EXISTS django_admin_log_user_id_fkey;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        # Alter the user_id column to UUID type
-        migrations.RunSQL(
-            "ALTER TABLE django_admin_log ALTER COLUMN user_id TYPE UUID USING user_id::text::UUID;",
-            reverse_sql="-- No reverse operation needed"
-        ),
-        # Recreate the foreign key constraint
-        migrations.RunSQL(
-            "ALTER TABLE django_admin_log ADD CONSTRAINT django_admin_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES users_customuser(id) DEFERRABLE INITIALLY DEFERRED;",
-            reverse_sql="-- No reverse operation needed"
-        ),
+        migrations.RunPython(convert_admin_log_user_to_uuid, migrations.RunPython.noop),
     ]

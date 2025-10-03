@@ -12,6 +12,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **📮 Envelope System**: Create signing workflows with multiple signers and sequential signing order
 - **✍️ Sequential Signing**: Enforce proper signing order with turn-based validation
 - **🔔 Real-time Notifications**: In-app and email notifications powered by Celery background tasks
+- **👥 Contacts Management**: Save recipients, search by email, and invite non-users
 - **📋 Audit Logging**: Immutable audit trails for compliance and security
 - **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
 - **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
@@ -311,6 +312,15 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 |--------|----------|-------------|---------------|
 | `GET` | `/api/notifications/` | List user notifications | ✅ |
 | `PATCH` | `/api/notifications/{id}/read/` | Mark notification as read | ✅ |
+
+### Contacts
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/api/contacts/` | List user's saved contacts | ✅ |
+| `POST` | `/api/contacts/search/` | Search by email; invite if not found | ✅ |
+| `POST` | `/api/contacts/add/` | Add contact by email/name (links if user exists) | ✅ |
+| `POST` | `/api/contacts/invite/` | Send invite email and store as invited | ✅ |
 
 ### Audit Logs (Admin Only)
 
@@ -2091,10 +2101,10 @@ pip install celery redis
 ```
 
 **Configuration:**
-The Celery configuration is set in `esign/settings.py`:
+The Celery configuration is set in `esign/settings.py` and uses `django-celery-results` for storing task results:
 ```python
 CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "django-db"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -2110,6 +2120,17 @@ redis-server
 **Start Celery Worker:**
 ```bash
 celery -A esign worker -l info
+```
+
+Apply result-backend migrations:
+```bash
+python manage.py migrate
+```
+
+Quick smoke test in Django shell:
+```python
+from notifications.tasks import create_notification
+create_notification.delay("<user-uuid>", "Hello from Celery!")
 ```
 
 **Start Celery Beat Scheduler (Optional):**

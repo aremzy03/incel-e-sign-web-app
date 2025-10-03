@@ -2,8 +2,8 @@
 Utility functions for notifications in the E-Sign application.
 """
 
-from celery import shared_task
 from .models import Notification
+from .tasks import create_notification as create_notification_task, send_invite_email_task
 
 
 def get_user_display_name(user):
@@ -19,26 +19,9 @@ def get_user_display_name(user):
     return user.full_name if user.full_name else user.username
 
 
-@shared_task
 def create_notification(user_id, message):
-    """
-    Create a notification for a specific user.
-    
-    Args:
-        user_id (str): UUID of the user to notify
-        message (str): Notification message content
-    
-    Returns:
-        str: ID of the created notification or None if user not found
-    """
-    from users.models import CustomUser
-    
-    try:
-        user = CustomUser.objects.get(id=user_id)
-        notification = Notification.objects.create(user=user, message=message)
-        return str(notification.id)
-    except CustomUser.DoesNotExist:
-        return None
+    """Proxy to the Celery task for creating a notification."""
+    return create_notification_task.delay(user_id, message)
 
 
 def create_envelope_sent_notification(envelope):
@@ -113,3 +96,30 @@ def create_envelope_rejected_notification(envelope):
     creator_name = get_user_display_name(envelope.creator)
     file_name = envelope.document.file_name
     return f"{creator_name} has cancelled the envelope for '{file_name}'."
+
+
+def _build_invite_email_body(inviter_name: str) -> str:
+    return (
+        f"Hi, {inviter_name} has invited you to sign documents on Incel E-Sign. "
+        f"Click here to register."
+    )
+
+
+def _send_invite_email_task(email: str, inviter_name: str):
+    return send_invite_email_task.delay(email, inviter_name)
+
+
+def send_invite_email(email: str, inviter):
+    """
+    Helper to send invite email via Celery.
+
+    Args:
+        email (str): Recipient email to invite.
+        inviter (User): User sending the invite.
+    """
+    inviter_name = get_user_display_name(inviter)
+    try:
+        _send_invite_email_task(email, inviter_name)
+    except Exception:
+        # Fallback to synchronous path if Celery not running
+        send_invite_email_task(email, inviter_name)

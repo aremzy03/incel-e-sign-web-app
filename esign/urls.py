@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/signatures/', include('signatures.urls')),
     path('api/notifications/', include('notifications.urls')),
     path('api/audit/', include('audit.urls')),
+    path('api/contacts/', include('contacts.urls')),
 ]
 
 # Serve media files during development
