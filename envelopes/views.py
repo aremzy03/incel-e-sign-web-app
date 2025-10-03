@@ -130,6 +130,7 @@ class EnvelopeSendView(APIView):
         from signatures.models import Signature
         from django.contrib.auth import get_user_model
         from notifications.utils import create_notification, create_envelope_sent_notification
+        from notifications.tasks import send_envelope_assigned_email_task
         
         User = get_user_model()
         
@@ -142,8 +143,18 @@ class EnvelopeSendView(APIView):
                 try:
                     create_notification.delay(str(first_signer.id), message)
                 except Exception:
-                    # Fallback to synchronous notification if Celery fails
                     create_notification(str(first_signer.id), message)
+                # Send assignment email to first signer
+                try:
+                    recipient_email = getattr(first_signer, 'email', None)
+                    if recipient_email:
+                        send_envelope_assigned_email_task.delay(
+                            recipient_email,
+                            request.user.full_name or request.user.username,
+                            envelope.document.file_name,
+                        )
+                except Exception:
+                    pass
             except User.DoesNotExist:
                 pass
         

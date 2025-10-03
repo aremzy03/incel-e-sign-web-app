@@ -11,12 +11,15 @@ from celery import Celery
 # Set default Django settings module for Celery
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "esign.settings")
 
-celery_app = Celery("esign")
+# Explicitly include known task modules to guarantee registration
+celery_app = Celery("esign", include=[
+    "notifications.tasks",
+])
 
 # Read config from Django settings, using the `CELERY_` namespace
 celery_app.config_from_object("django.conf:settings", namespace="CELERY")
 
-# Auto-discover tasks from all installed Django apps
+# Auto-discover tasks from all installed Django apps (kept for future apps)
 celery_app.autodiscover_tasks()
 
 

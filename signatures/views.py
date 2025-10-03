@@ -227,6 +227,7 @@ class SignDocumentView(APIView):
         
         # Send notifications
         from notifications.utils import create_notification, create_envelope_completed_notification, create_signer_turn_notification
+        from notifications.tasks import send_turn_to_sign_email_task
         from django.contrib.auth import get_user_model
         
         User = get_user_model()
@@ -244,19 +245,55 @@ class SignDocumentView(APIView):
                 # Fallback to synchronous notification if Celery fails
                 create_notification(str(envelope.creator.id), message)
         else:
-            # Notify next signer
-            next_signature = Signature.objects.filter(
-                envelope=envelope,
-                status='pending'
-            ).order_by('signer__id').first()
-            
+            # Notify only the immediate next signer based on signing_order
+            def get_order_for_signer_id(signer_id: str) -> int:
+                """Return the order for a given signer_id using envelope.signing_order.
+                Falls back to positional index if explicit 'order' is missing/invalid.
+                """
+                if not envelope.signing_order:
+                    return 0
+                for idx, signer_entry in enumerate(envelope.signing_order, 1):
+                    if str(signer_entry.get('signer_id')) == str(signer_id):
+                        explicit = signer_entry.get('order')
+                        return explicit if isinstance(explicit, int) and explicit >= 1 else idx
+                return 0
+
+            current_order = signature.get_signing_order()
+
+            # Determine the next signer_id with the minimal order greater than current
+            next_signer_id = None
+            next_order = None
+            if envelope.signing_order:
+                for signer_entry in envelope.signing_order:
+                    candidate_id = signer_entry.get('signer_id')
+                    candidate_order = get_order_for_signer_id(candidate_id)
+                    if candidate_order > current_order and (next_order is None or candidate_order < next_order):
+                        next_order = candidate_order
+                        next_signer_id = candidate_id
+
+            if next_signer_id is not None:
+                next_signature = Signature.objects.filter(
+                    envelope=envelope,
+                    signer__id=next_signer_id,
+                    status='pending'
+                ).first()
+
             if next_signature:
                 message = create_signer_turn_notification(envelope)
                 try:
                     create_notification.delay(str(next_signature.signer.id), message)
                 except Exception:
-                    # Fallback to synchronous notification if Celery fails
                     create_notification(str(next_signature.signer.id), message)
+                # Send turn-to-sign email to next signer
+                try:
+                    recipient_email = getattr(next_signature.signer, 'email', None)
+                    if recipient_email:
+                        send_turn_to_sign_email_task.delay(
+                            recipient_email,
+                            envelope.document.file_name,
+                        )
+                except Exception:
+                    pass
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)

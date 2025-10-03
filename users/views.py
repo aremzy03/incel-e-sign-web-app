@@ -8,6 +8,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.core import signing
+from django.urls import reverse
+from django.conf import settings
 
 from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, UserSearchSerializer
 
@@ -23,6 +26,14 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             data = UserSerializer(user).data
+            # Send email confirmation asynchronously (basic placeholder)
+            try:
+                from notifications.tasks import send_email_confirmation_task
+                token = signing.dumps({"uid": str(user.id)})
+                link = f"{settings.FRONTEND_BASE_URL}/confirm-email?token={token}"
+                send_email_confirmation_task.delay(user.email, link, user.full_name)
+            except Exception:
+                pass
             return Response({"status": "success", "message": "Registered successfully", "data": data}, status=status.HTTP_201_CREATED)
         return Response({"status": "error", "message": "Validation error", "data": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -180,3 +191,22 @@ class UserDetailView(RetrieveAPIView):
                 "status": "error",
                 "message": "User not found"
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+class ConfirmEmailView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get('token')
+        if not token:
+            return Response({"status": "error", "message": "Token is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            data = signing.loads(token, max_age=60 * 60 * 24 * 2)
+            uid = data.get("uid")
+            user = get_user_model().objects.get(id=uid)
+            if not user.is_active:
+                user.is_active = True
+                user.save(update_fields=["is_active"])
+            return Response({"status": "success", "message": "Email confirmed successfully"}, status=status.HTTP_200_OK)
+        except Exception:
+            return Response({"status": "error", "message": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
