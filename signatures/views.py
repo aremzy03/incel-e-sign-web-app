@@ -239,11 +239,8 @@ class SignDocumentView(APIView):
             
             # Notify creator that envelope is completed
             message = create_envelope_completed_notification(envelope)
-            try:
-                create_notification.delay(str(envelope.creator.id), message)
-            except Exception:
-                # Fallback to synchronous notification if Celery fails
-                create_notification(str(envelope.creator.id), message)
+            # utils.create_notification proxies to Celery task; no need to call .delay here
+            create_notification(str(envelope.creator.id), message)
         else:
             # Notify only the immediate next signer based on signing_order
             def get_order_for_signer_id(signer_id: str) -> int:
@@ -280,10 +277,7 @@ class SignDocumentView(APIView):
 
             if next_signature:
                 message = create_signer_turn_notification(envelope)
-                try:
-                    create_notification.delay(str(next_signature.signer.id), message)
-                except Exception:
-                    create_notification(str(next_signature.signer.id), message)
+                create_notification(str(next_signature.signer.id), message)
                 # Send turn-to-sign email to next signer
                 try:
                     recipient_email = getattr(next_signature.signer, 'email', None)
@@ -395,11 +389,7 @@ class DeclineSignatureView(APIView):
         from notifications.utils import create_notification, create_signer_declined_notification
         
         message = create_signer_declined_notification(envelope, request.user)
-        try:
-            create_notification.delay(str(envelope.creator.id), message)
-        except Exception:
-            # Fallback to synchronous notification if Celery fails
-            create_notification(str(envelope.creator.id), message)
+        create_notification(str(envelope.creator.id), message)
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)

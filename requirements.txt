@@ -18,3 +18,9 @@ redis
 reportlab
 pillow
 django-celery-results
+#
+# System dependency required for Word → PDF conversion used in documents upload:
+# Install LibreOffice on the host and ensure `soffice` is on PATH.
+# Ubuntu/Debian: sudo apt-get install -y libreoffice
+# Fedora/RHEL:   sudo dnf install -y libreoffice
+# macOS (brew):  brew install --cask libreoffice

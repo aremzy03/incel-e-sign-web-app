@@ -8,7 +8,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 
 ### Core Features
 
-- **📄 Document Management**: Upload, store, and manage PDF documents with size and type validation
+- **📄 Document Management**: Upload, store, and manage PDF documents (and Word files auto-converted to PDF) with size and type validation
 - **📮 Envelope System**: Create signing workflows with multiple signers and sequential signing order
 - **✍️ Sequential Signing**: Enforce proper signing order with turn-based validation
 - **🔔 Real-time Notifications**: In-app and email notifications powered by Celery background tasks
@@ -58,6 +58,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - PostgreSQL 12+
 - Redis 6+
 - Git
+- LibreOffice (for Word → PDF conversion)
 
 ### 1. Clone Repository
 ```bash
@@ -74,6 +75,18 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ### 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
+```
+
+Install LibreOffice (required for Word → PDF conversion):
+```bash
+# Ubuntu/Debian
+sudo apt-get update && sudo apt-get install -y libreoffice
+
+# macOS (Homebrew)
+brew install --cask libreoffice
+
+# Fedora/RHEL
+sudo dnf install -y libreoffice
 ```
 
 ### 4. Environment Configuration
@@ -271,7 +284,7 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/api/documents/upload/` | Upload PDF document (≤20MB) | ✅ |
+| `POST` | `/api/documents/upload/` | Upload PDF or Word document (≤20MB, Word auto-converted to PDF) | ✅ |
 | `GET` | `/api/documents/` | List user's documents | ✅ |
 | `GET` | `/api/documents/{id}/` | Retrieve single document | ✅ |
 | `DELETE` | `/api/documents/{id}/delete/` | Delete document | ✅ |
@@ -511,7 +524,7 @@ curl -X GET "http://localhost:8000/api/auth/users/?search=user@example.com&page_
 
 ### 📄 Document Handling
 
-Complete document management system for uploading, retrieving, and deleting PDF documents.
+Complete document management system for uploading, converting (if Word), retrieving, and deleting PDF documents.
 
 #### Endpoints Overview
 
@@ -526,22 +539,23 @@ Complete document management system for uploading, retrieving, and deleting PDF 
 
 **Endpoint:** `POST /documents/upload/`
 
-Upload a PDF document to the system.
+Upload a document to the system. Accepts PDF files directly or Word documents (`.doc`, `.docx`) which are automatically converted to PDF on upload. The stored document will be a PDF regardless of the original format.
 
 **Request:**
 ```bash
 curl -X POST http://localhost:8000/documents/upload/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -F "file=@document.pdf"
+  -F "file=@document.docx"
 ```
 
 **Request Details:**
 - Content-Type: `multipart/form-data`
 - Authentication: Required (JWT Bearer token)
-- Body: Form data with key `file` containing PDF file
+- Body: Form data with key `file` containing a PDF or Word file
 
 **Constraints:**
-- File type: PDF only (`.pdf` extension required)
+- File type: PDF (`.pdf`) or Word (`.doc`, `.docx`)
+- Word files are converted to PDF during upload (LibreOffice required)
 - File size: ≤ 20MB
 - Authentication: Required
 
@@ -563,9 +577,14 @@ curl -X POST http://localhost:8000/documents/upload/ \
 ```
 
 **Error Responses:**
-- `400 Bad Request`: Invalid file type or size
+- `400 Bad Request`: Invalid file type, size, or Word-to-PDF conversion failure
 - `401 Unauthorized`: Missing or invalid authentication
 - `500 Internal Server Error`: Server error during upload
+
+**Word Document Conversion:**
+- Word files (`.doc`, `.docx`) are automatically converted to PDF using LibreOffice
+- If LibreOffice is not installed or `soffice` is not on PATH, upload will fail with a 400 error
+- Ensure LibreOffice is properly installed and accessible before uploading Word documents
 
 #### 2. List Documents
 
@@ -667,13 +686,19 @@ curl -X DELETE http://localhost:8000/documents/550e8400-e29b-41d4-a716-446655440
 #### Document Constraints
 
 **File Type Restrictions:**
-- Only PDF files are accepted
-- File extension must be `.pdf`
-- Content-Type should be `application/pdf`
+- PDF (`.pdf`) accepted as-is
+- Word files (`.doc`, `.docx`) accepted and auto-converted to PDF on upload
+- Converted PDFs are stored; subsequent workflows operate on the PDF
 
 **Size Limitations:**
 - Maximum file size: 20MB
 - Files larger than 20MB will be rejected with a 400 error
+
+**LibreOffice Dependency:**
+- LibreOffice is required for Word document conversion
+- The `soffice` command must be available on the system PATH
+- Install LibreOffice using the instructions in the Setup section
+- Word uploads will fail with clear error messages if LibreOffice is not available
 
 **Ownership & Access:**
 - Users can only see and manage their own documents
@@ -706,13 +731,14 @@ pytest -v
 **Test Coverage:**
 - ✅ **Upload Tests (8 tests):**
   - Successful PDF upload
-  - File type validation (PDF only)
+  - File type validation (PDF and Word files)
   - File size validation (≤20MB)
   - Authentication requirements
   - Multiple uploads by same user
   - Different users uploading independently
   - Empty file handling
   - Missing file data
+  - Word-to-PDF conversion (requires LibreOffice)
 
 - ✅ **Retrieval Tests (10 tests):**
   - List returns only user's documents

@@ -140,10 +140,8 @@ class EnvelopeSendView(APIView):
             try:
                 first_signer = User.objects.get(id=first_signer_id)
                 message = create_envelope_sent_notification(envelope)
-                try:
-                    create_notification.delay(str(first_signer.id), message)
-                except Exception:
-                    create_notification(str(first_signer.id), message)
+                # utils.create_notification proxies to Celery task; no need to call .delay here
+                create_notification(str(first_signer.id), message)
                 # Send assignment email to first signer
                 try:
                     recipient_email = getattr(first_signer, 'email', None)
@@ -257,7 +255,7 @@ class EnvelopeRejectView(APIView):
             signer_id = signer_entry['signer_id']
             try:
                 signer = User.objects.get(id=signer_id)
-                create_notification.delay(str(signer.id), message)
+                create_notification(str(signer.id), message)
             except User.DoesNotExist:
                 continue
         
