@@ -174,10 +174,11 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         if not creator:
             raise serializers.ValidationError("User authentication required.")
         
-        # Create the envelope
+        # Create the envelope with name derived from document
         envelope = Envelope.objects.create(
             document=document,
             creator=creator,
+            name=document.file_name,
             status="draft",
             signing_order=signing_order
         )
@@ -206,10 +207,10 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
         model = Envelope
         fields = [
             'id', 'document', 'document_file_name', 'creator', 'creator_email',
-            'status', 'signing_order', 'signer_count', 'created_at', 'updated_at'
+            'name', 'status', 'signing_order', 'signer_count', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'document', 'creator', 'status', 'created_at', 'updated_at'
+            'id', 'document', 'creator', 'name', 'status', 'created_at', 'updated_at'
         ]
 
 
@@ -262,11 +263,11 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Envelope
         fields = [
-            'id', 'document', 'creator', 'status', 'signing_order', 
+            'id', 'document', 'creator', 'name', 'status', 'signing_order', 
             'created_at', 'updated_at', 'signatures'
         ]
         read_only_fields = [
-            'id', 'document', 'creator', 'status', 'signing_order', 
+            'id', 'document', 'creator', 'name', 'status', 'signing_order', 
             'created_at', 'updated_at', 'signatures'
         ]
     

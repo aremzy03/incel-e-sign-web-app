@@ -40,6 +40,11 @@ class Envelope(models.Model):
         help_text="The user who created this envelope."
     )
     
+    name = models.CharField(
+        max_length=255,
+        help_text="Name of the envelope, derived from the document name."
+    )
+    
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -71,10 +76,11 @@ class Envelope(models.Model):
             models.Index(fields=['creator', 'status']),
             models.Index(fields=['status']),
             models.Index(fields=['created_at']),
+            models.Index(fields=['name']),
         ]
     
     def __str__(self) -> str:
-        return f"Envelope for {self.document.file_name} ({self.status})"
+        return f"Envelope: {self.name} ({self.status})"
     
     def clean(self):
         """

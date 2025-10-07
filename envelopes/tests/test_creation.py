@@ -93,10 +93,15 @@ class EnvelopeCreationTestCase(APITestCase):
         envelope = Envelope.objects.get(id=response.data['data']['id'])
         self.assertEqual(envelope.document, self.document)
         self.assertEqual(envelope.creator, self.creator)
+        self.assertEqual(envelope.name, self.document.file_name)
         self.assertEqual(envelope.status, 'draft')
         self.assertEqual(len(envelope.signing_order), 2)
         self.assertEqual(envelope.signing_order[0]['signer_id'], str(self.signer1.id))
         self.assertEqual(envelope.signing_order[1]['signer_id'], str(self.signer2.id))
+        
+        # Check that name field is included in response
+        self.assertIn('name', response.data['data'])
+        self.assertEqual(response.data['data']['name'], self.document.file_name)
     
     def test_envelope_creation_fails_if_document_doesnt_belong_to_creator(self):
         """Test creation fails if document doesn't belong to creator."""

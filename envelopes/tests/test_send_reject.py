@@ -68,6 +68,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.draft_envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status='draft',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1},
@@ -78,6 +79,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.sent_envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status='sent',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}
@@ -87,6 +89,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.completed_envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status='completed',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}
@@ -96,6 +99,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.rejected_envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status='rejected',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}
@@ -114,6 +118,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.other_envelope = Envelope.objects.create(
             document=self.other_document,
             creator=self.other_user,
+            name=self.other_document.file_name,
             status='draft',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}

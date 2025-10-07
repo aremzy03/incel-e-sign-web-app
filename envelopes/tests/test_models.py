@@ -69,6 +69,7 @@ class EnvelopeModelTest(TestCase):
         envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -77,6 +78,7 @@ class EnvelopeModelTest(TestCase):
         self.assertEqual(envelope.status, "draft")
         self.assertEqual(envelope.signing_order, signing_order)
         self.assertEqual(envelope.signer_count, 3)
+        self.assertEqual(envelope.name, self.document.file_name)
         self.assertFalse(envelope.is_completed)
         self.assertFalse(envelope.is_sent)
 
@@ -84,7 +86,8 @@ class EnvelopeModelTest(TestCase):
         """Test that envelope status defaults to 'draft'."""
         envelope = Envelope.objects.create(
             document=self.document,
-            creator=self.creator
+            creator=self.creator,
+            name=self.document.file_name
         )
         
         self.assertEqual(envelope.status, "draft")
@@ -93,7 +96,8 @@ class EnvelopeModelTest(TestCase):
         """Test that envelope correctly links to creator and document."""
         envelope = Envelope.objects.create(
             document=self.document,
-            creator=self.creator
+            creator=self.creator,
+            name=self.document.file_name
         )
         
         # Test forward relationships
@@ -104,15 +108,28 @@ class EnvelopeModelTest(TestCase):
         self.assertIn(envelope, self.document.envelopes.all())
         self.assertIn(envelope, self.creator.created_envelopes.all())
 
+    def test_envelope_name_field(self):
+        """Test that envelope name field is set correctly."""
+        test_name = "Custom Document Name"
+        envelope = Envelope.objects.create(
+            document=self.document,
+            creator=self.creator,
+            name=test_name
+        )
+        
+        self.assertEqual(envelope.name, test_name)
+        self.assertNotEqual(envelope.name, self.document.file_name)
+
     def test_envelope_string_representation(self):
         """Test the string representation of an envelope."""
         envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status="sent"
         )
         
-        expected = f"Envelope for {self.document.file_name} (sent)"
+        expected = f"Envelope: {self.document.file_name} (sent)"
         self.assertEqual(str(envelope), expected)
 
     def test_signer_count_property(self):
@@ -121,6 +138,7 @@ class EnvelopeModelTest(TestCase):
         envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=[]
         )
         self.assertEqual(envelope.signer_count, 0)
@@ -140,6 +158,7 @@ class EnvelopeModelTest(TestCase):
         envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status="draft"
         )
         self.assertFalse(envelope.is_completed)
@@ -177,7 +196,8 @@ class EnvelopeModelTest(TestCase):
         """Test that envelope is deleted when document is deleted."""
         envelope = Envelope.objects.create(
             document=self.document,
-            creator=self.creator
+            creator=self.creator,
+            name=self.document.file_name
         )
         
         envelope_id = envelope.id
@@ -189,7 +209,8 @@ class EnvelopeModelTest(TestCase):
         """Test that envelope is deleted when creator is deleted."""
         envelope = Envelope.objects.create(
             document=self.document,
-            creator=self.creator
+            creator=self.creator,
+            name=self.document.file_name
         )
         
         envelope_id = envelope.id
@@ -243,6 +264,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -254,6 +276,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=[]
         )
         
@@ -283,6 +306,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -300,6 +324,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -317,6 +342,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -334,6 +360,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -352,6 +379,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -370,6 +398,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -388,6 +417,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -406,6 +436,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         
@@ -424,6 +455,7 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         envelope = Envelope(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             signing_order=signing_order
         )
         

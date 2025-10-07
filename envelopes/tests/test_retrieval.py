@@ -72,6 +72,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.envelope = Envelope.objects.create(
             document=self.document,
             creator=self.creator,
+            name=self.document.file_name,
             status="sent",
             signing_order=[
                 {"signer_id": str(self.signer1.id), "order": 1},
@@ -106,6 +107,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.other_envelope = Envelope.objects.create(
             document=self.other_document,
             creator=self.other_user,
+            name=self.other_document.file_name,
             status="draft",
             signing_order=[]
         )
@@ -160,6 +162,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         another_envelope = Envelope.objects.create(
             document=another_document,
             creator=self.signer1,
+            name=another_document.file_name,
             status="draft",
             signing_order=[
                 {"signer_id": str(self.creator.id), "order": 1}
@@ -307,6 +310,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         newer_envelope = Envelope.objects.create(
             document=another_document,
             creator=self.creator,
+            name=another_document.file_name,
             status="draft",
             signing_order=[]
         )
