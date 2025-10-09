@@ -64,16 +64,17 @@ class SignDocumentSerializer(serializers.Serializer):
         help_text="UUID of a UserSignature to use for signing."
     )
     
-    # Placement fields (optional; defaults applied server-side for backward compatibility)
-    page = serializers.IntegerField(required=False, min_value=1, help_text="1-based page number")
-    x = serializers.FloatField(required=False, help_text="X coordinate in PDF points (from bottom-left)")
-    y = serializers.FloatField(required=False, help_text="Y coordinate in PDF points (from bottom-left)")
-    width = serializers.FloatField(required=False, min_value=1, help_text="Signature width in points")
-    height = serializers.FloatField(required=False, min_value=1, help_text="Signature height in points")
+    # Placement fields (optional fallbacks; position data primarily comes from envelope's signing_order)
+    page = serializers.IntegerField(required=False, min_value=1, help_text="1-based page number (fallback if not defined in envelope)")
+    x = serializers.FloatField(required=False, help_text="X coordinate in points from left edge (fallback if not defined in envelope)")
+    y = serializers.FloatField(required=False, help_text="Y coordinate in points from top edge - UI convention (fallback if not defined in envelope)")
+    width = serializers.FloatField(required=False, min_value=1, help_text="Signature width in points (fallback if not defined in envelope)")
+    height = serializers.FloatField(required=False, min_value=1, help_text="Signature height in points (fallback if not defined in envelope)")
     
     def validate(self, data):
         """
-        Validate that either signature_image or signature_id is provided.
+        Validate signature data. Either signature_image, signature_id, or default signature is used.
+        Position coordinates are optional since they primarily come from envelope's signing_order.
         
         Args:
             data: Dictionary containing the validated data
@@ -82,15 +83,13 @@ class SignDocumentSerializer(serializers.Serializer):
             dict: Validated data
             
         Raises:
-            ValidationError: If neither signature_image nor signature_id is provided
+            ValidationError: If both signature_image and signature_id are provided
         """
         signature_image = data.get('signature_image')
         signature_id = data.get('signature_id')
         
-        if not signature_image and not signature_id:
-            raise serializers.ValidationError(
-                "Either signature_image or signature_id must be provided."
-            )
+        # Note: It's valid to provide neither - the system will try to use default signature
+        # The actual validation for signature availability happens in the view
         
         if signature_image and signature_id:
             raise serializers.ValidationError(

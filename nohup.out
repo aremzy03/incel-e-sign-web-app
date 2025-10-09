@@ -1,0 +1,58 @@
+ 
+ -------------- celery@AREMZY-PC v5.5.3 (immunity)
+--- ***** ----- 
+-- ******* ---- Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39 2025-10-07 16:01:57
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         esign:0x7e42e6cf0680
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     
+- *** --- * --- .> concurrency: 12 (prefork)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . notifications.tasks.create_notification
+  . notifications.tasks.send_email_confirmation_task
+  . notifications.tasks.send_envelope_assigned_email_task
+  . notifications.tasks.send_invite_email_task
+  . notifications.tasks.send_turn_to_sign_email_task
+
+[2025-10-07 16:01:58,720: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2025-10-07 16:01:58,722: INFO/MainProcess] mingle: searching for neighbors
+[2025-10-07 16:01:59,733: INFO/MainProcess] mingle: all alone
+[2025-10-07 16:01:59,764: INFO/MainProcess] celery@AREMZY-PC ready.
+[2025-10-07 16:12:37,898: INFO/MainProcess] Task notifications.tasks.send_envelope_assigned_email_task[c9df1105-4769-448a-92da-0b5651dfcf35] received
+[2025-10-07 16:12:46,660: INFO/ForkPoolWorker-8] Task notifications.tasks.send_envelope_assigned_email_task[c9df1105-4769-448a-92da-0b5651dfcf35] succeeded in 8.758588131000124s: None
+
+Restarting celery worker (/home/aremzy03/Document/cursor_projects/incel_apps/incel_esign_app/incel-e-sign-web-app/.venv/bin/celery -A esign worker -l INFO)
+ 
+ -------------- celery@AREMZY-PC v5.5.3 (immunity)
+--- ***** ----- 
+-- ******* ---- Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39 2025-10-07 16:21:12
+- *** --- * --- 
+- ** ---------- [config]
+- ** ---------- .> app:         esign:0x7c46b00e4650
+- ** ---------- .> transport:   redis://localhost:6379/0
+- ** ---------- .> results:     
+- *** --- * --- .> concurrency: 12 (prefork)
+-- ******* ---- .> task events: OFF (enable -E to monitor tasks in this worker)
+--- ***** ----- 
+ -------------- [queues]
+                .> celery           exchange=celery(direct) key=celery
+                
+
+[tasks]
+  . notifications.tasks.create_notification
+  . notifications.tasks.send_email_confirmation_task
+  . notifications.tasks.send_envelope_assigned_email_task
+  . notifications.tasks.send_invite_email_task
+  . notifications.tasks.send_turn_to_sign_email_task
+
+[2025-10-07 16:21:13,574: INFO/MainProcess] Connected to redis://localhost:6379/0
+[2025-10-07 16:21:13,578: INFO/MainProcess] mingle: searching for neighbors
+[2025-10-07 16:21:14,585: INFO/MainProcess] mingle: all alone
+[2025-10-07 16:21:14,594: INFO/MainProcess] celery@AREMZY-PC ready.

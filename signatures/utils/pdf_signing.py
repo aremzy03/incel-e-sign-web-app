@@ -42,7 +42,7 @@ def _make_signature_overlay(page_width: float, page_height: float, image_bytes: 
     return buffer.read()
 
 
-def embed_signature(pdf_path: str, output_path: str, signature_image: str, page: int, x: float, y: float, width: float, height: float) -> None:
+def embed_signature(pdf_path: str, output_path: str, signature_image: str, page: int, x: float, y: float, width: float, height: float, convert_y_axis: bool = True) -> None:
     """
     Embeds a signature image into a PDF file at the given page and coordinates.
 
@@ -51,8 +51,11 @@ def embed_signature(pdf_path: str, output_path: str, signature_image: str, page:
         output_path: Absolute path where signed PDF will be written.
         signature_image: Base64 PNG/JPEG string, may be data URL or raw base64.
         page: 1-based page number.
-        x, y: Coordinates in PDF points relative to bottom-left corner.
+        x: X coordinate in points.
+        y: Y coordinate in points. If convert_y_axis=True (default), this is treated as from top-left (UI convention).
+           If convert_y_axis=False, this is treated as from bottom-left (PDF convention).
         width, height: Size of the signature image in points.
+        convert_y_axis: If True (default), converts Y coordinate from top-left to bottom-left convention.
     """
     if not os.path.isabs(pdf_path):
         raise ValueError("pdf_path must be an absolute path")
@@ -75,8 +78,23 @@ def embed_signature(pdf_path: str, output_path: str, signature_image: str, page:
             media_box = page_obj.mediabox
             page_width = float(media_box.width)
             page_height = float(media_box.height)
+            
+            # Convert Y coordinate if needed
+            if convert_y_axis:
+                # Convert from top-left (UI convention) to bottom-left (PDF convention)
+                # PDF Y = page_height - UI_Y - signature_height
+                pdf_y = page_height - y - height
+                
+                # Clamp to page bounds to ensure signature is visible
+                if pdf_y < 0:
+                    pdf_y = 0  # Bottom of page
+                elif pdf_y + height > page_height:
+                    pdf_y = page_height - height  # Top of page
+            else:
+                # Use Y coordinate as-is (already in PDF convention)
+                pdf_y = y
 
-            overlay_pdf_bytes = _make_signature_overlay(page_width, page_height, image_bytes, x, y, width, height)
+            overlay_pdf_bytes = _make_signature_overlay(page_width, page_height, image_bytes, x, pdf_y, width, height)
             overlay_reader = PdfReader(io.BytesIO(overlay_pdf_bytes))
             overlay_page = overlay_reader.pages[0]
             page_obj.merge_page(overlay_page)

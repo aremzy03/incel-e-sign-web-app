@@ -138,6 +138,16 @@ class DocumentSerializer(serializers.ModelSerializer):
     Used for returning document details after upload or retrieval.
     """
     
+    # Add a computed field that returns the current document URL (prioritizing signed version)
+    current_file_url = serializers.SerializerMethodField()
+    
+    def get_current_file_url(self, obj):
+        """
+        Return the current document URL, prioritizing signed version if available.
+        This matches the logic used in signing and download views.
+        """
+        return obj.signed_file_url or obj.file_url
+    
     class Meta:
         model = Document
         fields = [
@@ -145,6 +155,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'file_name',
             'file_url',
             'signed_file_url',
+            'current_file_url',  # New computed field
             'file_size',
             'status',
             'created_at',
@@ -155,6 +166,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'file_name',
             'file_url',
             'signed_file_url',
+            'current_file_url',
             'file_size',
             'created_at',
             'updated_at'

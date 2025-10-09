@@ -428,7 +428,7 @@ class TestNotificationTriggers:
     def test_signer_signs_notifies_next_signer(self, mock_create_notification, api_client, user, envelope, signer1, signer2):
         """Test that signing notifies next signer."""
         # Send envelope first to create signatures
-        envelope.status = "sent"
+        envelope.status = "pending"
         envelope.save()
         
         # Create signature records
@@ -454,7 +454,7 @@ class TestNotificationTriggers:
     def test_last_signer_signs_notifies_creator(self, mock_create_notification, api_client, user, envelope, signer1, signer2):
         """Test that last signer signing notifies creator."""
         # Send envelope first to create signatures
-        envelope.status = "sent"
+        envelope.status = "pending"
         envelope.save()
         
         # Create signature records - signer1 already signed
@@ -480,7 +480,7 @@ class TestNotificationTriggers:
     def test_signer_declines_notifies_creator(self, mock_create_notification, api_client, user, envelope, signer1):
         """Test that declining notifies creator."""
         # Send envelope first to create signatures
-        envelope.status = "sent"
+        envelope.status = "pending"
         envelope.save()
         
         # Create signature record

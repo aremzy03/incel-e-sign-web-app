@@ -28,7 +28,7 @@ def test_signing_triggers_next_signer_email(mock_delay, client):
         document=doc,
         creator=creator,
         signing_order=[{"signer_id": str(signer1.id), "order": 1}, {"signer_id": str(signer2.id), "order": 2}],
-        status="sent",
+        status="pending",
     )
 
     Signature.objects.create(envelope=env, signer=signer1, status="pending")

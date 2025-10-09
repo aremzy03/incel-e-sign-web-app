@@ -73,7 +73,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
             document=self.document,
             creator=self.creator,
             name=self.document.file_name,
-            status="sent",
+            status="pending",
             signing_order=[
                 {"signer_id": str(self.signer1.id), "order": 1},
                 {"signer_id": str(self.signer2.id), "order": 2}

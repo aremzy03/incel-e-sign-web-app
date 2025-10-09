@@ -126,10 +126,10 @@ class EnvelopeModelTest(TestCase):
             document=self.document,
             creator=self.creator,
             name=self.document.file_name,
-            status="sent"
+            status="pending"
         )
         
-        expected = f"Envelope: {self.document.file_name} (sent)"
+        expected = f"Envelope: {self.document.file_name} (pending)"
         self.assertEqual(str(envelope), expected)
 
     def test_signer_count_property(self):
@@ -165,7 +165,7 @@ class EnvelopeModelTest(TestCase):
         self.assertFalse(envelope.is_sent)
         
         # Sent status
-        envelope.status = "sent"
+        envelope.status = "pending"
         envelope.save()
         self.assertFalse(envelope.is_completed)
         self.assertTrue(envelope.is_sent)
@@ -464,3 +464,303 @@ class EnvelopeSigningOrderValidationTest(TestCase):
         
         self.assertIn('Users not found', str(context.exception))
         self.assertIn(nonexistent_uuid, str(context.exception))
+
+
+class EnvelopePositionValidationTest(TestCase):
+    """Test cases for position field validation in signing_order."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.creator = User.objects.create_user(
+            username='creator',
+            email='creator@example.com',
+            password='testpass123',
+            full_name='Creator User'
+        )
+        
+        self.signer1 = User.objects.create_user(
+            username='signer1',
+            email='signer1@example.com',
+            password='testpass123',
+            full_name='Signer One'
+        )
+        
+        self.signer2 = User.objects.create_user(
+            username='signer2',
+            email='signer2@example.com',
+            password='testpass123',
+            full_name='Signer Two'
+        )
+        
+        # Create test document
+        pdf_content = b'%PDF-1.4 fake pdf content'
+        self.document = Document.objects.create(
+            owner=self.creator,
+            file_url="/media/test_document.pdf",
+            file_name="test_document.pdf",
+            file_size=len(pdf_content)
+        )
+
+    def test_valid_signing_order_with_position(self):
+        """Test that valid signing order with position passes validation."""
+        signing_order = [
+            {
+                "signer_id": str(self.signer1.id), 
+                "order": 1,
+                "position": {
+                    "page": 1,
+                    "x": 100,
+                    "y": 200,
+                    "width": 150,
+                    "height": 50
+                }
+            },
+            {
+                "signer_id": str(self.signer2.id), 
+                "order": 2,
+                "position": {
+                    "page": 2,
+                    "x": 120.5,
+                    "y": 300.75,
+                    "width": 180,
+                    "height": 60
+                }
+            }
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        # Should not raise ValidationError
+        envelope.full_clean()
+
+    def test_valid_signing_order_without_position(self):
+        """Test that signing order without position still works (backward compatibility)."""
+        signing_order = [
+            {"signer_id": str(self.signer1.id), "order": 1},
+            {"signer_id": str(self.signer2.id), "order": 2}
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        # Should not raise ValidationError
+        envelope.full_clean()
+
+    def test_mixed_signing_order_with_and_without_position(self):
+        """Test that mixed entries (some with position, some without) work."""
+        signing_order = [
+            {
+                "signer_id": str(self.signer1.id), 
+                "order": 1,
+                "position": {
+                    "page": 1,
+                    "x": 100,
+                    "y": 200,
+                    "width": 150,
+                    "height": 50
+                }
+            },
+            {"signer_id": str(self.signer2.id), "order": 2}  # No position
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        # Should not raise ValidationError
+        envelope.full_clean()
+
+    def test_position_must_be_dict(self):
+        """Test that position must be a dictionary."""
+        signing_order = [
+            {
+                "signer_id": str(self.signer1.id),
+                "order": 1,
+                "position": "invalid position"  # Should be dict
+            }
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        with self.assertRaises(ValidationError) as context:
+            envelope.full_clean()
+        
+        self.assertIn('Entry 0: position must be a dict', str(context.exception))
+
+    def test_position_must_include_all_required_keys(self):
+        """Test that position must include all required keys."""
+        required_keys = ["page", "x", "y", "width", "height"]
+        
+        for missing_key in required_keys:
+            with self.subTest(missing_key=missing_key):
+                position = {
+                    "page": 1,
+                    "x": 100,
+                    "y": 200,
+                    "width": 150,
+                    "height": 50
+                }
+                del position[missing_key]
+                
+                signing_order = [
+                    {
+                        "signer_id": str(self.signer1.id),
+                        "order": 1,
+                        "position": position
+                    }
+                ]
+                
+                envelope = Envelope(
+                    document=self.document,
+                    creator=self.creator,
+                    name=self.document.file_name,
+                    signing_order=signing_order
+                )
+                
+                with self.assertRaises(ValidationError) as context:
+                    envelope.full_clean()
+                
+                self.assertIn(f'Entry 0: position must include {missing_key}', str(context.exception))
+
+    def test_position_values_must_be_numeric(self):
+        """Test that position values must be numeric."""
+        invalid_values = ["string", None, [], {}]
+        position_keys = ["page", "x", "y", "width", "height"]
+        
+        for key in position_keys:
+            for invalid_value in invalid_values:
+                with self.subTest(key=key, invalid_value=invalid_value):
+                    position = {
+                        "page": 1,
+                        "x": 100,
+                        "y": 200,
+                        "width": 150,
+                        "height": 50
+                    }
+                    position[key] = invalid_value
+                    
+                    signing_order = [
+                        {
+                            "signer_id": str(self.signer1.id),
+                            "order": 1,
+                            "position": position
+                        }
+                    ]
+                    
+                    envelope = Envelope(
+                        document=self.document,
+                        creator=self.creator,
+                        name=self.document.file_name,
+                        signing_order=signing_order
+                    )
+                    
+                    with self.assertRaises(ValidationError) as context:
+                        envelope.full_clean()
+                    
+                    self.assertIn(f'Entry 0: position[{key}] must be a positive number', str(context.exception))
+
+    def test_position_values_must_be_positive(self):
+        """Test that position values must be positive numbers."""
+        negative_values = [-1, -0.5]
+        position_keys = ["page", "x", "y", "width", "height"]
+        
+        for key in position_keys:
+            for negative_value in negative_values:
+                with self.subTest(key=key, negative_value=negative_value):
+                    position = {
+                        "page": 1,
+                        "x": 100,
+                        "y": 200,
+                        "width": 150,
+                        "height": 50
+                    }
+                    position[key] = negative_value
+                    
+                    signing_order = [
+                        {
+                            "signer_id": str(self.signer1.id),
+                            "order": 1,
+                            "position": position
+                        }
+                    ]
+                    
+                    envelope = Envelope(
+                        document=self.document,
+                        creator=self.creator,
+                        name=self.document.file_name,
+                        signing_order=signing_order
+                    )
+                    
+                    with self.assertRaises(ValidationError) as context:
+                        envelope.full_clean()
+                    
+                    self.assertIn(f'Entry 0: position[{key}] must be a positive number', str(context.exception))
+
+    def test_position_values_can_be_zero(self):
+        """Test that position values can be zero (edge case for coordinates)."""
+        signing_order = [
+            {
+                "signer_id": str(self.signer1.id), 
+                "order": 1,
+                "position": {
+                    "page": 1,
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                }
+            }
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        # Should not raise ValidationError (zero is allowed)
+        envelope.full_clean()
+
+    def test_position_values_accept_floats(self):
+        """Test that position values accept float numbers."""
+        signing_order = [
+            {
+                "signer_id": str(self.signer1.id), 
+                "order": 1,
+                "position": {
+                    "page": 1.0,
+                    "x": 100.5,
+                    "y": 200.75,
+                    "width": 150.25,
+                    "height": 50.5
+                }
+            }
+        ]
+        
+        envelope = Envelope(
+            document=self.document,
+            creator=self.creator,
+            name=self.document.file_name,
+            signing_order=signing_order
+        )
+        
+        # Should not raise ValidationError
+        envelope.full_clean()

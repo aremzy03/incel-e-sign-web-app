@@ -45,11 +45,11 @@ class SignDocumentView(APIView):
         from envelopes.models import Envelope
         envelope = get_object_or_404(Envelope, pk=envelope_id)
         
-        # Check if envelope is in sent status
-        if envelope.status != "sent":
+        # Check if envelope is in pending status
+        if envelope.status != "pending":
             return Response({
                 "status": "error",
-                "message": f"Envelope must be in 'sent' status to sign. Current status: {envelope.status}"
+                "message": f"Envelope must be in 'pending' status to sign. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get the signature record for the current user
@@ -176,19 +176,56 @@ class SignDocumentView(APIView):
                 # If download fails, we will skip embedding below
                 pass
 
-        # Try to embed; if it fails, continue workflow without blocking
+        # Get position information from envelope's signing_order for this signer
+        signer_position = None
+        for signer_entry in envelope.signing_order:
+            if str(signer_entry.get('signer_id')) == str(request.user.id):
+                signer_position = signer_entry.get('position')
+                break
+        
+        # Try to embed signature; if it fails, continue workflow without blocking
         if os.path.exists(input_pdf_path):
             try:
-                embed_signature(
-                    pdf_path=input_pdf_path,
-                    output_path=output_pdf_path,
-                    signature_image=signature_image_data,
-                    page=validated_data['page'],
-                    x=validated_data['x'],
-                    y=validated_data['y'],
-                    width=validated_data['width'],
-                    height=validated_data['height'],
-                )
+                # Use position from envelope if available, otherwise use defaults or request data
+                if signer_position and isinstance(signer_position, dict):
+                    # Validate that position has all required fields
+                    required_fields = ['page', 'x', 'y', 'width', 'height']
+                    if all(field in signer_position for field in required_fields):
+                        embed_signature(
+                            pdf_path=input_pdf_path,
+                            output_path=output_pdf_path,
+                            signature_image=signature_image_data,
+                            page=signer_position['page'],
+                            x=signer_position['x'],
+                            y=signer_position['y'],
+                            width=signer_position['width'],
+                            height=signer_position['height'],
+                        )
+                    else:
+                        # Position is incomplete, use request data or defaults
+                        embed_signature(
+                            pdf_path=input_pdf_path,
+                            output_path=output_pdf_path,
+                            signature_image=signature_image_data,
+                            page=validated_data.get('page', 1),
+                            x=validated_data.get('x', 100),
+                            y=validated_data.get('y', 100),
+                            width=validated_data.get('width', 120),
+                            height=validated_data.get('height', 40),
+                        )
+                else:
+                    # No position defined in envelope, use request data or defaults
+                    embed_signature(
+                        pdf_path=input_pdf_path,
+                        output_path=output_pdf_path,
+                        signature_image=signature_image_data,
+                        page=validated_data.get('page', 1),
+                        x=validated_data.get('x', 100),
+                        y=validated_data.get('y', 100),
+                        width=validated_data.get('width', 120),
+                        height=validated_data.get('height', 40),
+                    )
+                
                 relative_output = os.path.relpath(output_pdf_path, str(settings.MEDIA_ROOT))
                 new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
                 # Override document with newly signed file so next signer sees prior signatures
@@ -325,11 +362,11 @@ class DeclineSignatureView(APIView):
         from envelopes.models import Envelope
         envelope = get_object_or_404(Envelope, pk=envelope_id)
         
-        # Check if envelope is in sent status
-        if envelope.status != "sent":
+        # Check if envelope is in pending status
+        if envelope.status != "pending":
             return Response({
                 "status": "error",
-                "message": f"Envelope must be in 'sent' status to decline. Current status: {envelope.status}"
+                "message": f"Envelope must be in 'pending' status to decline. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get the signature record for the current user

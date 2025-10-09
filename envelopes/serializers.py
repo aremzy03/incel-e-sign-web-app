@@ -29,7 +29,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
     signing_order = serializers.ListField(
         child=serializers.DictField(),
         allow_empty=True,
-        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1}, ...]"
+        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1, 'position': {'page': 2, 'x': 150, 'y': 450, 'width': 200, 'height': 50}}, ...]. Position is optional."
     )
     
     class Meta:
@@ -63,6 +63,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         - Each entry has 'signer_id' and 'order' keys
         - Orders start at 1 and are unique (no duplicates, no gaps)
         - All signer_ids reference valid users
+        - Optional 'position' dict has numeric page, x, y, width, and height fields
         """
         if not isinstance(value, list):
             raise serializers.ValidationError("Signing order must be a list.")
@@ -106,6 +107,27 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Entry {i}: order must be a positive integer."
                 )
+            
+            # Validate optional position field
+            position = signer_entry.get("position")
+            if position is not None:
+                if not isinstance(position, dict):
+                    raise serializers.ValidationError(
+                        f"Entry {i}: position must be a dict."
+                    )
+                
+                required_position_keys = ["page", "x", "y", "width", "height"]
+                for key in required_position_keys:
+                    if key not in position:
+                        raise serializers.ValidationError(
+                            f"Entry {i}: position must include {key}."
+                        )
+                    
+                    position_value = position[key]
+                    if not isinstance(position_value, (int, float)) or position_value < 0:
+                        raise serializers.ValidationError(
+                            f"Entry {i}: position[{key}] must be a positive number."
+                        )
             
             # Check for duplicate signer_ids
             if signer_id in signer_ids:

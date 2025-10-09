@@ -80,14 +80,14 @@ class EnvelopeSendView(APIView):
     Endpoint: POST /envelopes/{id}/send/
     Requires authentication.
     Only the envelope creator can send.
-    Changes status from "draft" to "sent".
+    Changes status from "draft" to "pending".
     """
     
     permission_classes = [IsAuthenticated]
     
     def post(self, request, pk):
         """
-        Send an envelope (change status from draft to sent).
+        Send an envelope (change status from draft to pending).
         
         Args:
             request: HTTP request
@@ -112,8 +112,8 @@ class EnvelopeSendView(APIView):
                 "message": f"Only draft envelopes can be sent. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Update envelope status to sent
-        envelope.status = "sent"
+        # Update envelope status to pending
+        envelope.status = "pending"
         envelope.save()
         
         # Log the envelope send action

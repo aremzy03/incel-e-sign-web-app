@@ -10,11 +10,17 @@ class Envelope(models.Model):
     
     An envelope manages the signing process for a document, including
     the order of signers and the current status of the signing workflow.
+    
+    Each entry in signing_order may optionally include a `position` dict 
+    specifying where the signer's signature should appear in the document.
+    Coordinates use UI convention (top-left origin) and are converted to PDF coordinates.
+    Example: {"page": 2, "x": 150, "y": 450, "width": 200, "height": 50}
+    where y=450 means 450 points from the top of the page.
     """
     
     STATUS_CHOICES = [
         ("draft", "Draft"),
-        ("sent", "Sent"),
+        ("pending", "Pending"),
         ("completed", "Completed"),
         ("rejected", "Rejected"),
     ]
@@ -55,7 +61,7 @@ class Envelope(models.Model):
     signing_order = models.JSONField(
         default=list,
         blank=True,
-        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1}, ...]"
+        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1, 'position': {'page': 2, 'x': 150, 'y': 450, 'width': 200, 'height': 50}}, ...]. Position is optional. Coordinates use UI convention (y from top)."
     )
     
     created_at = models.DateTimeField(
@@ -91,6 +97,7 @@ class Envelope(models.Model):
         - Each dict has 'signer_id' and 'order' keys
         - Orders start from 1 and are unique (no duplicates, no gaps)
         - signer_id values correspond to existing users
+        - Optional 'position' dict has numeric page, x, y, width, and height fields
         """
         super().clean()
         
@@ -137,6 +144,27 @@ class Envelope(models.Model):
                 raise ValidationError({
                     'signing_order': f'Entry {i}: order must be a positive integer.'
                 })
+            
+            # Validate optional position field
+            position = signer_entry.get("position")
+            if position is not None:
+                if not isinstance(position, dict):
+                    raise ValidationError({
+                        'signing_order': f'Entry {i}: position must be a dict.'
+                    })
+                
+                required_position_keys = ["page", "x", "y", "width", "height"]
+                for key in required_position_keys:
+                    if key not in position:
+                        raise ValidationError({
+                            'signing_order': f'Entry {i}: position must include {key}.'
+                        })
+                    
+                    value = position[key]
+                    if not isinstance(value, (int, float)) or value < 0:
+                        raise ValidationError({
+                            'signing_order': f'Entry {i}: position[{key}] must be a positive number.'
+                        })
             
             # Check for duplicate signer_ids
             if signer_id in signer_ids:
@@ -202,5 +230,5 @@ class Envelope(models.Model):
     
     @property
     def is_sent(self) -> bool:
-        """Returns True if the envelope status is 'sent'."""
-        return self.status == 'sent'
+        """Returns True if the envelope status is 'pending'."""
+        return self.status == 'pending'

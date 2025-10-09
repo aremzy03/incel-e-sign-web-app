@@ -615,7 +615,7 @@ curl -X GET http://localhost:8000/documents/ \
     "file_name": "invoice.pdf",
     "file_url": "/media/documents/550e8400-e29b-41d4-a716-446655440001_invoice.pdf",
     "file_size": 512000,
-    "status": "sent",
+    "status": "pending",
     "created_at": "2024-01-01T11:00:00Z",
     "updated_at": "2024-01-01T11:30:00Z"
   }
@@ -812,16 +812,39 @@ The Envelope model manages the signing workflow for documents, defining the orde
   - `sent`: Envelope has been sent to signers
   - `completed`: All signers have completed signing
   - `rejected`: Envelope was rejected
-- `signing_order` (JSONField): Ordered list of signers with validation
+- `signing_order` (JSONField): Ordered list of signers with validation and optional signature position coordinates
 - `created_at` (DateTimeField): Timestamp when the envelope was created
 - `updated_at` (DateTimeField): Timestamp when the envelope was last updated
 
 **Signing Order Format:**
 ```json
 [
-  {"signer_id": "550e8400-e29b-41d4-a716-446655440000", "order": 1},
-  {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 2},
-  {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 3}
+  {
+    "signer_id": "550e8400-e29b-41d4-a716-446655440000", 
+    "order": 1,
+    "position": {
+      "page": 1,
+      "x": 150,
+      "y": 450,
+      "width": 200,
+      "height": 50
+    }
+  },
+  {
+    "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+    "order": 2,
+    "position": {
+      "page": 2,
+      "x": 120,
+      "y": 600,
+      "width": 180,
+      "height": 40
+    }
+  },
+  {
+    "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
+    "order": 3
+  }
 ]
 ```
 
@@ -830,6 +853,8 @@ The Envelope model manages the signing workflow for documents, defining the orde
 - Each entry must have `signer_id` (valid UUID) and `order` (positive integer)
 - Orders must start from 1 and be sequential (no gaps, no duplicates)
 - `signer_id` values must correspond to existing users
+- Optional `position` field must contain numeric `page`, `x`, `y`, `width`, and `height` fields
+- All position values must be >= 0 (accepts both integers and floats)
 - Empty list is valid (no signers assigned yet)
 
 **Features:**
@@ -837,7 +862,7 @@ The Envelope model manages the signing workflow for documents, defining the orde
 - Cascade delete when document or creator is deleted
 - Default status of "draft"
 - Comprehensive signing order validation
-- Properties: `signer_count`, `is_completed`, `is_sent`
+- Properties: `signer_count`, `is_completed`, `is_sent` (returns True when status is "pending")
 - Admin interface with filtering, search, and signer count display
 - Ordered by creation date (newest first)
 
@@ -856,7 +881,7 @@ envelope = Envelope.objects.create(
 # Check properties
 print(f"Signers: {envelope.signer_count}")
 print(f"Is completed: {envelope.is_completed}")
-print(f"Is sent: {envelope.is_sent}")
+print(f"Is sent: {envelope.is_sent}")  # True when status is "pending"
 ```
 
 ### 📮 Envelope Creation
@@ -884,8 +909,28 @@ curl -X POST http://localhost:8000/envelopes/create/ \
   -d '{
     "document_id": "550e8400-e29b-41d4-a716-446655440000",
     "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+        "order": 1,
+        "position": {
+          "page": 1,
+          "x": 150,
+          "y": 450,
+          "width": 200,
+          "height": 50
+        }
+      },
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
+        "order": 2,
+        "position": {
+          "page": 2,
+          "x": 120,
+          "y": 600,
+          "width": 180,
+          "height": 40
+        }
+      }
     ]
   }'
 ```
@@ -900,8 +945,21 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 {
   "document_id": "uuid-of-document",
   "signing_order": [
-    {"signer_id": "uuid-user-1", "order": 1},
-    {"signer_id": "uuid-user-2", "order": 2}
+    {
+      "signer_id": "uuid-user-1", 
+      "order": 1,
+      "position": {
+        "page": 1,
+        "x": 150,
+        "y": 450,
+        "width": 200,
+        "height": 50
+      }
+    },
+    {
+      "signer_id": "uuid-user-2", 
+      "order": 2
+    }
   ]
 }
 ```
@@ -911,6 +969,32 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 - Each `signer_id` must reference a valid user
 - Orders must start at 1 and be unique (no duplicates, no gaps)
 - Empty `signing_order` array is valid (no signers assigned yet)
+- Optional `position` field defines signature coordinates on the document
+- Position fields (`page`, `x`, `y`, `width`, `height`) must be positive numbers
+
+**Position Field Structure:**
+The optional `position` field allows you to specify exactly where each signer's signature should appear on the document:
+
+```json
+{
+  "position": {
+    "page": 1,      // Page number (1-based)
+    "x": 150,       // X coordinate from left edge (pixels)
+    "y": 450,       // Y coordinate from top edge (pixels)
+    "width": 200,   // Width of signature box (pixels)
+    "height": 50    // Height of signature box (pixels)
+  }
+}
+```
+
+- **page**: Page number where signature should appear (1-based indexing)
+- **x**: Horizontal position from the left edge of the page
+- **y**: Vertical position from the top edge of the page
+- **width**: Width of the signature bounding box
+- **height**: Height of the signature bounding box
+- All coordinate values accept both integers and floats
+- All values must be >= 0 (zero is allowed for edge positioning)
+- If `position` is omitted, the signer can place their signature anywhere
 
 **Response (Success - 201):**
 ```json
@@ -1016,7 +1100,7 @@ pytest -v
 
 **Endpoint:** `POST /envelopes/{id}/send/`
 
-Send an envelope to start the signing process (changes status from draft to sent).
+Send an envelope to start the signing process (changes status from draft to pending).
 
 **Request:**
 ```bash
@@ -1044,7 +1128,7 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "document": "550e8400-e29b-41d4-a716-446655440001",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
-    "status": "sent",
+    "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
@@ -1075,8 +1159,21 @@ curl -X PATCH http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-4466554400
   -H "Content-Type: application/json" \
   -d '{
     "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+        "order": 1,
+        "position": {
+          "page": 1,
+          "x": 100,
+          "y": 300,
+          "width": 180,
+          "height": 60
+        }
+      },
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440004", 
+        "order": 2
+      }
     ]
   }'
 ```
@@ -1099,8 +1196,21 @@ curl -X PATCH http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-4466554400
     "creator_email": "creator@example.com",
     "status": "draft",
     "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+        "order": 1,
+        "position": {
+          "page": 1,
+          "x": 100,
+          "y": 300,
+          "width": 180,
+          "height": 60
+        }
+      },
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440004", 
+        "order": 2
+      }
     ],
     "signer_count": 2,
     "created_at": "2024-01-01T12:00:00Z",
@@ -1176,21 +1286,21 @@ Sending non-draft envelope:
 ```json
 {
   "status": "error",
-  "message": "Only draft envelopes can be sent. Current status: sent"
+  "message": "Only draft envelopes can be sent. Current status: pending"
 }
 ```
 
 #### Envelope Status Workflow
 
 **Status Transitions:**
-- `draft` → `sent` (via send endpoint)
+- `draft` → `pending` (via send endpoint)
 - `draft` → `rejected` (via reject endpoint)
-- `sent` → `rejected` (via reject endpoint)
+- `pending` → `rejected` (via reject endpoint)
 - `completed` → `rejected` (via reject endpoint)
 
 **Status Descriptions:**
 - `draft`: Envelope is being prepared
-- `sent`: Envelope has been sent to signers
+- `pending`: Envelope has been sent to signers and is pending signatures
 - `completed`: All signers have completed signing
 - `rejected`: Envelope was rejected by creator
 
@@ -1213,7 +1323,7 @@ pytest -v
 **Test Coverage:**
 - ✅ **Send/Reject Tests (16 tests):**
   - Creator can successfully send draft envelope
-  - Sending changes status from draft → sent
+  - Sending changes status from draft → pending
   - Creator can successfully reject envelope
   - Rejecting changes status to rejected
   - Non-creator attempting send returns 403 Forbidden
@@ -1268,7 +1378,7 @@ curl -X GET http://localhost:8000/envelopes/ \
       "id": "550e8400-e29b-41d4-a716-446655440000",
       "document": "550e8400-e29b-41d4-a716-446655440001",
       "creator": "550e8400-e29b-41d4-a716-446655440002",
-      "status": "sent",
+      "status": "pending",
       "signing_order": [
         {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
         {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
@@ -1324,7 +1434,7 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "document": "550e8400-e29b-41d4-a716-446655440001",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
-    "status": "sent",
+    "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
@@ -1385,7 +1495,7 @@ curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665544
 - `id`: Unique envelope identifier
 - `document`: Document ID being signed
 - `creator`: User ID who created the envelope
-- `status`: Current envelope status (draft, sent, completed, rejected)
+- `status`: Current envelope status (draft, pending, completed, rejected)
 - `signing_order`: Ordered list of signers
 - `created_at`: Envelope creation timestamp
 - `updated_at`: Last update timestamp
@@ -1533,7 +1643,7 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 
 **Endpoint:** `POST /envelopes/{id}/send/`
 
-Send an envelope to signers (creator only). Changes status from "draft" to "sent" and creates signature records.
+Send an envelope to signers (creator only). Changes status from "draft" to "pending" and creates signature records.
 
 **Request:**
 ```bash
@@ -1548,7 +1658,7 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
   "message": "Envelope sent successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440003",
-    "status": "sent",
+    "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -1623,7 +1733,7 @@ curl -X GET http://localhost:8000/envelopes/ \
       "id": "550e8400-e29b-41d4-a716-446655440003",
       "document": "550e8400-e29b-41d4-a716-446655440000",
       "creator": "550e8400-e29b-41d4-a716-446655440004",
-      "status": "sent",
+      "status": "pending",
       "signing_order": [
         {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
         {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -1668,7 +1778,7 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003
     "id": "550e8400-e29b-41d4-a716-446655440003",
     "document": "550e8400-e29b-41d4-a716-446655440000",
     "creator": "550e8400-e29b-41d4-a716-446655440004",
-    "status": "sent",
+    "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -1799,7 +1909,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 - **Other Users:** Cannot access unrelated envelopes (returns 404)
 
 **Status Transitions:**
-- **Envelope:** `draft` → `sent` → `completed` / `rejected`
+- **Envelope:** `draft` → `pending` → `completed` / `rejected`
 - **Signature:** `pending` → `signed` / `declined`
 
 **Automatic Actions:**
@@ -1847,23 +1957,80 @@ pytest signatures/tests/test_signatures.py -v   # Signing workflow
 
 ### ✍️ Signatures
 
-Complete signature management system for sequential document signing workflow.
+Complete signature management system for sequential document signing workflow with automatic signature placement.
+
+## 🎯 Automatic Signature Placement
+
+The system now supports **automatic signature placement** using predefined coordinates stored in the envelope's `signing_order` field. When signers approve their signature, the system automatically places their signature image at the specified location on the document without requiring manual coordinate input from the signer.
+
+### How It Works
+
+1. **Envelope Creation**: When creating an envelope, specify position coordinates for each signer in the `signing_order`
+2. **Automatic Placement**: When a signer signs, the system uses their predefined position coordinates
+3. **Fallback Support**: If no position is defined, the system falls back to default coordinates or request parameters
+
+### Position Priority
+
+The system follows this priority order for signature placement:
+
+1. **Envelope Position**: Uses coordinates from the signer's entry in `envelope.signing_order[].position`
+2. **Request Position**: Uses coordinates provided in the signing request (fallback)
+3. **Default Position**: Uses system defaults (page: 1, x: 100, y: 100, width: 120, height: 40)
+
+### Benefits
+
+- **Consistent Placement**: Signatures always appear in the correct location
+- **No Manual Input**: Signers don't need to specify coordinates when signing
+- **Professional Documents**: Ensures properly formatted signed documents
+- **Flexible Fallback**: Still works with existing workflows that don't use predefined positions
 
 #### Endpoints Overview
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/signatures/{envelope_id}/sign/` | Sign a document in envelope | ✅ |
+| `POST` | `/signatures/{envelope_id}/sign/` | Sign a document in envelope (with automatic placement) | ✅ |
 | `POST` | `/signatures/{envelope_id}/decline/` | Decline to sign document | ✅ |
 
 #### 1. Sign Document
 
 **Endpoint:** `POST /signatures/{envelope_id}/sign/`
 
-Sign a document in the envelope (sequential signing workflow).
+Sign a document in the envelope (sequential signing workflow with automatic placement).
 
-**Request:**
+**Request (Automatic Placement):**
 ```bash
+# Simple signing - position coordinates come from envelope
+curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440000/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_image": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  }'
+```
+
+**Request (Using Reusable Signature):**
+```bash
+# Sign using a saved signature
+curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440000/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "signature_id": "550e8400-e29b-41d4-a716-446655440001"
+  }'
+```
+
+**Request (Using Default Signature):**
+```bash
+# Sign using default signature (no payload needed)
+curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440000/sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Request (Manual Position - Fallback):**
+```bash
+# Fallback: provide position coordinates if not defined in envelope
 curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440000/sign/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
@@ -1881,11 +2048,33 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 - Method: POST
 - Authentication: Required (JWT Bearer token)
 - URL Parameter: `{envelope_id}` - UUID of the envelope
-- Body: JSON with `signature_image` (base64 encoded), `page`, `x`, `y`, `width`, `height`
+- Body: JSON with optional signature data and position coordinates (now optional fallbacks)
 
-**Payload Structure:**
+**Payload Options:**
 ```json
 {
+  // Option 1: Provide signature image (position from envelope)
+  "signature_image": "base64-encoded-signature-data"
+}
+```
+
+```json
+{
+  // Option 2: Use reusable signature (position from envelope)
+  "signature_id": "uuid-of-user-signature"
+}
+```
+
+```json
+{
+  // Option 3: Use default signature (position from envelope)
+  // Empty payload - system uses default signature automatically
+}
+```
+
+```json
+{
+  // Option 4: Manual coordinates (fallback when envelope has no position)
   "signature_image": "base64-encoded-signature-data",
   "page": 1,
   "x": 100,
@@ -1897,10 +2086,11 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 
 **Constraints:**
 - Only the current signer (lowest pending order) can sign
-- Envelope must be in "sent" status
-- Signature image must be valid base64 encoded data
+- Envelope must be in "pending" status
 - Authentication required
-- Optional placement fields: `page`, `x`, `y`, `width`, `height` (defaults applied if omitted)
+- Position coordinates are automatically used from envelope's `signing_order` if defined
+- Position coordinates in request are fallback options if not defined in envelope
+- Either signature_image, signature_id, or default signature must be available
 
 **Response (Success - 200):**
 ```json
@@ -1948,7 +2138,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 
 **Constraints:**
 - Only the current signer can decline
-- Envelope must be in "sent" status
+- Envelope must be in "pending" status
 - Authentication required
 
 **Response (Success - 200):**
@@ -2566,6 +2756,87 @@ For support and questions:
 
 **Built with ❤️ using Django, Django REST Framework, and modern web technologies.**
 
+---
+
+## 🆕 Recent Updates: Automatic Signature Placement
+
+### What's New
+
+The E-Sign Application now includes **automatic signature placement** functionality that automatically positions signatures on PDF documents using predefined coordinates stored in the envelope's signing order.
+
+### Key Features Added
+
+- **🎯 Automatic Placement**: Signatures are automatically placed at predefined coordinates without manual input
+- **📐 Position Storage**: Signature coordinates stored in envelope's `signing_order` field
+- **🔄 Fallback Support**: Graceful fallback to manual coordinates or defaults when positions aren't defined
+- **✅ Backward Compatible**: Existing workflows continue to work unchanged
+
+### Implementation Details
+
+**Enhanced Envelope Model:**
+- Extended `signing_order` validation to support optional `position` coordinates
+- Position includes: `page`, `x`, `y`, `width`, `height` fields
+- All position values must be positive numbers (integers or floats)
+
+**Updated Signing Logic:**
+- Automatic extraction of position data from signer's envelope entry
+- Priority system: envelope position → request position → defaults
+- Comprehensive error handling and validation
+
+**New Test Coverage:**
+- 6 comprehensive test cases covering automatic placement scenarios
+- Tests for position priority, fallback behavior, and edge cases
+- Integration with existing signature workflows (base64 images, UserSignature IDs, default signatures)
+
+### API Usage Examples
+
+**Create Envelope with Position Coordinates:**
+```json
+{
+  "document_id": "550e8400-e29b-41d4-a716-446655440000",
+  "signing_order": [
+    {
+      "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+      "order": 1,
+      "position": {
+        "page": 1,
+        "x": 150,
+        "y": 450,
+        "width": 200,
+        "height": 50
+      }
+    },
+    {
+      "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
+      "order": 2,
+      "position": {
+        "page": 2,
+        "x": 120,
+        "y": 600,
+        "width": 180,
+        "height": 40
+      }
+    }
+  ]
+}
+```
+
+**Sign Document (Automatic Placement):**
+```json
+{
+  "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+}
+```
+
+No position coordinates needed - the system automatically uses the predefined coordinates from the envelope!
+
+### Benefits
+
+- **Professional Documents**: Consistent signature placement across all signers
+- **Improved UX**: Signers don't need to manually position their signatures
+- **Reliable Workflows**: Reduces errors from manual coordinate specification
+- **Flexible Integration**: Works with all existing signature methods (inline images, UserSignature IDs, default signatures)
+
 ### ✍️ Reusable Signatures
 
 The E-Sign application supports reusable signatures, allowing users to upload and manage multiple signature images that can be reused across different documents. This feature enhances user experience by eliminating the need to create new signatures for each document.
@@ -2958,7 +3229,7 @@ These integration tests ensure that:
 When a user signs, the backend embeds the provided signature image directly onto the original PDF at the specified coordinates using ReportLab overlays merged via PyPDF. The signed PDF is stored at `/media/signed_docs/{envelope_id}_signed.pdf` and its path is recorded on the `Document` as `signed_file_url`.
 
 Notes:
-- Placement expects PDF points (origin at bottom-left). If placement fields are not provided, defaults are applied.
+- Placement uses UI convention coordinates (origin at top-left) which are automatically converted to PDF coordinates (origin at bottom-left). If placement fields are not provided, defaults are applied.
 - If the original PDF is stored remotely or not accessible on disk in the current environment, embedding may be skipped, but the signing workflow still completes. The `signed_file_url` will only be set when embedding succeeds.
 
 

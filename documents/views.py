@@ -314,21 +314,24 @@ class DocumentDownloadView(APIView):
                     else:
                         raise Http404
             
-            # Get the full file path
-            if document.file_url.startswith('/media/'):
+            # Get the full file path - prioritize signed version if available
+            # Use the same logic as signing: signed_file_url takes precedence
+            source_url = document.signed_file_url or document.file_url
+            
+            if source_url.startswith('/media/'):
                 # For local files, construct the full path
                 # Decode URL-encoded filename (e.g., %20 -> space)
-                file_path = os.path.join(settings.MEDIA_ROOT, unquote(document.file_url[7:]))  # Remove '/media/' prefix and decode URL
-            elif document.file_url.startswith('http'):
+                file_path = os.path.join(settings.MEDIA_ROOT, unquote(source_url[7:]))  # Remove '/media/' prefix and decode URL
+            elif source_url.startswith('http'):
                 # For S3 or other remote storage, redirect to the URL
                 from django.http import HttpResponseRedirect
-                return HttpResponseRedirect(document.file_url)
+                return HttpResponseRedirect(source_url)
             else:
                 # For relative paths, try to construct the full path
-                if document.file_url.startswith('documents/'):
-                    file_path = os.path.join(settings.MEDIA_ROOT, document.file_url)
+                if source_url.startswith('documents/'):
+                    file_path = os.path.join(settings.MEDIA_ROOT, source_url)
                 else:
-                    file_path = os.path.join(settings.MEDIA_ROOT, document.file_url)
+                    file_path = os.path.join(settings.MEDIA_ROOT, source_url)
             
             # Check if file exists
             if not os.path.exists(file_path):
