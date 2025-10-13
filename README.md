@@ -1878,8 +1878,38 @@ Current signer declines to sign. This immediately rejects the entire envelope.
 **Request:**
 ```bash
 curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440003/decline/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "decline_message": "Document terms are not acceptable."
+  }'
 ```
+
+**Request Details:**
+- Method: POST
+- Authentication: Required (JWT Bearer token)
+- URL Parameter: `{envelope_id}` - UUID of the envelope
+- Body: Optional JSON with `decline_message`
+
+**Payload Options:**
+```json
+{
+  // Option 1: Provide a decline message
+  "decline_message": "Reason for declining the document."
+}
+```
+
+```json
+{
+  // Option 2: Decline without a specific message
+  // Empty payload - system records decline without specific reason
+}
+```
+
+**Constraints:**
+- Only the current signer can decline
+- Envelope must be in "pending" status
+- Authentication required
 
 **Response (Success - 200):**
 ```json

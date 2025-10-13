@@ -67,20 +67,24 @@ def create_envelope_completed_notification(envelope):
     return f"Your envelope for '{file_name}' has been fully signed and completed."
 
 
-def create_signer_declined_notification(envelope, signer):
+def create_signer_declined_notification(envelope, signer, decline_message: str = None):
     """
     Create notification for signer declining.
     
     Args:
         envelope: Envelope instance
         signer: User instance who declined
+        decline_message (str, optional): The message or reason for declining. Defaults to None.
         
     Returns:
         str: Notification message
     """
     signer_name = get_user_display_name(signer)
     file_name = envelope.document.file_name
-    return f"Signer {signer_name} declined to sign the document '{file_name}'. The envelope has been rejected."
+    message = f"Signer {signer_name} declined to sign the document '{file_name}'. The envelope has been rejected."
+    if decline_message:
+        message += f" Reason: {decline_message}"
+    return message
 
 
 def create_envelope_rejected_notification(envelope):

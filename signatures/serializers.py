@@ -177,11 +177,14 @@ class DeclineSignatureSerializer(serializers.Serializer):
     """
     Serializer for declining a signature.
     
-    No additional fields required - just the action.
+    Accepts an optional decline message.
     """
     
-    # No fields needed - this is just an action serializer
-    pass
+    decline_message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Optional message/reason for declining the signature."
+    )
 
 
 class UserSignatureSerializer(serializers.ModelSerializer):

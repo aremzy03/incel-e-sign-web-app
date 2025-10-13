@@ -395,7 +395,7 @@ class DeclineSignatureView(APIView):
                 "message": f"You have already {signature.status} this document."
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Validate the request (no additional data needed for decline)
+        # Validate the request
         serializer = DeclineSignatureSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({
@@ -404,6 +404,8 @@ class DeclineSignatureView(APIView):
                 "data": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        decline_message = serializer.validated_data.get('decline_message')
+
         # Update the signature
         signature.status = "declined"
         signature.save()
@@ -414,7 +416,7 @@ class DeclineSignatureView(APIView):
             request.user, 
             "DECLINE_SIGN", 
             signature, 
-            f"User {request.user.full_name or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'." + (f" Reason: {decline_message}" if decline_message else ""), 
             request=request
         )
         
@@ -425,7 +427,7 @@ class DeclineSignatureView(APIView):
         # Notify creator about decline
         from notifications.utils import create_notification, create_signer_declined_notification
         
-        message = create_signer_declined_notification(envelope, request.user)
+        message = create_signer_declined_notification(envelope, request.user, decline_message)
         create_notification(str(envelope.creator.id), message)
         
         # Return signature details
