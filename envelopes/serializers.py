@@ -7,11 +7,32 @@ in the e-signature workflow.
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Envelope
+from .models import Envelope, EnvelopeDocument
 from documents.models import Document
+from signatures.serializers import SignatureSerializer # Import SignatureSerializer
+import uuid
 
 User = get_user_model()
 
+
+class PositionSerializer(serializers.Serializer):
+    page = serializers.IntegerField(min_value=1, required=True)
+    x = serializers.FloatField(min_value=0.0, required=True)
+    y = serializers.FloatField(min_value=0.0, required=True)
+    width = serializers.FloatField(min_value=0.0, required=True)
+    height = serializers.FloatField(min_value=0.0, required=True)
+
+class SignerDocumentPositionSerializer(serializers.Serializer):
+    signer_id = serializers.UUIDField(required=True)
+    position = PositionSerializer()
+
+class DocumentWithPositionsSerializer(serializers.Serializer):
+    document_id = serializers.UUIDField(required=True)
+    signer_document_positions = serializers.ListField(
+        child=SignerDocumentPositionSerializer(),
+        required=False,
+        allow_empty=True
+    )
 
 class EnvelopeCreateSerializer(serializers.ModelSerializer):
     """
@@ -21,242 +42,307 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
     an envelope with status="draft".
     """
     
-    document_id = serializers.UUIDField(
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
         write_only=True,
-        help_text="UUID of the document to create envelope for"
+        min_length=1,
+        help_text="List of UUIDs of the documents to include in the envelope."
+    )
+    
+    name = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=True,
+        help_text="Optional user-defined name for the envelope."
     )
     
     signing_order = serializers.ListField(
         child=serializers.DictField(),
         allow_empty=True,
-        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1, 'position': {'page': 2, 'x': 150, 'y': 450, 'width': 200, 'height': 50}}, ...]. Position is optional."
+        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1}, ...]. Document-specific positions are in EnvelopeDocument."
     )
-    
+
+    # New field to accept document-specific signer positions
+    documents_with_positions = serializers.ListField(
+        child=DocumentWithPositionsSerializer(),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+        help_text="Optional list of document_ids with their respective signer-document-positions."
+    )
+
     class Meta:
         model = Envelope
-        fields = ['document_id', 'signing_order']
-    
-    def validate_document_id(self, value):
+        fields = ['document_ids', 'name', 'signing_order', 'documents_with_positions']
+
+    def validate_document_ids(self, value):
         """
-        Validate that the document exists and belongs to the request user.
+        Validate that all documents exist and belong to the request user.
         """
-        try:
-            document = Document.objects.get(id=value)
-        except Document.DoesNotExist:
-            raise serializers.ValidationError("Document not found.")
-        
-        # Check if document belongs to the request user
+        if not value:
+            raise serializers.ValidationError("At least one document ID is required.")
+
         request = self.context.get('request')
-        if request and hasattr(request, 'user'):
-            if document.owner != request.user:
-                raise serializers.ValidationError(
-                    "You can only create envelopes for your own documents."
-                )
-        
+        if not request or not hasattr(request, 'user'):
+            raise serializers.ValidationError("User authentication required.")
+        user = request.user
+
+        # Filter existing documents owned by the user
+        existing_docs = Document.objects.filter(id__in=value, owner=user)
+        if existing_docs.count() != len(value):
+            # Identify missing or unauthorized documents
+            existing_doc_ids = set(str(d.id) for d in existing_docs)
+            provided_doc_ids = set(str(uid) for uid in value)
+            missing_or_unauthorized_ids = provided_doc_ids - existing_doc_ids
+            raise serializers.ValidationError(
+                f"Some documents not found or do not belong to you: {list(missing_or_unauthorized_ids)}"
+            )
+
         return value
-    
+
     def validate_signing_order(self, value):
         """
-        Validate the signing order structure and content.
-        
+        Validate the signing_order field.
+
         Ensures:
-        - Each entry has 'signer_id' and 'order' keys
-        - Orders start at 1 and are unique (no duplicates, no gaps)
-        - All signer_ids reference valid users
-        - Optional 'position' dict has numeric page, x, y, width, and height fields
+        - signing_order is a list of dictionaries
+        - Each dict has 'signer_id' and 'order' keys
+        - Orders start from 1 and are unique (no duplicates, no gaps)
+        - signer_id values correspond to existing users
         """
         if not isinstance(value, list):
-            raise serializers.ValidationError("Signing order must be a list.")
-        
+            raise serializers.ValidationError('Signing order must be a list.')
+
         if not value:
-            # Empty list is valid (no signers yet)
-            return value
-        
-        # Validate each signer entry
+            return value # Empty list is valid (no signers yet)
+
         signer_ids = set()
         orders = []
-        
+
         for i, signer_entry in enumerate(value):
             if not isinstance(signer_entry, dict):
-                raise serializers.ValidationError(
-                    f"Entry {i} must be a dictionary."
-                )
-            
-            # Check required keys
+                raise serializers.ValidationError(f'Entry {i} must be a dictionary.')
+
             if 'signer_id' not in signer_entry or 'order' not in signer_entry:
-                raise serializers.ValidationError(
-                    f"Entry {i} must have both 'signer_id' and 'order' keys."
-                )
-            
+                raise serializers.ValidationError(f'Entry {i} must have both "signer_id" and "order" keys.')
+
             signer_id = signer_entry['signer_id']
             order = signer_entry['order']
-            
-            # Validate signer_id format (should be UUID string)
+
             try:
-                signer_id_str = str(signer_id)
-                # Try to convert to UUID to validate format
-                import uuid
-                uuid.UUID(signer_id_str)
+                uuid.UUID(str(signer_id))
             except (ValueError, TypeError):
-                raise serializers.ValidationError(
-                    f"Entry {i}: signer_id must be a valid UUID."
-                )
-            
-            # Validate order is a positive integer
+                raise serializers.ValidationError(f'Entry {i}: signer_id must be a valid UUID.')
+
             if not isinstance(order, int) or order < 1:
-                raise serializers.ValidationError(
-                    f"Entry {i}: order must be a positive integer."
-                )
-            
-            # Validate optional position field
-            position = signer_entry.get("position")
-            if position is not None:
-                if not isinstance(position, dict):
-                    raise serializers.ValidationError(
-                        f"Entry {i}: position must be a dict."
-                    )
-                
-                required_position_keys = ["page", "x", "y", "width", "height"]
-                for key in required_position_keys:
-                    if key not in position:
-                        raise serializers.ValidationError(
-                            f"Entry {i}: position must include {key}."
-                        )
-                    
-                    position_value = position[key]
-                    if not isinstance(position_value, (int, float)) or position_value < 0:
-                        raise serializers.ValidationError(
-                            f"Entry {i}: position[{key}] must be a positive number."
-                        )
-            
-            # Check for duplicate signer_ids
+                raise serializers.ValidationError(f'Entry {i}: order must be a positive integer.')
+
             if signer_id in signer_ids:
-                raise serializers.ValidationError(
-                    f"Duplicate signer_id found: {signer_id}"
-                )
+                raise serializers.ValidationError(f'Duplicate signer_id found: {signer_id}')
             signer_ids.add(signer_id)
-            
-            # Check for duplicate orders
+
             if order in orders:
-                raise serializers.ValidationError(
-                    f"Duplicate order found: {order}"
-                )
+                raise serializers.ValidationError(f'Duplicate order found: {order}')
             orders.append(order)
-        
-        # Validate order sequence (must start from 1, no gaps)
+
         if orders:
             orders.sort()
             expected_orders = list(range(1, len(orders) + 1))
             if orders != expected_orders:
-                raise serializers.ValidationError(
-                    "Orders must start from 1 and have no gaps."
-                )
-        
+                raise serializers.ValidationError('Orders must start from 1 and have no gaps.')
+
         # Validate that all signer_ids correspond to existing users
-        if signer_ids:
-            # Convert string UUIDs to UUID objects for the database query
-            import uuid
-            uuid_signers = []
-            for signer_id in signer_ids:
-                try:
-                    uuid_signers.append(uuid.UUID(signer_id))
-                except (ValueError, TypeError):
-                    # This should have been caught earlier, but just in case
-                    continue
-            
-            existing_user_ids = set(
-                str(user_id) for user_id in 
-                User.objects.filter(id__in=uuid_signers).values_list('id', flat=True)
-            )
-            missing_user_ids = signer_ids - existing_user_ids
-            if missing_user_ids:
-                raise serializers.ValidationError(
-                    f"Users not found: {list(missing_user_ids)}"
-                )
-        
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        existing_user_ids = set(str(user_id) for user_id in 
+                                User.objects.filter(id__in=[uuid.UUID(str(s_id)) for s_id in signer_ids]).values_list('id', flat=True))
+        missing_user_ids = signer_ids - existing_user_ids
+        if missing_user_ids:
+            raise serializers.ValidationError(f'Users not found: {list(missing_user_ids)}')
+
         return value
-    
+
+    def validate_documents_with_positions(self, value):
+        document_ids_in_envelope = set(str(doc_id) for doc_id in self.initial_data.get('document_ids', []))
+        for entry in value:
+            doc_id = str(entry['document_id'])
+            if doc_id not in document_ids_in_envelope:
+                raise serializers.ValidationError(f"Document ID {doc_id} in documents_with_positions is not part of the envelope's document_ids.")
+
+            signer_ids_in_envelope = set(str(s['signer_id']) for s in self.initial_data.get('signing_order', []))
+            for signer_pos in entry.get('signer_document_positions', []):
+                signer_id = str(signer_pos['signer_id'])
+                if signer_id not in signer_ids_in_envelope:
+                    raise serializers.ValidationError(f"Signer ID {signer_id} in signer_document_positions for document {doc_id} is not part of the envelope's signing_order.")
+        return value
+
     def create(self, validated_data):
-        """
-        Create a new envelope with status="draft".
-        
-        Extracts document_id and signing_order from validated_data,
-        creates the envelope, and stores signing_order as JSON.
-        """
-        document_id = validated_data.pop('document_id')
+        document_ids = validated_data.pop('document_ids')
+        name = validated_data.pop('name', None)
         signing_order = validated_data.pop('signing_order', [])
-        
-        # Get the document
-        document = Document.objects.get(id=document_id)
-        
-        # Get the creator from the request context
+        documents_with_positions_data = validated_data.pop('documents_with_positions', [])
+
         request = self.context.get('request')
         creator = request.user if request else None
-        
+
         if not creator:
             raise serializers.ValidationError("User authentication required.")
-        
-        # Create the envelope with name derived from document
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=creator,
-            name=document.file_name,
+            name=name,
             status="draft",
             signing_order=signing_order
         )
+
+        # Add documents to the envelope via the intermediary model
+        for i, doc_id in enumerate(document_ids, 1):
+            document = Document.objects.get(id=doc_id)
+            
+            # Find corresponding signer_document_positions for this document
+            doc_pos_for_envelope_doc = next(
+                (item for item in documents_with_positions_data if str(item['document_id']) == str(doc_id)),
+                None
+            )
+            signer_doc_positions_for_this_doc = []
+            if doc_pos_for_envelope_doc:
+                for entry in doc_pos_for_envelope_doc.get('signer_document_positions', []):
+                    # Create a mutable copy of the entry dictionary
+                    mutable_entry = entry.copy()
+                    # Ensure signer_id is a string for JSONField compatibility
+                    if 'signer_id' in mutable_entry:
+                        mutable_entry['signer_id'] = str(mutable_entry['signer_id'])
+                    signer_doc_positions_for_this_doc.append(mutable_entry)
+
+            EnvelopeDocument.objects.create(
+                envelope=envelope,
+                document=document,
+                order=i,
+                signer_document_positions=signer_doc_positions_for_this_doc
+            )
         
         return envelope
+
+
+class EnvelopeDocumentSerializer(serializers.ModelSerializer):
+    document_file_name = serializers.CharField(source='document.file_name', read_only=True)
+    document_file_url = serializers.CharField(source='document.file_url', read_only=True)
+    document_signed_file_url = serializers.CharField(source='document.signed_file_url', read_only=True)
+
+    class Meta:
+        model = EnvelopeDocument
+        fields = ['id', 'document', 'order', 'document_file_name', 'document_file_url', 'document_signed_file_url', 'signer_document_positions']
+        read_only_fields = fields
 
 
 class EnvelopeDetailSerializer(serializers.ModelSerializer):
     """
     Serializer for envelope details (read-only).
+    
+    Includes details of associated documents and signature statuses.
     """
     
-    document_file_name = serializers.CharField(
-        source='document.file_name',
-        read_only=True
-    )
-    
-    creator_email = serializers.CharField(
-        source='creator.email',
-        read_only=True
-    )
-    
-    signer_count = serializers.ReadOnlyField()
+    creator_email = serializers.CharField(source='creator.email', read_only=True)
+    documents = EnvelopeDocumentSerializer(source='envelopedocument_set', many=True, read_only=True)
+    signatures = SignatureSerializer(many=True, read_only=True)
+    signer_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Envelope
         fields = [
-            'id', 'document', 'document_file_name', 'creator', 'creator_email',
-            'name', 'status', 'signing_order', 'signer_count', 'created_at', 'updated_at'
+            'id', 'creator', 'creator_email', 'name', 'status', 
+            'signing_order', 'signer_count', 'documents', 'signatures',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'document', 'creator', 'name', 'status', 'created_at', 'updated_at'
+            'id', 'creator', 'name', 'status', 'created_at', 'updated_at'
         ]
+    
+    def get_signer_count(self, obj):
+        return len(obj.signing_order)
 
 
 class EnvelopeUpdateSerializer(serializers.ModelSerializer):
     """
-    Serializer for updating draft envelopes.
+    Serializer for updating draft or rejected envelopes.
     
-    Only allows updating `signing_order` while the envelope is in draft
-    and owned by the authenticated user (enforced in the view).
+    Allows updating `name`, `document_ids`, and `signing_order`.
     """
+    
+    name = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=True,
+        help_text="Optional user-defined name for the envelope."
+    )
+
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        min_length=1,
+        help_text="List of UUIDs of the documents to include in the envelope."
+    )
+
     signing_order = EnvelopeCreateSerializer().fields['signing_order']
+
+    documents_with_positions = EnvelopeCreateSerializer().fields['documents_with_positions']
 
     class Meta:
         model = Envelope
-        fields = ['signing_order']
+        fields = ['name', 'document_ids', 'signing_order', 'documents_with_positions']
+
+    def validate_document_ids(self, value):
+        # Reuse validation from EnvelopeCreateSerializer
+        return EnvelopeCreateSerializer(context=self.context).validate_document_ids(value)
 
     def validate_signing_order(self, value):
         # Reuse the same validation logic as creation
         return EnvelopeCreateSerializer(context=self.context).validate_signing_order(value)
 
+    def validate_documents_with_positions(self, value):
+        # Reuse validation from EnvelopeCreateSerializer
+        return EnvelopeCreateSerializer(context=self.context).validate_documents_with_positions(value)
+
     def update(self, instance, validated_data):
+        document_ids = validated_data.pop('document_ids', None)
+        documents_with_positions_data = validated_data.pop('documents_with_positions', None)
+
+        # Update simple fields
+        instance.name = validated_data.get('name', instance.name)
         instance.signing_order = validated_data.get('signing_order', instance.signing_order)
+
+        # Update documents and their positions if provided
+        if document_ids is not None:
+            # Clear existing EnvelopeDocument relations
+            instance.envelopedocument_set.all().delete()
+            
+            # Add new EnvelopeDocument relations
+            for i, doc_id in enumerate(document_ids, 1):
+                document = Document.objects.get(id=doc_id)
+                
+                # Find corresponding signer_document_positions for this document
+                signer_doc_positions = []
+                if documents_with_positions_data:
+                    doc_pos_for_envelope_doc = next(
+                        (item for item in documents_with_positions_data if str(item['document_id']) == str(doc_id)),
+                        None
+                    )
+                    if doc_pos_for_envelope_doc:
+                        for entry in doc_pos_for_envelope_doc.get('signer_document_positions', []):
+                            # Ensure signer_id is a string for JSONField compatibility
+                            if 'signer_id' in entry:
+                                entry['signer_id'] = str(entry['signer_id'])
+                            signer_doc_positions.append(entry)
+
+                EnvelopeDocument.objects.create(
+                    envelope=instance,
+                    document=document,
+                    order=i,
+                    signer_document_positions=signer_doc_positions
+                )
+
         instance.full_clean()
-        instance.save(update_fields=['signing_order', 'updated_at'])
+        instance.save(update_fields=list(validated_data.keys()) + ['updated_at'])
         return instance
 
 class SignatureSerializer(serializers.ModelSerializer):
@@ -277,36 +363,25 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     Serializer for envelope details (read-only).
     
     Used for returning envelope data in send/reject operations and retrieval.
-    Includes nested signature information.
+    Includes nested signature and document information.
     """
     
-    signatures = serializers.SerializerMethodField()
+    signatures = SignatureSerializer(many=True, read_only=True)
+    documents = EnvelopeDocumentSerializer(source='envelopedocument_set', many=True, read_only=True)
+    signer_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Envelope
         fields = [
-            'id', 'document', 'creator', 'name', 'status', 'signing_order', 
-            'created_at', 'updated_at', 'signatures'
+            'id', 'creator', 'name', 'status', 'signing_order', 
+            'signer_count', 'documents', 'signatures',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'document', 'creator', 'name', 'status', 'signing_order', 
-            'created_at', 'updated_at', 'signatures'
+            'id', 'creator', 'name', 'status', 'signing_order', 
+            'signer_count', 'documents', 'signatures',
+            'created_at', 'updated_at'
         ]
     
-    def get_signatures(self, obj):
-        """
-        Get signatures for this envelope with signer, status, and signed_at.
-        """
-        from signatures.models import Signature
-        
-        signatures = obj.signatures.all().order_by('created_at')
-        signature_data = []
-        
-        for signature in signatures:
-            signature_data.append({
-                'signer': str(signature.signer.id),
-                'status': signature.status,
-                'signed_at': signature.signed_at.isoformat() if signature.signed_at else None
-            })
-        
-        return signature_data
+    def get_signer_count(self, obj):
+        return len(obj.signing_order)

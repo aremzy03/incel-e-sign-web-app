@@ -5,6 +5,7 @@ Celery tasks for the notifications app.
 from celery import shared_task
 from django.core.mail import EmailMessage
 from django.conf import settings
+from django.template.loader import render_to_string
 from .models import Notification
 
 
@@ -30,53 +31,70 @@ def create_notification(user_id: str, message: str) -> str | None:
         return None
 
 
-def _build_invite_email_body(inviter_name: str) -> str:
-    return (
-        f"Hi, {inviter_name} has invited you to sign documents on Incel E-Sign. "
-        f"Click here to register."
-    )
-
-
 @shared_task
-def send_invite_email_task(email: str, inviter_name: str) -> None:
+def send_invite_email_task(email: str, inviter_name: str, registration_url: str) -> None:
     subject = "You're invited to Incel E‑Sign"
-    body = _build_invite_email_body(inviter_name)
-    EmailMessage(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [email]).send(fail_silently=True)
+    context = {
+        'email_title': subject,
+        'inviter_name': inviter_name,
+        'registration_url': f"{settings.FRONTEND_BASE_URL}/register", # Updated URL format
+        'brand_name': 'Incel E-Sign',
+        'year': '2025',
+    }
+    html_message = render_to_string('invite_email.html', context)
+    email_message = EmailMessage(subject, html_message, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [email])
+    email_message.content_subtype = "html"
+    email_message.send(fail_silently=True)
 
 
 @shared_task
-def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, file_name: str) -> None:
+def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, envelope_name: str, sign_document_url: str) -> None:
     subject = "You have a document to sign"
-    body = (
-        f"Hi,\n\n{creator_name} has requested you to sign the document '{file_name}'.\n"
-        f"Please sign when convenient.\n\n"
-        f"Thanks,\nIncel E‑Sign"
-    )
-    EmailMessage(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email]).send(fail_silently=True)
+    context = {
+        'email_title': subject,
+        'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
+        'creator_name': creator_name,
+        'document_title': envelope_name,
+        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_name}/sign", # This URL is passed from views.py, so it might be overwritten by the next call. This is just for consistency in tasks.py.
+        'brand_name': 'Incel E-Sign',
+        'year': '2025',
+    }
+    html_message = render_to_string('envelope_assigned.html', context)
+    email_message = EmailMessage(subject, html_message, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email])
+    email_message.content_subtype = "html"
+    email_message.send(fail_silently=True)
 
 
 @shared_task
-def send_turn_to_sign_email_task(recipient_email: str, file_name: str) -> None:
+def send_turn_to_sign_email_task(recipient_email: str, envelope_name: str, sign_document_url: str) -> None:
     subject = "It's your turn to sign"
-    body = (
-        f"Hi,\n\nIt is now your turn to sign the document '{file_name}'.\n"
-        f"Please proceed to sign to keep the process moving.\n\n"
-        f"Thanks,\nIncel E‑Sign"
-    )
-    EmailMessage(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email]).send(fail_silently=True)
+    context = {
+        'email_title': subject,
+        'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
+        'document_title': envelope_name,
+        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_name}/sign", # This URL is passed from views.py, so it might be overwritten by the next call. This is just for consistency in tasks.py.
+        'brand_name': 'Incel E-Sign',
+        'year': '2025',
+    }
+    html_message = render_to_string('turn_to_sign.html', context)
+    email_message = EmailMessage(subject, html_message, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email])
+    email_message.content_subtype = "html"
+    email_message.send(fail_silently=True)
 
 
 @shared_task
 def send_email_confirmation_task(recipient_email: str, confirmation_url: str, full_name: str | None = None) -> None:
     subject = "Confirm your email address"
-    greeting = f"Hi {full_name}," if full_name else "Hi,"
-    body = (
-        f"{greeting}\n\n"
-        f"Welcome to Incel E‑Sign! Please confirm your email address by clicking the link below:\n"
-        f"{confirmation_url}\n\n"
-        f"If you didn't sign up, you can ignore this email.\n\n"
-        f"Thanks,\nIncel E‑Sign"
-    )
-    EmailMessage(subject, body, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email]).send(fail_silently=True)
+    context = {
+        'email_title': subject,
+        'user_name': full_name if full_name else recipient_email,
+        'verification_url': confirmation_url,
+        'brand_name': 'Incel E-Sign',
+        'year': '2025',
+    }
+    html_message = render_to_string('account_verification.html', context)
+    email_message = EmailMessage(subject, html_message, getattr(settings, 'DEFAULT_FROM_EMAIL', None), [recipient_email])
+    email_message.content_subtype = "html"
+    email_message.send(fail_silently=True)
 
 

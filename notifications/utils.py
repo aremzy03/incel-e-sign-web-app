@@ -35,8 +35,9 @@ def create_envelope_sent_notification(envelope):
         str: Notification message
     """
     creator_name = get_user_display_name(envelope.creator)
-    file_name = envelope.document.file_name
-    return f"{creator_name} has requested you to sign the document '{file_name}'."
+    # Use envelope.name instead of envelope.document.file_name
+    envelope_name = envelope.name
+    return f"{creator_name} has requested you to sign the document '{envelope_name}'."
 
 
 def create_signer_turn_notification(envelope):
@@ -49,8 +50,9 @@ def create_signer_turn_notification(envelope):
     Returns:
         str: Notification message
     """
-    file_name = envelope.document.file_name
-    return f"It is now your turn to sign the document '{file_name}'."
+    # Use envelope.name instead of envelope.document.file_name
+    envelope_name = envelope.name
+    return f"It is now your turn to sign the document '{envelope_name}'."
 
 
 def create_envelope_completed_notification(envelope):
@@ -63,8 +65,9 @@ def create_envelope_completed_notification(envelope):
     Returns:
         str: Notification message
     """
-    file_name = envelope.document.file_name
-    return f"Your envelope for '{file_name}' has been fully signed and completed."
+    # Use envelope.name instead of envelope.document.file_name
+    envelope_name = envelope.name
+    return f"Your envelope for '{envelope_name}' has been fully signed and completed."
 
 
 def create_signer_declined_notification(envelope, signer, decline_message: str = None):
@@ -80,8 +83,9 @@ def create_signer_declined_notification(envelope, signer, decline_message: str =
         str: Notification message
     """
     signer_name = get_user_display_name(signer)
-    file_name = envelope.document.file_name
-    message = f"Signer {signer_name} declined to sign the document '{file_name}'. The envelope has been rejected."
+    # Use envelope.name instead of envelope.document.file_name
+    envelope_name = envelope.name
+    message = f"Signer {signer_name} declined to sign the document '{envelope_name}'. The envelope has been rejected."
     if decline_message:
         message += f" Reason: {decline_message}"
     return message
@@ -98,8 +102,9 @@ def create_envelope_rejected_notification(envelope):
         str: Notification message
     """
     creator_name = get_user_display_name(envelope.creator)
-    file_name = envelope.document.file_name
-    return f"{creator_name} has cancelled the envelope for '{file_name}'."
+    # Use envelope.name instead of envelope.document.file_name
+    envelope_name = envelope.name
+    return f"{creator_name} has cancelled the envelope for '{envelope_name}'."
 
 
 def _build_invite_email_body(inviter_name: str) -> str:

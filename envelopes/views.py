@@ -12,9 +12,12 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.http import Http404 # Import Http404
 from .models import Envelope
 from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, EnvelopeSerializer, EnvelopeUpdateSerializer
 from documents.serializers import DocumentSerializer
+from .serializers import EnvelopeDocumentSerializer
+from django.conf import settings # Import settings
 
 
 class EnvelopeCreateView(APIView):
@@ -53,7 +56,7 @@ class EnvelopeCreateView(APIView):
                 request.user, 
                 "CREATE_ENVELOPE", 
                 envelope, 
-                f"User {request.user.full_name or request.user.username} created envelope for document '{envelope.document.file_name}'.", 
+                f"User {request.user.full_name or request.user.username} created envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
                 request=request
             )
             
@@ -105,24 +108,35 @@ class EnvelopeSendView(APIView):
                 "message": "You can only send envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Check if envelope is in draft status
-        if envelope.status != "draft":
+        # Check if envelope is in draft or rejected status
+        if envelope.status not in ["draft", "rejected"]:
             return Response({
                 "status": "error",
-                "message": f"Only draft envelopes can be sent. Current status: {envelope.status}"
+                "message": f"Only draft or rejected envelopes can be sent. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # If the envelope was rejected, reset it to draft before sending
+        if envelope.status == "rejected":
+            envelope.status = "draft"
+            envelope.save()
+
         # Update envelope status to pending
         envelope.status = "pending"
         envelope.save()
-        
+
+        # Update the status of all documents in this envelope to 'sent'
+        for envelope_document in envelope.envelopedocument_set.all():
+            document = envelope_document.document
+            document.status = "sent"
+            document.save()
+            
         # Log the envelope send action
         from audit.utils import log_action
         log_action(
             request.user, 
             "SEND_ENVELOPE", 
             envelope, 
-            f"User {request.user.full_name or request.user.username} sent envelope {envelope.id} for document '{envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} sent envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
             request=request
         )
         
@@ -146,14 +160,20 @@ class EnvelopeSendView(APIView):
                 try:
                     recipient_email = getattr(first_signer, 'email', None)
                     if recipient_email:
+                        # Generate the sign document URL
+                        sign_document_url = f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope.id}/sign"
                         send_envelope_assigned_email_task.delay(
                             recipient_email,
                             request.user.full_name or request.user.username,
-                            envelope.document.file_name,
+                            envelope.name,
+                            sign_document_url # Pass the generated URL
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Log email sending error but don't block the main process
+                    print(f"Error sending envelope assigned email: {e}")
+                    # TODO: Add proper logging here. (AR 2025-10-17)
             except User.DoesNotExist:
+                # This case should ideally not happen if signing_order is well-formed
                 pass
         
         for signer_entry in envelope.signing_order:
@@ -189,12 +209,12 @@ class EnvelopeSendView(APIView):
             logger.warning(f"Signature creation mismatch: expected {expected_signatures}, created {created_signatures} for envelope {envelope.id}")
         
         # Return updated envelope details
-        serializer = EnvelopeSerializer(envelope)
+        detail_serializer = EnvelopeDetailSerializer(envelope)
         
         return Response({
             "status": "success",
             "message": "Envelope sent successfully",
-            "data": serializer.data
+            "data": detail_serializer.data
         }, status=status.HTTP_200_OK)
 
 
@@ -233,6 +253,12 @@ class EnvelopeRejectView(APIView):
         # Update envelope status to rejected
         envelope.status = "rejected"
         envelope.save()
+
+        # Update the status of all documents in this envelope to 'rejected'
+        for envelope_document in envelope.envelopedocument_set.all():
+            document = envelope_document.document
+            document.status = "rejected"
+            document.save()
         
         # Log the envelope rejection action
         from audit.utils import log_action
@@ -240,7 +266,7 @@ class EnvelopeRejectView(APIView):
             request.user, 
             "REJECT_ENVELOPE", 
             envelope, 
-            f"User {request.user.full_name or request.user.username} rejected envelope for document '{envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} rejected envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
             request=request
         )
         
@@ -260,12 +286,12 @@ class EnvelopeRejectView(APIView):
                 continue
         
         # Return updated envelope details
-        serializer = EnvelopeSerializer(envelope)
+        detail_serializer = EnvelopeDetailSerializer(envelope)
         
         return Response({
             "status": "success",
             "message": "Envelope rejected successfully",
-            "data": serializer.data
+            "data": detail_serializer.data
         }, status=status.HTTP_200_OK)
 
 
@@ -281,40 +307,44 @@ class EnvelopeListView(ListAPIView):
     """
     
     permission_classes = [IsAuthenticated]
-    serializer_class = EnvelopeSerializer
+    serializer_class = EnvelopeDetailSerializer # Use EnvelopeDetailSerializer
     
     def get_queryset(self):
         """
         Return envelopes where the user is either the creator or a signer.
         """
         user = self.request.user
+        print(f"DEBUG: Filtering queryset for user: {user.id}") # Debug print
         
-        # Get all envelopes and filter in Python for better database compatibility
+        # Fetch all envelopes and filter in Python due to SQLite's
+        # limited JSONField __contains lookup support in testing.
+        # In production with PostgreSQL, Q(signing_order__contains=...) would be preferred.
+        # Filter first, then order and prefetch
         all_envelopes = Envelope.objects.all()
         
-        # Filter envelopes where user is creator or signer
-        user_envelopes = []
+        filtered_envelopes_pks = set()
         for envelope in all_envelopes:
-            # Check if user is the creator
             if envelope.creator == user:
-                user_envelopes.append(envelope)
+                filtered_envelopes_pks.add(envelope.pk)
                 continue
-            
-            # Check if user is in the signing order
             for signer_entry in envelope.signing_order:
-                if signer_entry.get('signer_id') == str(user.id):
-                    user_envelopes.append(envelope)
+                if str(signer_entry.get('signer_id')) == str(user.id):
+                    filtered_envelopes_pks.add(envelope.pk)
                     break
         
-        # Convert to queryset and order by creation date
-        envelope_ids = [env.id for env in user_envelopes]
-        return Envelope.objects.filter(id__in=envelope_ids).order_by('-created_at')
+        # Convert the filtered list back to a queryset
+        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks)).order_by('-created_at')
+        queryset = queryset.select_related('creator').prefetch_related('signatures', 'envelopedocument_set__document')
+        
+        print(f"DEBUG (List View - filtered): Queryset count: {queryset.count()}") # Debug print
+        return queryset
     
     def list(self, request, *args, **kwargs):
         """
         Override list to return custom response format.
         """
         queryset = self.get_queryset()
+        print(f"DEBUG: EnvelopeListView queryset count: {queryset.count()}") # Debug print
         serializer = self.get_serializer(queryset, many=True)
         
         return Response({
@@ -336,7 +366,7 @@ class EnvelopeDetailView(RetrieveAPIView):
     """
     
     permission_classes = [IsAuthenticated]
-    serializer_class = EnvelopeSerializer
+    serializer_class = EnvelopeDetailSerializer # Use detail serializer
     lookup_field = 'pk'
     
     def get_queryset(self):
@@ -344,56 +374,39 @@ class EnvelopeDetailView(RetrieveAPIView):
         Return envelopes where the user is either the creator or a signer.
         """
         user = self.request.user
+        print(f"DEBUG: Filtering queryset for user: {user.id}") # Debug print
         
-        # Get all envelopes and filter in Python for better database compatibility
+        # Fetch all relevant envelopes and filter in Python due to SQLite's
+        # limited JSONField __contains lookup support in testing.
+        # In production with PostgreSQL, Q(signing_order__contains=...) would be preferred.
         all_envelopes = Envelope.objects.all()
         
-        # Filter envelopes where user is creator or signer
-        user_envelopes = []
+        filtered_envelopes_pks = set()
         for envelope in all_envelopes:
-            # Check if user is the creator
             if envelope.creator == user:
-                user_envelopes.append(envelope)
+                filtered_envelopes_pks.add(envelope.pk)
                 continue
-            
-            # Check if user is in the signing order
             for signer_entry in envelope.signing_order:
-                if signer_entry.get('signer_id') == str(user.id):
-                    user_envelopes.append(envelope)
+                if str(signer_entry.get('signer_id')) == str(user.id):
+                    filtered_envelopes_pks.add(envelope.pk)
                     break
-        
-        # Convert to queryset
-        envelope_ids = [env.id for env in user_envelopes]
-        return Envelope.objects.filter(id__in=envelope_ids)
+
+        # Convert the filtered list back to a queryset
+        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks))
+        queryset = queryset.select_related('creator').prefetch_related('signatures', 'envelopedocument_set__document')
+
+        print(f"DEBUG (Detail View - filtered): Queryset for user {user.id} count: {queryset.count()}")
+        print(f"DEBUG (Detail View - filtered): Queryset query: {queryset.query}")
+        return queryset
     
     def retrieve(self, request, *args, **kwargs):
         """
         Override retrieve to return custom response format and handle permissions.
         """
-        # Check if envelope exists and user has access
+        # Use the optimized get_queryset and get_object for permission handling
         try:
-            envelope = Envelope.objects.get(pk=kwargs['pk'])
-        except Envelope.DoesNotExist:
-            return Response({
-                "status": "error",
-                "message": "Envelope not found or access denied"
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Check if user has access to this envelope
-        user = request.user
-        has_access = False
-        
-        # Check if user is the creator
-        if envelope.creator == user:
-            has_access = True
-        else:
-            # Check if user is in the signing order
-            for signer_entry in envelope.signing_order:
-                if signer_entry.get('signer_id') == str(user.id):
-                    has_access = True
-                    break
-        
-        if not has_access:
+            envelope = self.get_object() # get_object uses get_queryset
+        except Http404: # get_object_or_404 raises Http404
             return Response({
                 "status": "error",
                 "message": "Envelope not found or access denied"
@@ -455,11 +468,13 @@ class EnvelopeDocumentView(APIView):
                 "message": "Envelope not found or access denied"
             }, status=status.HTTP_404_NOT_FOUND)
         
-        # Serialize and return the document details
-        doc_serializer = DocumentSerializer(envelope.document)
+        # Serialize and return all documents in the envelope
+        # Use EnvelopeDocumentSerializer for each EnvelopeDocument instance
+        documents_in_envelope = envelope.envelopedocument_set.all()
+        doc_serializer = EnvelopeDocumentSerializer(documents_in_envelope, many=True)
         return Response({
             "status": "success",
-            "message": "Envelope document retrieved successfully",
+            "message": "Envelope documents retrieved successfully",
             "data": doc_serializer.data
         }, status=status.HTTP_200_OK)
 
@@ -518,7 +533,7 @@ class EnvelopeDeleteView(DestroyAPIView):
                 request.user, 
                 "DELETE_ENV", 
                 envelope, 
-                f"User {request.user.full_name or request.user.username} deleted envelope for document '{envelope.document.file_name}'.", 
+                f"User {request.user.full_name or request.user.username} deleted envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
                 request=request
             )
             
@@ -565,12 +580,12 @@ class EnvelopeEditView(APIView):
                 "message": "You can only edit envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
 
-        if envelope.status != "draft":
+        if envelope.status not in ["draft", "rejected"]:
             return Response({
                 "status": "error",
-                "message": f"Only draft envelopes can be edited. Current status: {envelope.status}"
+                "message": f"Only draft or rejected envelopes can be edited. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
-
+        
         serializer = EnvelopeUpdateSerializer(
             instance=envelope,
             data=request.data,
@@ -581,12 +596,17 @@ class EnvelopeEditView(APIView):
         if serializer.is_valid():
             updated_envelope = serializer.save()
 
+            # If the envelope was previously rejected, revert to draft status so it can be re-sent
+            if envelope.status == "rejected":
+                updated_envelope.status = "draft"
+                updated_envelope.save(update_fields=['status', 'updated_at'])
+
             from audit.utils import log_action
             log_action(
                 request.user,
                 "EDIT_ENVELOPE",
                 updated_envelope,
-                f"User {request.user.full_name or request.user.username} edited envelope for document '{updated_envelope.document.file_name}'.",
+                f"User {request.user.full_name or request.user.username} edited envelope '{updated_envelope.name}' with {updated_envelope.envelopedocument_set.count()} documents.",
                 request=request
             )
 

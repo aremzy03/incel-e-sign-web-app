@@ -1,0 +1,13 @@
+{% extends 'base_email.html' %}
+
+{% block content %}
+    <h2>Account Verification</h2>
+    <p>Dear {{ user_name }},</p>
+    <p>Thank you for registering with {{ brand_name|default:"Incel E-Sign" }}! To complete your registration, please verify your email address by clicking the button below:</p>
+    <div class="button-container">
+        <a href="{{ verification_url }}" class="button">Verify Account</a>
+    </div>
+    <p>If you did not create an account with us, please ignore this email.</p>
+    <p>Sincerely,</p>
+    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+{% endblock %}

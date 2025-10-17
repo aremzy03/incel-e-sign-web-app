@@ -1,0 +1,14 @@
+{% extends 'base_email.html' %}
+
+{% block content %}
+    <h2>Document Signed Successfully</h2>
+    <p>Dear {{ user_name }},</p>
+    <p>The document titled <strong>{{ document_title }}</strong> has been successfully signed.</p>
+    <p>You can view or download the signed document here:</p>
+    <div class="button-container">
+        <a href="{{ view_document_url }}" class="button">View Document</a>
+    </div>
+    <p>Thank you for using {{ brand_name|default:"Incel E-Sign" }}.</p>
+    <p>Sincerely,</p>
+    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+{% endblock %}

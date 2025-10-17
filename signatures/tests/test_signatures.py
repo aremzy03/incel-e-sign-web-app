@@ -16,7 +16,7 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from signatures.models import Signature
-from envelopes.models import Envelope
+from envelopes.models import Envelope, EnvelopeDocument # Import EnvelopeDocument
 from documents.models import Document
 
 User = get_user_model()
@@ -76,19 +76,19 @@ class SignatureTestCase(APITestCase):
         
         # Create test envelope with multiple signers
         self.envelope = Envelope.objects.create(
-            document=self.document,
             creator=self.creator,
-            status='draft',
+            name="Test Envelope",
+            status='pending',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1},
                 {'signer_id': str(self.signer2.id), 'order': 2},
                 {'signer_id': str(self.signer3.id), 'order': 3}
             ]
         )
+        EnvelopeDocument.objects.create(envelope=self.envelope, document=self.document, order=1)
         
-        # Send the envelope to create signature records
-        self.envelope.status = 'sent'
-        self.envelope.save()
+        # Send the envelope to create signature records (status is pending after send)
+        # Note: Envelope status is already 'pending' in creation, so no explicit send action here
         
         # Create signature records manually (simulating the send process)
         self.signature1 = Signature.objects.create(
@@ -208,9 +208,9 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
         self.client.post(url, payload, format='json')
         
-        # Verify envelope is still sent
+        # Verify envelope is still pending
         self.envelope.refresh_from_db()
-        self.assertEqual(self.envelope.status, 'sent')
+        self.assertEqual(self.envelope.status, 'pending') # Status is pending, not sent
         
         # Signer 3 signs (final signer)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer3_token}')
@@ -359,13 +359,14 @@ class SignatureTestCase(APITestCase):
         """Test that signing a draft envelope returns 400."""
         # Create a draft envelope
         draft_envelope = Envelope.objects.create(
-            document=self.document,
             creator=self.creator,
+            name="Draft Envelope for Signing Test",
             status='draft',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}
             ]
         )
+        EnvelopeDocument.objects.create(envelope=draft_envelope, document=self.document, order=1)
         
         url = reverse('signatures:sign_document', kwargs={'envelope_id': draft_envelope.id})
         
@@ -383,19 +384,20 @@ class SignatureTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
-        self.assertIn("must be in 'sent' status", response.data['message'])
+        self.assertIn("must be in 'pending' status", response.data['message'])
     
     def test_declining_draft_envelope_returns_400(self):
         """Test that declining a draft envelope returns 400."""
         # Create a draft envelope
         draft_envelope = Envelope.objects.create(
-            document=self.document,
             creator=self.creator,
+            name="Draft Envelope for Declining Test",
             status='draft',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1}
             ]
         )
+        EnvelopeDocument.objects.create(envelope=draft_envelope, document=self.document, order=1)
         
         url = reverse('signatures:decline_signature', kwargs={'envelope_id': draft_envelope.id})
         
@@ -405,7 +407,7 @@ class SignatureTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
-        self.assertIn("must be in 'sent' status", response.data['message'])
+        self.assertIn("must be in 'pending' status", response.data['message'])
     
     def test_signing_already_signed_document_returns_403(self):
         """Test that signing an already signed document returns 403 (not current signer)."""
@@ -466,7 +468,8 @@ class SignatureTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
-        self.assertIn('signature_image', response.data['data'])
+        print(f"DEBUG: Response data for empty signature image: {response.data}") # Debug print
+        self.assertIn('No signature provided and no default signature found', response.data['message'])
         
         # Test with invalid base64
         payload = {'signature_image': 'invalid-base64-data!'}
@@ -474,7 +477,8 @@ class SignatureTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
-        self.assertIn('valid base64', response.data['data']['signature_image'][0])
+        self.assertIn('signature_image', response.data['data'])
+        self.assertEqual(response.data['data']['signature_image'][0], 'Signature image must be valid base64 encoded data.')
     
     def test_signing_nonexistent_envelope_returns_404(self):
         """Test that signing nonexistent envelope returns 404."""
@@ -602,7 +606,7 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('not your turn to sign yet', response.data['message'])
         
-        # Verify signer2's signature is still pending
+        # Verify signature was not updated
         signer2_signature = Signature.objects.get(
             envelope=self.envelope,
             signer=self.signer2
@@ -619,12 +623,11 @@ class SignatureTestCase(APITestCase):
         
         response = self.client.post(url, {}, format='json')
         
-        # Should be rejected - it's not signer2's turn yet
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('not your turn to decline yet', response.data['message'])
         
-        # Verify signer2's signature is still pending
+        # Verify signature was not updated
         signer2_signature = Signature.objects.get(
             envelope=self.envelope,
             signer=self.signer2

@@ -1,0 +1,14 @@
+{% extends 'base_email.html' %}
+
+{% block content %}
+    <h2>It's Your Turn to Sign</h2>
+    <p>Hi {{ user_name }},</p>
+    <p>It is now your turn to sign the document titled <strong>{{ document_title }}</strong>.</p>
+    <p>Please click the button below to proceed with signing:</p>
+    <div class="button-container">
+        <a href="{{ sign_document_url }}" class="button">Sign Document</a>
+    </div>
+    <p>Please proceed to sign to keep the process moving.</p>
+    <p>Thank you,</p>
+    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+{% endblock %}

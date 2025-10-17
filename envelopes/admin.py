@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Envelope
+from .models import Envelope, EnvelopeDocument
 
 
 @admin.register(Envelope)
@@ -8,7 +8,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     
     list_display = [
         'id',
-        'document',
+        'name',
         'creator',
         'status',
         'signer_count',
@@ -23,7 +23,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     ]
     
     search_fields = [
-        'document__file_name',
+        'name',
         'creator__email',
         'creator__full_name',
         'id'
@@ -38,7 +38,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('id', 'document', 'creator', 'status')
+            'fields': ('id', 'name', 'creator', 'status')
         }),
         ('Signing Configuration', {
             'fields': ('signing_order', 'signer_count'),
@@ -56,3 +56,29 @@ class EnvelopeAdmin(admin.ModelAdmin):
         """Display the number of signers."""
         return obj.signer_count
     signer_count.short_description = 'Number of Signers'
+
+
+@admin.register(EnvelopeDocument)
+class EnvelopeDocumentAdmin(admin.ModelAdmin):
+    """Admin interface for EnvelopeDocument model."""
+    list_display = [
+        'id',
+        'envelope',
+        'document',
+        'order',
+        'signer_document_positions'
+    ]
+    list_filter = [
+        'envelope',
+        'document',
+        'order'
+    ]
+    search_fields = [
+        'envelope__name',
+        'document__file_name',
+        'id'
+    ]
+    readonly_fields = [
+        'id'
+    ]
+    ordering = ['envelope', 'order']

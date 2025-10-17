@@ -1,0 +1,11 @@
+{% extends 'base_email.html' %}
+
+{% block content %}
+    <h2>Document Rejected</h2>
+    <p>Dear {{ user_name }},</p>
+    <p>The document titled <strong>{{ document_title }}</strong> has been rejected by {{ rejecter_name }}.</p>
+    <p>Reason for rejection: {{ rejection_reason }}</p>
+    <p>If you have any questions or would like to discuss this, please contact {{ rejecter_name }} or our support team.</p>
+    <p>Sincerely,</p>
+    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+{% endblock %}

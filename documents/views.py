@@ -20,6 +20,7 @@ from .models import Document
 from envelopes.models import Envelope
 from .serializers import DocumentUploadSerializer, DocumentSerializer
 from django.db import models
+from envelopes.models import EnvelopeDocument
 
 
 class DocumentUploadView(APIView):
@@ -158,18 +159,28 @@ class DocumentDetailView(RetrieveAPIView):
         - The user is listed as a signer in an envelope that contains the document.
         """
         user = self.request.user
-        # Collect document ids from envelopes where user is creator
-        creator_env_docs = Envelope.objects.filter(creator=user).values_list('document_id', flat=True)
-        # Collect document ids from envelopes where user is a signer (based on JSONField signing_order)
-        # We have to filter in Python due to JSON structure portability
-        signer_env_docs = []
-        for env in Envelope.objects.all():
-            for signer_entry in env.signing_order:
-                if signer_entry.get('signer_id') == str(user.id):
-                    signer_env_docs.append(env.document_id)
+        # Collect documents owned by the user
+        owned_documents = Document.objects.filter(owner=user)
+
+        # Collect document IDs from envelopes where user is creator or signer
+        # Filter envelopes where user is creator
+        creator_envelopes_docs_pks = set(EnvelopeDocument.objects.filter(envelope__creator=user).values_list('document__id', flat=True))
+
+        # Filter envelopes where user is a signer (Python-based for SQLite compatibility)
+        signer_envelopes_docs_pks = set()
+        # Get all EnvelopeDocuments that link to an envelope the user is a signer in
+        for env_doc in EnvelopeDocument.objects.all(): # Fetch all EnvelopeDocument for iteration
+            for signer_entry in env_doc.envelope.signing_order:
+                if str(signer_entry.get('signer_id')) == str(user.id):
+                    signer_envelopes_docs_pks.add(env_doc.document.id) # Use env_doc.document.id
                     break
-        accessible_ids = set(list(creator_env_docs) + signer_env_docs)
-        return Document.objects.filter(models.Q(owner=user) | models.Q(id__in=accessible_ids))
+
+        accessible_ids = creator_envelopes_docs_pks.union(signer_envelopes_docs_pks)
+
+        # Combine owned documents and documents from accessible envelopes
+        accessible_documents = owned_documents | Document.objects.filter(id__in=list(accessible_ids))
+        
+        return accessible_documents.distinct().order_by('-created_at')
     
     def get_object(self):
         """
@@ -295,24 +306,23 @@ class DocumentDownloadView(APIView):
             # Quick check for ownership
             document = Document.objects.filter(id=pk, owner=user).first()
             if not document:
+                # Check if the document exists and the user has access via an envelope
                 # Check envelope creator access
-                creator_env = Envelope.objects.filter(document_id=pk, creator=user).exists()
-                if creator_env:
+                has_creator_access = EnvelopeDocument.objects.filter(document__id=pk, envelope__creator=user).exists()
+                if has_creator_access:
                     document = get_object_or_404(Document, id=pk)
                 else:
-                    # Check signer access by scanning envelopes for this document
+                    # Check signer access by scanning EnvelopeDocuments for this document
                     has_signer_access = False
-                    for env in Envelope.objects.filter(document_id=pk):
-                        for signer_entry in env.signing_order:
+                    for env_doc in EnvelopeDocument.objects.filter(document__id=pk):
+                        for signer_entry in env_doc.envelope.signing_order:
                             if signer_entry.get('signer_id') == str(user.id):
                                 has_signer_access = True
                                 break
                         if has_signer_access:
-                            break
-                    if has_signer_access:
-                        document = get_object_or_404(Document, id=pk)
-                    else:
-                        raise Http404
+                            document = get_object_or_404(Document, id=pk)
+                        else:
+                            raise Http404
             
             # Get the full file path - prioritize signed version if available
             # Use the same logic as signing: signed_file_url takes precedence

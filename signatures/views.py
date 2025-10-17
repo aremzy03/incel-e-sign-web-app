@@ -69,14 +69,14 @@ class SignDocumentView(APIView):
             return Response({
                 "status": "error",
                 "message": "It's not your turn to sign yet. Please wait for your turn."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
         
         # Check if already signed
         if signature.is_signed:
             return Response({
                 "status": "error",
                 "message": "You have already signed this document."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
         
         # Validate the signature data
         serializer = SignDocumentSerializer(data=request.data, context={'request': request})
@@ -148,61 +148,90 @@ class SignDocumentView(APIView):
                     "message": "No signature provided and no default signature found. Please provide signature_image, signature_id, or set a default signature."
                 }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Embed signature into the PDF
-        document = envelope.document
-        # Always start from the latest available file: previously signed version if present
-        source_url = document.signed_file_url or document.file_url
-        input_pdf_path = get_media_absolute_path_from_url(source_url)
-        output_dir = os.path.join(str(settings.MEDIA_ROOT), 'signed_docs')
-        os.makedirs(output_dir, exist_ok=True)
-        output_pdf_path = os.path.join(output_dir, f"{envelope.id}_signed.pdf")
-
-        # Ensure we have a local input PDF; download if it's a remote URL
-        if not os.path.exists(input_pdf_path):
-            try:
-                if isinstance(source_url, str) and (source_url.startswith('http://') or source_url.startswith('https://')):
-                    import requests
-                    tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp')
-                    os.makedirs(tmp_dir, exist_ok=True)
-                    tmp_input = os.path.join(tmp_dir, f"{envelope.id}_current.pdf")
-                    with requests.get(source_url, stream=True, timeout=15) as r:
-                        r.raise_for_status()
-                        with open(tmp_input, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
-                    input_pdf_path = tmp_input
-            except Exception:
-                # If download fails, we will skip embedding below
-                pass
-
-        # Get position information from envelope's signing_order for this signer
-        signer_position = None
-        for signer_entry in envelope.signing_order:
-            if str(signer_entry.get('signer_id')) == str(request.user.id):
-                signer_position = signer_entry.get('position')
-                break
+        # Update the signature
+        signature.status = "signed"
+        signature.signed_at = timezone.now()
+        # The signature_image is now stored in the Signature model, so we don't update it on the document
+        signature.signature_image = signature_image_data
+        signature.save()
         
-        # Try to embed signature; if it fails, continue workflow without blocking
-        if os.path.exists(input_pdf_path):
-            try:
-                # Use position from envelope if available, otherwise use defaults or request data
-                if signer_position and isinstance(signer_position, dict):
-                    # Validate that position has all required fields
-                    required_fields = ['page', 'x', 'y', 'width', 'height']
-                    if all(field in signer_position for field in required_fields):
-                        embed_signature(
-                            pdf_path=input_pdf_path,
-                            output_path=output_pdf_path,
-                            signature_image=signature_image_data,
-                            page=signer_position['page'],
-                            x=signer_position['x'],
-                            y=signer_position['y'],
-                            width=signer_position['width'],
-                            height=signer_position['height'],
-                        )
+        # Process each document in the envelope for signature embedding
+        from envelopes.models import EnvelopeDocument
+        envelope_documents = EnvelopeDocument.objects.filter(envelope=envelope).order_by('order')
+        
+        if not envelope_documents.exists():
+            return Response({
+                "status": "error",
+                "message": "No documents found in this envelope to sign."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        for env_doc in envelope_documents:
+            document = env_doc.document
+
+            # Determine signature position for this specific document and signer
+            signer_position_for_doc = None
+            for pos_entry in env_doc.signer_document_positions:
+                if str(pos_entry.get('signer_id')) == str(request.user.id):
+                    signer_position_for_doc = pos_entry.get('position')
+                    break
+
+            # Always start from the latest available file: previously signed version if present
+            source_url = document.signed_file_url or document.file_url
+            input_pdf_path = get_media_absolute_path_from_url(source_url)
+            output_dir = os.path.join(str(settings.MEDIA_ROOT), 'signed_docs')
+            os.makedirs(output_dir, exist_ok=True)
+            output_pdf_path = os.path.join(output_dir, f"{document.id}_signed_{envelope.id}.pdf")
+
+            # Ensure we have a local input PDF; download if it's a remote URL
+            if not os.path.exists(input_pdf_path):
+                try:
+                    if isinstance(source_url, str) and (source_url.startswith('http://') or source_url.startswith('https://')):
+                        import requests
+                        tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp')
+                        os.makedirs(tmp_dir, exist_ok=True)
+                        tmp_input = os.path.join(tmp_dir, f"{document.id}_current.pdf")
+                        with requests.get(source_url, stream=True, timeout=15) as r:
+                            r.raise_for_status()
+                            with open(tmp_input, 'wb') as f:
+                                for chunk in r.iter_content(chunk_size=8192):
+                                    if chunk:
+                                        f.write(chunk)
+                        input_pdf_path = tmp_input
+                except Exception:
+                    # If download fails, we will skip embedding below
+                    pass
+
+            # Try to embed signature; if it fails, continue workflow without blocking
+            if os.path.exists(input_pdf_path):
+                try:
+                    # Use position from EnvelopeDocument if available, otherwise use defaults or request data
+                    if signer_position_for_doc and isinstance(signer_position_for_doc, dict):
+                        required_fields = ['page', 'x', 'y', 'width', 'height']
+                        if all(field in signer_position_for_doc for field in required_fields):
+                            embed_signature(
+                                pdf_path=input_pdf_path,
+                                output_path=output_pdf_path,
+                                signature_image=signature_image_data,
+                                page=signer_position_for_doc['page'],
+                                x=signer_position_for_doc['x'],
+                                y=signer_position_for_doc['y'],
+                                width=signer_position_for_doc['width'],
+                                height=signer_position_for_doc['height'],
+                            )
+                        else:
+                            # Position is incomplete, use request data or defaults
+                            embed_signature(
+                                pdf_path=input_pdf_path,
+                                output_path=output_pdf_path,
+                                signature_image=signature_image_data,
+                                page=validated_data.get('page', 1),
+                                x=validated_data.get('x', 100),
+                                y=validated_data.get('y', 100),
+                                width=validated_data.get('width', 120),
+                                height=validated_data.get('height', 40),
+                            )
                     else:
-                        # Position is incomplete, use request data or defaults
+                        # No position defined in EnvelopeDocument, use request data or defaults
                         embed_signature(
                             pdf_path=input_pdf_path,
                             output_path=output_pdf_path,
@@ -213,38 +242,23 @@ class SignDocumentView(APIView):
                             width=validated_data.get('width', 120),
                             height=validated_data.get('height', 40),
                         )
-                else:
-                    # No position defined in envelope, use request data or defaults
-                    embed_signature(
-                        pdf_path=input_pdf_path,
-                        output_path=output_pdf_path,
-                        signature_image=signature_image_data,
-                        page=validated_data.get('page', 1),
-                        x=validated_data.get('x', 100),
-                        y=validated_data.get('y', 100),
-                        width=validated_data.get('width', 120),
-                        height=validated_data.get('height', 40),
-                    )
-                
-                relative_output = os.path.relpath(output_pdf_path, str(settings.MEDIA_ROOT))
-                new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
-                # Override document with newly signed file so next signer sees prior signatures
-                document.signed_file_url = new_signed_url
-                document.file_url = new_signed_url
-            except Exception:
-                # On failure, proceed without blocking signing
+                    
+                    relative_output = os.path.relpath(output_pdf_path, str(settings.MEDIA_ROOT))
+                    new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
+                    # Update document with newly signed file URL
+                    document.signed_file_url = new_signed_url
+                    document.file_url = new_signed_url # Also update file_url to reflect latest signed version
+                except Exception as e:
+                    # On failure, proceed without blocking signing
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error embedding signature for document {document.id} in envelope {envelope.id}: {e}")
+                    document.signed_file_url = document.signed_file_url or None
+            else:
+                # Could not obtain local source; keep existing URLs
                 document.signed_file_url = document.signed_file_url or None
-        else:
-            # Could not obtain local source; keep existing URLs
-            document.signed_file_url = document.signed_file_url or None
-
-        document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
-
-        # Update the signature
-        signature.status = "signed"
-        signature.signed_at = timezone.now()
-        signature.signature_image = signature_image_data
-        signature.save()
+            
+            document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
         
         # Log the signature action
         from audit.utils import log_action
@@ -252,7 +266,7 @@ class SignDocumentView(APIView):
             request.user, 
             "SIGN_DOC", 
             signature, 
-            f"User {request.user.full_name or request.user.username} signed envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'.", 
+            f"User {request.user.full_name or request.user.username} signed envelope '{signature.envelope.name}' with {signature.envelope.envelopedocument_set.count()} documents.", 
             request=request
         )
         
@@ -273,6 +287,12 @@ class SignDocumentView(APIView):
             # All signers have signed - mark envelope as completed
             envelope.status = "completed"
             envelope.save()
+
+            # Update the status of all documents in this envelope to 'completed'
+            for envelope_document in envelope.envelopedocument_set.all():
+                document = envelope_document.document
+                document.status = "completed"
+                document.save()
             
             # Notify creator that envelope is completed
             message = create_envelope_completed_notification(envelope)
@@ -321,7 +341,7 @@ class SignDocumentView(APIView):
                     if recipient_email:
                         send_turn_to_sign_email_task.delay(
                             recipient_email,
-                            envelope.document.file_name,
+                            envelope.name, # Use envelope name
                         )
                 except Exception:
                     pass
@@ -386,14 +406,14 @@ class DeclineSignatureView(APIView):
             return Response({
                 "status": "error",
                 "message": "It's not your turn to decline yet. Please wait for your turn."
-            }, status=status.HTTP_403_FORBIDDEN)
+            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
         
         # Check if already signed or declined
         if signature.is_signed or signature.is_declined:
             return Response({
                 "status": "error",
                 "message": f"You have already {signature.status} this document."
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
         
         # Validate the request
         serializer = DeclineSignatureSerializer(data=request.data)
@@ -416,7 +436,7 @@ class DeclineSignatureView(APIView):
             request.user, 
             "DECLINE_SIGN", 
             signature, 
-            f"User {request.user.full_name or request.user.username} declined to sign envelope {signature.envelope.id} for document '{signature.envelope.document.file_name}'." + (f" Reason: {decline_message}" if decline_message else ""), 
+            f"User {request.user.full_name or request.user.username} declined to sign envelope '{signature.envelope.name}' with {signature.envelope.envelopedocument_set.count()} documents." + (f" Reason: {decline_message}" if decline_message else ""), 
             request=request
         )
         

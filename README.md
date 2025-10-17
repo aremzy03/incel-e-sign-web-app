@@ -1,7 +1,5 @@
 # E-Sign Application
 
-A comprehensive Django-based e-signature platform inspired by SignNow and DocuSign, providing secure document signing workflows with sequential signing, notifications, and audit logging.
-
 ## 🚀 Project Overview
 
 The E-Sign Application is a full-featured electronic signature platform that enables users to upload documents, create signing workflows, and manage the complete document signing process. Built with Django and Django REST Framework, it provides a robust API for document management, envelope creation, sequential signing, and comprehensive audit trails.
@@ -227,15 +225,142 @@ curl -X POST http://localhost:8000/api/documents/upload/ \
 #### 4. Create an Envelope
 ```bash
 curl -X POST http://localhost:8000/api/envelopes/create/ \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "document_id": "DOCUMENT_ID_FROM_STEP_3",
+    "document_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440005"
+    ],
+    "name": "My Important Contract Bundle",
     "signing_order": [
-      {"signer_id": "SIGNER_USER_ID", "order": 1}
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+        "order": 1
+      },
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
+        "order": 2
+      }
+    ],
+    "documents_with_positions": [
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+        ]
+      },
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440005",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+        ]
+      }
     ]
   }'
 ```
+
+**Request Details:**
+- Content-Type: `application/json`
+- Authentication: Required (JWT Bearer token)
+- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
+
+**Payload Structure:**
+```json
+{
+  "document_ids": ["uuid-of-document-1", "uuid-of-document-2"], // List of document UUIDs
+  "name": "Optional custom envelope name", // Optional string
+  "signing_order": [
+    {
+      "signer_id": "uuid-user-1", 
+      "order": 1
+    },
+    {
+      "signer_id": "uuid-user-2", 
+      "order": 2
+    }
+  ],
+  "documents_with_positions": [
+    {
+      "document_id": "uuid-of-document-1", // Document to apply positions to
+      "signer_document_positions": [ // List of signer positions for this specific document
+        {"signer_id": "uuid-user-1", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+        {"signer_id": "uuid-user-2", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+      ]
+    },
+    {
+      "document_id": "uuid-of-document-2",
+      "signer_document_positions": [
+        {"signer_id": "uuid-user-1", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+      ]
+    }
+  ]
+}
+```
+
+**Constraints:**
+- At least one `document_id` is required.
+- Documents in `document_ids` must exist and belong to the authenticated user.
+- Each `signer_id` in `signing_order` and `documents_with_positions` must reference a valid user.
+- `signing_order` must be a list of dictionaries with valid `signer_id` and sequential `order` values (starting from 1, no gaps, no duplicates).
+- `documents_with_positions` (if provided) must be a list of dictionaries.
+- Each entry in `documents_with_positions` must have a `document_id` that is present in the main `document_ids` list.
+- Each `signer_document_positions` entry must have a `signer_id` that is present in the main `signing_order`.
+- Optional `position` field within `signer_document_positions` defines signature coordinates: `page` (positive integer), `x`, `y`, `width`, `height` (non-negative numbers, integers or floats). If omitted for a signer/document, default or request-provided coordinates will be used.
+- If no custom `name` is provided, a default name like "Untitled Envelope - YYYY-MM-DD HH:MM" will be generated.
+
+**Response (Success - 201):**
+```json
+{
+  "success": true,
+  "message": "Envelope created successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    "creator": "550e8400-e29b-41d4-a716-446655440004",
+    "creator_email": "creator@example.com",
+    "name": "My Important Contract Bundle",
+    "status": "draft",
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
+    ],
+    "signer_count": 2,
+    "documents": [
+      {
+        "id": "uuid-of-envelopedocument-1",
+        "document": "550e8400-e29b-41d4-a716-446655440000",
+        "order": 1,
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+        ]
+      },
+      {
+        "id": "uuid-of-envelopedocument-2",
+        "document": "550e8400-e29b-41d4-a716-446655440005",
+        "order": 2,
+        "document_file_name": "document2.pdf",
+        "document_file_url": "/media/documents/document2.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+        ]
+      }
+    ],
+    "signatures": [],
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:00:00Z"
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Validation errors (documents not found, invalid signers, malformed signing order, invalid document/signer positions, no documents provided).
+- `401 Unauthorized`: Missing or invalid authentication.
 
 #### 5. Send the Envelope
 ```bash
@@ -293,13 +418,13 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/api/envelopes/create/` | Create envelope with signing order | ✅ |
+| `POST` | `/api/envelopes/create/` | Create envelope with documents & signing order | ✅ |
 | `POST` | `/api/envelopes/{id}/send/` | Send envelope to signers | ✅ |
 | `POST` | `/api/envelopes/{id}/reject/` | Reject envelope | ✅ |
-| `PATCH` | `/api/envelopes/{id}/edit/` | Edit draft envelope (creator only) | ✅ |
+| `PATCH` | `/api/envelopes/{id}/edit/` | Edit draft or rejected envelope (creator only) | ✅ |
 | `GET` | `/api/envelopes/` | List envelopes (creator + signer) | ✅ |
 | `GET` | `/api/envelopes/{id}/` | Retrieve envelope details | ✅ |
-| `GET` | `/api/envelopes/{id}/document/` | Retrieve envelope's document details | ✅ |
+| `GET` | `/api/envelopes/{id}/documents/` | Retrieve all documents of an envelope | ✅ |
 | `DELETE` | `/api/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 
 ### Signature Operations
@@ -892,44 +1017,49 @@ Complete envelope management system for creating signing workflows around docume
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/envelopes/create/` | Create new envelope for document | ✅ |
-| `DELETE` | `/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
+| `POST` | `/api/envelopes/create/` | Create new envelope for document | ✅ |
+| `DELETE` | `/api/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
 
 #### 1. Create Envelope
 
-**Endpoint:** `POST /envelopes/create/`
+**Endpoint:** `POST /api/envelopes/create/`
 
-Create a new envelope for a document with specified signing order.
+Create a new envelope with multiple documents and a specified signing order. You can optionally provide a custom name for the envelope and document-specific signature positions.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/envelopes/create/ \
+curl -X POST http://localhost:8000/api/envelopes/create/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "document_id": "550e8400-e29b-41d4-a716-446655440000",
+    "document_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440005"
+    ],
+    "name": "My Important Contract Bundle",
     "signing_order": [
       {
         "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
-        "order": 1,
-        "position": {
-          "page": 1,
-          "x": 150,
-          "y": 450,
-          "width": 200,
-          "height": 50
-        }
+        "order": 1
       },
       {
         "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
-        "order": 2,
-        "position": {
-          "page": 2,
-          "x": 120,
-          "y": 600,
-          "width": 180,
-          "height": 40
-        }
+        "order": 2
+      }
+    ],
+    "documents_with_positions": [
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+        ]
+      },
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440005",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+        ]
       }
     ]
   }'
@@ -938,63 +1068,51 @@ curl -X POST http://localhost:8000/envelopes/create/ \
 **Request Details:**
 - Content-Type: `application/json`
 - Authentication: Required (JWT Bearer token)
-- Body: JSON with `document_id` and `signing_order`
+- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
 
 **Payload Structure:**
 ```json
 {
-  "document_id": "uuid-of-document",
+  "document_ids": ["uuid-of-document-1", "uuid-of-document-2"], // List of document UUIDs
+  "name": "Optional custom envelope name", // Optional string
   "signing_order": [
     {
       "signer_id": "uuid-user-1", 
-      "order": 1,
-      "position": {
-        "page": 1,
-        "x": 150,
-        "y": 450,
-        "width": 200,
-        "height": 50
-      }
+      "order": 1
     },
     {
       "signer_id": "uuid-user-2", 
       "order": 2
+    }
+  ],
+  "documents_with_positions": [
+    {
+      "document_id": "uuid-of-document-1", // Document to apply positions to
+      "signer_document_positions": [ // List of signer positions for this specific document
+        {"signer_id": "uuid-user-1", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+        {"signer_id": "uuid-user-2", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+      ]
+    },
+    {
+      "document_id": "uuid-of-document-2",
+      "signer_document_positions": [
+        {"signer_id": "uuid-user-1", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+      ]
     }
   ]
 }
 ```
 
 **Constraints:**
-- Document must exist and belong to the authenticated user
-- Each `signer_id` must reference a valid user
-- Orders must start at 1 and be unique (no duplicates, no gaps)
-- Empty `signing_order` array is valid (no signers assigned yet)
-- Optional `position` field defines signature coordinates on the document
-- Position fields (`page`, `x`, `y`, `width`, `height`) must be positive numbers
-
-**Position Field Structure:**
-The optional `position` field allows you to specify exactly where each signer's signature should appear on the document:
-
-```json
-{
-  "position": {
-    "page": 1,      // Page number (1-based)
-    "x": 150,       // X coordinate from left edge (pixels)
-    "y": 450,       // Y coordinate from top edge (pixels)
-    "width": 200,   // Width of signature box (pixels)
-    "height": 50    // Height of signature box (pixels)
-  }
-}
-```
-
-- **page**: Page number where signature should appear (1-based indexing)
-- **x**: Horizontal position from the left edge of the page
-- **y**: Vertical position from the top edge of the page
-- **width**: Width of the signature bounding box
-- **height**: Height of the signature bounding box
-- All coordinate values accept both integers and floats
-- All values must be >= 0 (zero is allowed for edge positioning)
-- If `position` is omitted, the signer can place their signature anywhere
+- At least one `document_id` is required.
+- Documents in `document_ids` must exist and belong to the authenticated user.
+- Each `signer_id` in `signing_order` and `documents_with_positions` must reference a valid user.
+- `signing_order` must be a list of dictionaries with valid `signer_id` and sequential `order` values (starting from 1, no gaps, no duplicates).
+- `documents_with_positions` (if provided) must be a list of dictionaries.
+- Each entry in `documents_with_positions` must have a `document_id` that is present in the main `document_ids` list.
+- Each `signer_document_positions` entry must have a `signer_id` that is present in the main `signing_order`.
+- Optional `position` field within `signer_document_positions` defines signature coordinates: `page` (positive integer), `x`, `y`, `width`, `height` (non-negative numbers, integers or floats). If omitted for a signer/document, default or request-provided coordinates will be used.
+- If no custom `name` is provided, a default name like "Untitled Envelope - YYYY-MM-DD HH:MM" will be generated.
 
 **Response (Success - 201):**
 ```json
@@ -1003,16 +1121,41 @@ The optional `position` field allows you to specify exactly where each signer's 
   "message": "Envelope created successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440003",
-    "document": "550e8400-e29b-41d4-a716-446655440000",
-    "document_file_name": "contract.pdf",
     "creator": "550e8400-e29b-41d4-a716-446655440004",
     "creator_email": "creator@example.com",
+    "name": "My Important Contract Bundle",
     "status": "draft",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
     ],
     "signer_count": 2,
+    "documents": [
+      {
+        "id": "uuid-of-envelopedocument-1",
+        "document": "550e8400-e29b-41d4-a716-446655440000",
+        "order": 1,
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "position": {"page": 1, "x": 150, "y": 350, "width": 200, "height": 50}}
+        ]
+      },
+      {
+        "id": "uuid-of-envelopedocument-2",
+        "document": "550e8400-e29b-41d4-a716-446655440005",
+        "order": 2,
+        "document_file_name": "document2.pdf",
+        "document_file_url": "/media/documents/document2.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
+        ]
+      }
+    ],
+    "signatures": [],
     "created_at": "2024-01-01T12:00:00Z",
     "updated_at": "2024-01-01T12:00:00Z"
   }
@@ -1020,91 +1163,18 @@ The optional `position` field allows you to specify exactly where each signer's 
 ```
 
 **Error Responses:**
-- `400 Bad Request`: Validation errors (document not found, invalid signers, malformed signing order)
-- `401 Unauthorized`: Missing or invalid authentication
-
-**Validation Rules:**
-- **Document Ownership**: You can only create envelopes for your own documents
-- **Signer Validation**: All `signer_id` values must reference existing users
-- **Order Validation**: Orders must start from 1 and be sequential (1, 2, 3, etc.)
-- **No Duplicates**: No duplicate `signer_id` or `order` values allowed
-- **UUID Format**: All IDs must be valid UUID format
-
-**Example Error Responses:**
-
-Document not owned by user:
-```json
-{
-  "status": "error",
-  "message": "Validation failed",
-  "data": {
-    "document_id": ["You can only create envelopes for your own documents."]
-  }
-}
-```
-
-Invalid signing order:
-```json
-{
-  "status": "error",
-  "message": "Validation failed",
-  "data": {
-    "signing_order": ["Orders must start from 1 and have no gaps."]
-  }
-}
-```
-
-Non-existent signer:
-```json
-{
-  "status": "error",
-  "message": "Validation failed",
-  "data": {
-    "signing_order": ["Users not found: ['550e8400-e29b-41d4-a716-446655440999']"]
-  }
-}
-```
-
-#### Testing Envelope Creation
-
-**Run Envelope Tests:**
-```bash
-# Run all envelope-related tests
-pytest envelopes/tests/ -v
-
-# Run specific test categories
-pytest envelopes/tests/test_models.py -v      # Model tests
-pytest envelopes/tests/test_creation.py -v    # Creation functionality
-
-# Run all tests
-pytest -v
-```
-
-**Test Coverage:**
-- ✅ **Creation Tests (13 tests):**
-  - Successful envelope creation with valid document and signers
-  - Creation fails if document doesn't belong to creator
-  - Creation fails if invalid user_id is in signing_order
-  - Creation fails if signing_order has duplicate orders
-  - Creation fails if signing_order has duplicate signer_ids
-  - Creation fails if signing_order has gaps in order numbers
-  - Creation fails if signing_order doesn't start from 1
-  - Creation fails if signing_order missing required keys
-  - Creation fails if signer_id invalid UUID format
-  - Creation fails if order not positive integer
-  - Creation succeeds with empty signing_order
-  - Unauthenticated request returns 401
-  - Creation fails if document not found
+- `400 Bad Request`: Validation errors (documents not found, invalid signers, malformed signing order, invalid document/signer positions, no documents provided).
+- `401 Unauthorized`: Missing or invalid authentication.
 
 #### 2. Send Envelope
 
 **Endpoint:** `POST /envelopes/{id}/send/`
 
-Send an envelope to start the signing process (changes status from draft to pending).
+Send an envelope to start the signing process. This changes the status from `draft` (or `rejected`) to `pending`, creates signature records for all signers, and initiates notifications.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000/send/ \
+curl -X POST http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440000/send/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1115,9 +1185,9 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
 - Body: None required
 
 **Constraints:**
-- Only the envelope creator can send the envelope
-- Envelope must be in "draft" status
-- Authentication required
+- Only the envelope creator can send the envelope.
+- Envelope must be in `draft` or `rejected` status.
+- Authentication required.
 
 **Response (Success - 200):**
 ```json
@@ -1126,93 +1196,39 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
   "message": "Envelope sent successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
-    "document": "550e8400-e29b-41d4-a716-446655440001",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
+    "name": "My Important Contract Bundle",
     "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
     ],
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:05:00Z"
-  }
-}
-```
-
-**Error Responses:**
-- `400 Bad Request`: Envelope is not in draft status
-- `401 Unauthorized`: Missing or invalid authentication
-- `403 Forbidden`: User is not the envelope creator
-- `404 Not Found`: Envelope not found
-
-#### 3. Reject Envelope
-#### 3a. Edit Draft Envelope
-
-**Endpoint:** `PATCH /envelopes/{id}/edit/`
-
-Edit an existing draft envelope. Only the envelope creator can edit, and only when the envelope is in the `draft` status. Currently supports updating `signing_order`.
-
-**Request:**
-```bash
-curl -X PATCH http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/edit/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "signing_order": [
+    "signer_count": 2,
+    "documents": [
       {
-        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
-        "order": 1,
-        "position": {
-          "page": 1,
-          "x": 100,
-          "y": 300,
-          "width": 180,
-          "height": 60
-        }
-      },
-      {
-        "signer_id": "550e8400-e29b-41d4-a716-446655440004", 
-        "order": 2
-      }
-    ]
-  }'
-```
-
-**Constraints:**
-- Only creator can edit
-- Envelope must be in `draft` status
-- `signing_order` must follow validation rules (sequential orders starting at 1, valid UUID users, no duplicates)
-
-**Response (Success - 200):**
-```json
-{
-  "status": "success",
-  "message": "Envelope updated successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
+        "id": "uuid-of-envelopedocument-1",
     "document": "550e8400-e29b-41d4-a716-446655440000",
-    "document_file_name": "contract.pdf",
-    "creator": "550e8400-e29b-41d4-a716-446655440004",
-    "creator_email": "creator@example.com",
-    "status": "draft",
-    "signing_order": [
-      {
-        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
         "order": 1,
-        "position": {
-          "page": 1,
-          "x": 100,
-          "y": 300,
-          "width": 180,
-          "height": 60
-        }
-      },
-      {
-        "signer_id": "550e8400-e29b-41d4-a716-446655440004", 
-        "order": 2
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": []
       }
     ],
-    "signer_count": 2,
+    "signatures": [
+      {
+        "id": "uuid-of-signature-1",
+        "signer": "550e8400-e29b-41d4-a716-446655440003",
+        "signer_email": "signer1@example.com",
+        "signer_name": "Test Signer 1",
+        "status": "pending",
+        "signing_order": 1,
+        "signed_at": null,
+        "signature_image": null,
+        "created_at": "2024-01-01T12:00:00Z",
+        "updated_at": "2024-01-01T12:00:00Z"
+      }
+    ],
     "created_at": "2024-01-01T12:00:00Z",
     "updated_at": "2024-01-01T12:05:00Z"
   }
@@ -1220,19 +1236,20 @@ curl -X PATCH http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-4466554400
 ```
 
 **Error Responses:**
-- `400 Bad Request`: Envelope not in draft status or invalid `signing_order`
-- `401 Unauthorized`: Missing or invalid authentication
-- `403 Forbidden`: User is not the envelope creator
-- `404 Not Found`: Envelope not found
+- `400 Bad Request`: Validation errors (envelope not in `draft` or `rejected` status, invalid `signing_order`).
+- `401 Unauthorized`: Missing or invalid authentication.
+- `403 Forbidden`: User is not the envelope creator.
+- `404 Not Found`: Envelope not found.
 
+#### 3. Reject Envelope
 
 **Endpoint:** `POST /envelopes/{id}/reject/`
 
-Reject an envelope (changes status to rejected).
+Reject an envelope (creator only). This changes the status to `rejected`, cancels the signing workflow, and notifies all relevant parties.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000/reject/ \
+curl -X POST http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440000/reject/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1243,9 +1260,9 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
 - Body: None required
 
 **Constraints:**
-- Only the envelope creator can reject the envelope
-- Can reject envelopes in any status
-- Authentication required
+- Only the envelope creator can reject the envelope.
+- Can reject envelopes in any status (`draft`, `pending`, `completed`, `rejected`).
+- Authentication required.
 
 **Response (Success - 200):**
 ```json
@@ -1254,13 +1271,26 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
   "message": "Envelope rejected successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440000",
-    "document": "550e8400-e29b-41d4-a716-446655440001",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
+    "name": "My Important Contract Bundle",
     "status": "rejected",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
     ],
+    "signer_count": 2,
+    "documents": [
+      {
+        "id": "uuid-of-envelopedocument-1",
+        "document": "550e8400-e29b-41d4-a716-446655440000",
+        "order": 1,
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": []
+      }
+    ],
+    "signatures": [], // Signatures might be empty if rejected before any signing
     "created_at": "2024-01-01T12:00:00Z",
     "updated_at": "2024-01-01T12:05:00Z"
   }
@@ -1268,85 +1298,123 @@ curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-44665544000
 ```
 
 **Error Responses:**
-- `401 Unauthorized`: Missing or invalid authentication
-- `403 Forbidden`: User is not the envelope creator
-- `404 Not Found`: Envelope not found
+- `401 Unauthorized`: Missing or invalid authentication.
+- `403 Forbidden`: User is not the envelope creator.
+- `404 Not Found`: Envelope not found.
 
-**Example Error Responses:**
+#### 3a. Edit Draft or Rejected Envelope
 
-Non-creator attempting to send:
-```json
-{
-  "status": "error",
-  "message": "You can only send envelopes you created."
-}
-```
+**Endpoint:** `PATCH /envelopes/{id}/edit/`
 
-Sending non-draft envelope:
-```json
-{
-  "status": "error",
-  "message": "Only draft envelopes can be sent. Current status: pending"
-}
-```
+Edit an existing draft or rejected envelope. Only the envelope creator can edit. Allows updating `name`, `document_ids`, `signing_order`, and `documents_with_positions`.
 
-#### Envelope Status Workflow
-
-**Status Transitions:**
-- `draft` → `pending` (via send endpoint)
-- `draft` → `rejected` (via reject endpoint)
-- `pending` → `rejected` (via reject endpoint)
-- `completed` → `rejected` (via reject endpoint)
-
-**Status Descriptions:**
-- `draft`: Envelope is being prepared
-- `pending`: Envelope has been sent to signers and is pending signatures
-- `completed`: All signers have completed signing
-- `rejected`: Envelope was rejected by creator
-
-#### Testing Envelope Send & Reject
-
-**Run Envelope Send/Reject Tests:**
+**Request:**
 ```bash
-# Run all envelope-related tests
-pytest envelopes/tests/ -v
-
-# Run specific test categories
-pytest envelopes/tests/test_models.py -v      # Model tests
-pytest envelopes/tests/test_creation.py -v    # Creation functionality
-pytest envelopes/tests/test_send_reject.py -v # Send/reject functionality
-
-# Run all tests
-pytest -v
+curl -X PATCH http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/edit/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Revised Contract Bundle",
+    "document_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440006" // New document
+    ],
+    "signing_order": [
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
+        "order": 1,
+      },
+      {
+        "signer_id": "550e8400-e29b-41d4-a716-446655440007", // New signer
+        "order": 2
+      }
+    ],
+    "documents_with_positions": [
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 160, "y": 460, "width": 210, "height": 55}}
+        ]
+      },
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440006",
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 80, "y": 90, "width": 100, "height": 30}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440007", "position": {"page": 1, "x": 180, "y": 190, "width": 110, "height": 35}}
+        ]
+      }
+    ]
+  }'
 ```
 
-**Test Coverage:**
-- ✅ **Send/Reject Tests (16 tests):**
-  - Creator can successfully send draft envelope
-  - Sending changes status from draft → pending
-  - Creator can successfully reject envelope
-  - Rejecting changes status to rejected
-  - Non-creator attempting send returns 403 Forbidden
-  - Non-creator attempting reject returns 403 Forbidden
-  - Sending non-draft envelope returns validation error
-  - Sending completed envelope returns validation error
-  - Sending rejected envelope returns validation error
-  - Rejecting any status envelope succeeds
-  - Rejecting completed envelope succeeds
-  - Unauthenticated send request returns 401
-  - Unauthenticated reject request returns 401
-q### 📮 Retrieve Envelopes
+**Request Details:**
+- Method: PATCH
+- Authentication: Required (JWT Bearer token)
+- URL Parameter: `{id}` - UUID of the envelope to edit
+- Body: JSON with optional `name`, `document_ids`, `signing_order`, and `documents_with_positions`.
 
-Complete envelope retrieval system for listing and viewing envelope details with signature statuses.
+**Constraints:**
+- Only the envelope creator can edit the envelope.
+- Envelope must be in `draft` or `rejected` status.
+- If `document_ids` is provided, it must not be empty. All documents must exist and belong to the creator.
+- `signing_order` must follow validation rules (sequential orders starting at 1, valid UUID users, no duplicates).
+- `documents_with_positions` must follow validation rules (document_ids and signer_ids must exist in the envelope, valid position data).
+- If a rejected envelope is edited, its `status` will revert to `draft`.
 
-#### Endpoints Overview
+**Response (Success - 200):**
+```json
+{
+  "success": true,
+  "message": "Envelope updated successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    "creator": "550e8400-e29b-41d4-a716-446655440004",
+    "name": "Revised Contract Bundle",
+    "status": "draft", // Status is reverted to draft if previously rejected
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440007", "order": 2}
+    ],
+    "signer_count": 2,
+    "documents": [
+      {
+        "id": "uuid-of-envelopedocument-1",
+        "document": "550e8400-e29b-41d4-a716-446655440000",
+        "order": 1,
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 160, "y": 460, "width": 210, "height": 55}}
+        ]
+      },
+      {
+        "id": "uuid-of-envelopedocument-3",
+        "document": "550e8400-e29b-41d4-a716-446655440006",
+        "order": 2,
+        "document_file_name": "document new.pdf",
+        "document_file_url": "/media/documents/document_new.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 80, "y": 90, "width": 100, "height": 30}},
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440007", "position": {"page": 1, "x": 180, "y": 190, "width": 110, "height": 35}}
+        ]
+      }
+    ],
+    "signatures": [],
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:05:00Z"
+  }
+}
+```
 
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| `GET` | `/envelopes/` | List envelopes (for creators + signers) | ✅ |
-| `GET` | `/envelopes/{id}/` | Retrieve full details of an envelope | ✅ |
+**Error Responses:**
+- `400 Bad Request`: Validation errors (envelope not in `draft` or `rejected` status, invalid `document_ids`, invalid `signing_order`, invalid `documents_with_positions`).
+- `401 Unauthorized`: Missing or invalid authentication.
+- `403 Forbidden`: User is not the envelope creator.
+- `404 Not Found`: Envelope not found.
 
-#### 1. List Envelopes
+#### 4. List Envelopes
 
 **Endpoint:** `GET /envelopes/`
 
@@ -1354,7 +1422,7 @@ List all envelopes where the authenticated user is either the creator or a signe
 
 **Request:**
 ```bash
-curl -X GET http://localhost:8000/envelopes/ \
+curl -X GET http://localhost:8000/api/envelopes/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1364,9 +1432,9 @@ curl -X GET http://localhost:8000/envelopes/ \
 - Body: None required
 
 **Access Control:**
-- Returns envelopes created by the authenticated user
-- Returns envelopes where the authenticated user is a signer
-- Envelopes are ordered by creation date (newest first)
+- Returns envelopes created by the authenticated user.
+- Returns envelopes where the authenticated user is a signer.
+- Envelopes are ordered by creation date (newest first).
 
 **Response (Success - 200):**
 ```json
@@ -1375,42 +1443,59 @@ curl -X GET http://localhost:8000/envelopes/ \
   "message": "Envelopes retrieved successfully",
   "data": [
     {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "document": "550e8400-e29b-41d4-a716-446655440001",
-      "creator": "550e8400-e29b-41d4-a716-446655440002",
-      "status": "pending",
-      "signing_order": [
-        {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
-        {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+      "creator": "550e8400-e29b-41d4-a716-446655440004",
+      "creator_email": "creator@example.com",
+      "name": "My Important Contract Bundle",
+    "status": "pending",
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
+    ],
+      "signer_count": 2,
+      "documents": [
+        {
+          "id": "uuid-of-envelopedocument-1",
+          "document": "550e8400-e29b-41d4-a716-446655440000",
+          "order": 1,
+          "document_file_name": "document1.pdf",
+          "document_file_url": "/media/documents/document1.pdf",
+          "document_signed_file_url": null,
+          "signer_document_positions": [
+            {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}}
+          ]
+        }
       ],
-      "created_at": "2024-01-01T12:00:00Z",
-      "updated_at": "2024-01-01T12:05:00Z",
       "signatures": [
         {
-          "signer": "550e8400-e29b-41d4-a716-446655440003",
+          "id": "uuid-of-signature-1",
+          "signer": "550e8400-e29b-41d4-a716-446655440001",
+          "signer_email": "signer1@example.com",
+          "signer_name": "Test Signer 1",
           "status": "signed",
-          "signed_at": "2024-01-01T12:10:00Z"
-        },
-        {
-          "signer": "550e8400-e29b-41d4-a716-446655440004",
-          "status": "pending",
-          "signed_at": null
+          "signing_order": 1,
+          "signed_at": "2024-01-01T12:10:00Z",
+          "signature_image": "base64-encoded-signature-data",
+          "created_at": "2024-01-01T12:00:00Z",
+          "updated_at": "2024-01-01T12:00:00Z"
         }
-      ]
-    }
+    ],
+    "created_at": "2024-01-01T12:00:00Z",
+      "updated_at": "2024-01-01T12:05:00Z"
+  }
   ]
 }
 ```
 
-#### 2. Retrieve Envelope Details
+#### 5. Retrieve Envelope Details
 
 **Endpoint:** `GET /envelopes/{id}/`
 
-Retrieve full details of a specific envelope including signature statuses.
+Retrieve full details of a specific envelope including associated documents and signature statuses.
 
 **Request:**
 ```bash
-curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000/ \
+curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1421,9 +1506,9 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000
 - Body: None required
 
 **Access Control:**
-- Creator can view their envelope
-- Signers can view envelopes they are assigned to
-- Other users receive 404 (not found or access denied)
+- Creator can view their envelope.
+- Signers can view envelopes they are assigned to.
+- Other users receive 404 (not found or access denied).
 
 **Response (Success - 200):**
 ```json
@@ -1431,41 +1516,58 @@ curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440000
   "success": true,
   "message": "Envelope retrieved successfully",
   "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "document": "550e8400-e29b-41d4-a716-446655440001",
-    "creator": "550e8400-e29b-41d4-a716-446655440002",
-    "status": "pending",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 2}
+      "id": "550e8400-e29b-41d4-a716-446655440003",
+      "creator": "550e8400-e29b-41d4-a716-446655440004",
+    "creator_email": "creator@example.com",
+    "name": "My Important Contract Bundle",
+      "status": "pending",
+      "signing_order": [
+        {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
+        {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
+      ],
+    "signer_count": 2,
+    "documents": [
+      {
+        "id": "uuid-of-envelopedocument-1",
+        "document": "550e8400-e29b-41d4-a716-446655440000",
+        "order": 1,
+        "document_file_name": "document1.pdf",
+        "document_file_url": "/media/documents/document1.pdf",
+        "document_signed_file_url": null,
+        "signer_document_positions": [
+          {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}}
+        ]
+      }
+    ],
+      "signatures": [
+        {
+        "id": "uuid-of-signature-1",
+          "signer": "550e8400-e29b-41d4-a716-446655440001",
+        "signer_email": "signer1@example.com",
+        "signer_name": "Test Signer 1",
+          "status": "signed",
+        "signing_order": 1,
+        "signed_at": "2024-01-01T12:10:00Z",
+        "signature_image": "base64-encoded-signature-data",
+        "created_at": "2024-01-01T12:00:00Z",
+        "updated_at": "2024-01-01T12:00:00Z"
+      }
     ],
     "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:05:00Z",
-    "signatures": [
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440003",
-        "status": "signed",
-        "signed_at": "2024-01-01T12:10:00Z"
-      },
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440004",
-        "status": "pending",
-        "signed_at": null
-      }
-    ]
+    "updated_at": "2024-01-01T12:05:00Z"
   }
 }
 ```
 
-#### 2a. Retrieve Envelope Document
+#### 5a. Retrieve Envelope Documents
 
-**Endpoint:** `GET /api/envelopes/{id}/document/`
+**Endpoint:** `GET /envelopes/{id}/documents/`
 
-Fetch the document attached to an envelope (creator or assigned signer only). Useful for obtaining `file_url` for the signer UI before posting to the sign endpoint.
+Fetch all documents attached to an envelope (creator or assigned signer only). Useful for obtaining `file_url` for the signer UI before posting to the sign endpoint. This endpoint now returns a list of documents.
 
 **Request:**
 ```bash
-curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/document/ \
+curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/documents/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1473,333 +1575,37 @@ curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665544
 ```json
 {
   "status": "success",
-  "message": "Envelope document retrieved successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "file_name": "contract.pdf",
-    "file_url": "/media/documents/550e8400-e29b-41d4-a716-446655440000_contract.pdf",
-    "signed_file_url": null,
-    "file_size": 1024000,
-    "status": "draft",
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:00:00Z"
-  }
-}
-```
-
-**Error Responses:**
-- `401 Unauthorized`: Missing or invalid authentication
-- `404 Not Found`: Envelope not found or access denied
-
-**Response Fields:**
-- `id`: Unique envelope identifier
-- `document`: Document ID being signed
-- `creator`: User ID who created the envelope
-- `status`: Current envelope status (draft, pending, completed, rejected)
-- `signing_order`: Ordered list of signers
-- `created_at`: Envelope creation timestamp
-- `updated_at`: Last update timestamp
-- `signatures`: Array of signature objects with:
-  - `signer`: User ID of the signer
-  - `status`: Signature status (pending, signed, declined)
-  - `signed_at`: Timestamp when signed (null if not signed)
-
-**Error Responses:**
-
-Unauthorized access (404):
-```json
-{
-  "status": "error",
-  "message": "Envelope not found or access denied"
-}
-```
-
-Unauthenticated request (401):
-```json
-{
-  "detail": "Authentication credentials were not provided."
-}
-```
-
-**Constraints:**
-- Authentication required for all requests
-- Users can only access envelopes they created or are assigned to sign
-- Envelopes are ordered by creation date (newest first)
-- Signature data includes current status and timestamps
-
-#### Testing Envelope Retrieval
-
-**Run Envelope Retrieval Tests:**
-```bash
-# Run envelope retrieval tests
-pytest envelopes/tests/test_retrieval.py -v
-
-# Run all envelope tests
-pytest envelopes/tests/ -v
-```
-
-**Test Coverage:**
-- ✅ **Retrieval Tests (15 tests):**
-  - Creator can list and view their envelopes
-  - Signer can list and view envelopes assigned to them
-  - User can list multiple envelopes (as creator and signer)
-  - Other users cannot list unrelated envelopes
-  - Unauthenticated request returns 401
-  - Creator can view envelope detail with signatures
-  - Signer can view envelope detail they are assigned to
-  - Other user cannot view unrelated envelope (404)
-  - Unauthenticated detail request returns 401
-  - Nonexistent envelope returns 404
-  - Envelope detail includes all required fields
-  - Envelope list ordering (newest first)
-  - Envelope with no signatures
-  - Envelope with mixed signature statuses
-  - Send nonexistent envelope returns 404
-  - Reject nonexistent envelope returns 404
-  - Send response contains correct data structure
-  - Reject response contains correct data structure
-
-### ✍️ Envelope & Signing Flow
-
-Complete workflow system for document signing from envelope creation to final signature completion.
-
-#### Complete Endpoints Overview
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| `POST` | `/envelopes/create/` | Create envelope with document + signing_order | ✅ |
-| `POST` | `/envelopes/{id}/send/` | Send envelope (creator only) | ✅ |
-| `POST` | `/envelopes/{id}/reject/` | Reject envelope (creator only) | ✅ |
-| `PATCH` | `/envelopes/{id}/edit/` | Edit draft envelope (creator only) | ✅ |
-| `GET` | `/envelopes/` | List envelopes (for creators + signers) | ✅ |
-| `GET` | `/envelopes/{id}/` | Retrieve full envelope details with signatures | ✅ |
-| `GET` | `/envelopes/{id}/document/` | Retrieve envelope's document details | ✅ |
-| `DELETE` | `/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
-| `POST` | `/signatures/{envelope_id}/sign/` | Current signer signs document | ✅ |
-| `POST` | `/signatures/{envelope_id}/decline/` | Current signer declines (envelope rejected) | ✅ |
-
-#### Envelope Lifecycle
-
-```
-Draft → Sent → Completed / Rejected
-  ↓       ↓         ↓
-Create   Send    All Signers
-Envelope  to      Complete
-         Signers  or Any
-                  Declines
-```
-
-#### Signature Lifecycle
-
-```
-Pending → Signed / Declined
-   ↓         ↓        ↓
-Created   Document  Envelope
-When      Signed    Rejected
-Sent
-```
-
-#### 1. Create Envelope
-
-**Endpoint:** `POST /envelopes/create/`
-
-Create a new envelope for a document with specified signing order.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8000/envelopes/create/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "document_id": "550e8400-e29b-41d4-a716-446655440000",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-    ]
-  }'
-```
-
-**Response (Success - 201):**
-```json
-{
-  "success": true,
-  "message": "Envelope created successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
-    "document": "550e8400-e29b-41d4-a716-446655440000",
-    "creator": "550e8400-e29b-41d4-a716-446655440004",
-    "status": "draft",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-    ],
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:00:00Z"
-  }
-}
-```
-
-#### 2. Send Envelope
-
-**Endpoint:** `POST /envelopes/{id}/send/`
-
-Send an envelope to signers (creator only). Changes status from "draft" to "pending" and creates signature records.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/send/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "success": true,
-  "message": "Envelope sent successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
-    "status": "pending",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-    ],
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:05:00Z",
-    "signatures": [
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440001",
-        "status": "pending",
-        "signed_at": null
-      },
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440002",
-        "status": "pending",
-        "signed_at": null
-      }
-    ]
-  }
-}
-```
-
-#### 3. Reject Envelope
-
-**Endpoint:** `POST /envelopes/{id}/reject/`
-
-Reject an envelope (creator only). Changes status to "rejected".
-
-**Request:**
-```bash
-curl -X POST http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/reject/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "success": true,
-  "message": "Envelope rejected successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
-    "status": "rejected",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-    ],
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:10:00Z"
-  }
-}
-```
-
-#### 4. List Envelopes
-
-**Endpoint:** `GET /envelopes/`
-
-List all envelopes where the authenticated user is either the creator or a signer.
-
-**Request:**
-```bash
-curl -X GET http://localhost:8000/envelopes/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "success": true,
-  "message": "Envelopes retrieved successfully",
+  "message": "Envelope documents retrieved successfully",
   "data": [
     {
-      "id": "550e8400-e29b-41d4-a716-446655440003",
+      "id": "uuid-of-envelopedocument-1",
       "document": "550e8400-e29b-41d4-a716-446655440000",
-      "creator": "550e8400-e29b-41d4-a716-446655440004",
-      "status": "pending",
-      "signing_order": [
-        {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-        {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-      ],
-      "created_at": "2024-01-01T12:00:00Z",
-      "updated_at": "2024-01-01T12:05:00Z",
-      "signatures": [
-        {
-          "signer": "550e8400-e29b-41d4-a716-446655440001",
-          "status": "signed",
-          "signed_at": "2024-01-01T12:10:00Z"
-        },
-        {
-          "signer": "550e8400-e29b-41d4-a716-446655440002",
-          "status": "pending",
-          "signed_at": null
-        }
+      "order": 1,
+      "document_file_name": "document1.pdf",
+      "document_file_url": "/media/documents/document1.pdf",
+      "document_signed_file_url": null,
+      "signer_document_positions": [
+        {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 1, "x": 150, "y": 450, "width": 200, "height": 50}}
+      ]
+    },
+    {
+      "id": "uuid-of-envelopedocument-2",
+      "document": "550e8400-e29b-41d4-a716-446655440005",
+      "order": 2,
+      "document_file_name": "document2.pdf",
+      "document_file_url": "/media/documents/document2.pdf",
+      "document_signed_file_url": null,
+      "signer_document_positions": [
+        {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "position": {"page": 2, "x": 100, "y": 200, "width": 180, "height": 40}}
       ]
     }
   ]
 }
 ```
 
-#### 5. Retrieve Envelope Details
-
-**Endpoint:** `GET /envelopes/{id}/`
-
-Retrieve full details of a specific envelope including signature statuses.
-
-**Request:**
-```bash
-curl -X GET http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "success": true,
-  "message": "Envelope retrieved successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440003",
-    "document": "550e8400-e29b-41d4-a716-446655440000",
-    "creator": "550e8400-e29b-41d4-a716-446655440004",
-    "status": "pending",
-    "signing_order": [
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
-      {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
-    ],
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:05:00Z",
-    "signatures": [
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440001",
-        "status": "signed",
-        "signed_at": "2024-01-01T12:10:00Z"
-      },
-      {
-        "signer": "550e8400-e29b-41d4-a716-446655440002",
-        "status": "pending",
-        "signed_at": null
-      }
-    ]
-  }
-}
-```
+**Error Responses:**
+- `401 Unauthorized`: Missing or invalid authentication.
+- `404 Not Found`: Envelope not found or access denied.
 
 #### 6. Delete Envelope
 
@@ -1809,7 +1615,7 @@ Permanently delete an envelope. Only the envelope creator can delete it.
 
 **Request:**
 ```bash
-curl -X DELETE http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440003/delete/ \
+curl -X DELETE http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655440003/delete/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -1822,25 +1628,26 @@ curl -X DELETE http://localhost:8000/envelopes/550e8400-e29b-41d4-a716-446655440
 ```
 
 **Error Responses:**
-- `401 Unauthorized`: Missing or invalid authentication
-- `404 Not Found`: Envelope not found or user is not the creator
-- `500 Internal Server Error`: Server error during deletion
+- `401 Unauthorized`: Missing or invalid authentication.
+- `404 Not Found`: Envelope not found or user is not the creator.
+- `500 Internal Server Error`: Server error during deletion.
 
-**Features:**
-- Only envelope creators can delete their envelopes
-- Returns 404 (not 403) for security (doesn't reveal envelope existence)
-- Logs deletion action for audit purposes
-- Cascade deletes associated signatures
+### ✍️ Signature Operations
 
-#### 7. Sign Document
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `POST` | `/api/signatures/{envelope_id}/sign/` | Current signer signs all documents in the envelope | ✅ |
+| `POST` | `/api/signatures/{envelope_id}/decline/` | Current signer declines (rejects entire envelope) | ✅ |
 
-**Endpoint:** `POST /signatures/{envelope_id}/sign/`
+#### 1. Sign Document
 
-Current signer signs the document. Only the current signer (next in sequence) can sign.
+**Endpoint:** `POST /api/signatures/{envelope_id}/sign/`
+
+Current signer signs all documents within the envelope. Only the current signer (next in sequence) can sign. Signature placement is automatically handled using predefined coordinates from the `EnvelopeDocument` or falls back to request-provided/default coordinates.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440003/sign/ \
+curl -X POST http://localhost:8000/api/signatures/550e8400-e29b-41d4-a716-446655440003/sign/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1853,31 +1660,91 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
   }'
 ```
 
+**Request Details:**
+- Method: POST
+- Authentication: Required (JWT Bearer token)
+- URL Parameter: `{envelope_id}` - UUID of the envelope
+- Body: JSON with optional `signature_image` (base64 encoded) or `signature_id` (UUID of UserSignature). Optional `page`, `x`, `y`, `width`, `height` can be provided as fallback for signature placement if not defined in `EnvelopeDocument`.
+
+**Payload Options:**
+```json
+{
+  // Option 1: Provide inline signature image (fallback position if not in EnvelopeDocument)
+  "signature_image": "base64-encoded-signature-data",
+  "page": 1,
+  "x": 100,
+  "y": 100,
+  "width": 120,
+  "height": 40
+}
+```
+
+```json
+{
+  // Option 2: Use reusable signature (fallback position if not in EnvelopeDocument)
+  "signature_id": "uuid-of-user-signature",
+  "page": 1,
+  "x": 100,
+  "y": 100,
+  "width": 120,
+  "height": 40
+}
+```
+
+```json
+{
+  // Option 3: Use default signature (fallback position if not in EnvelopeDocument)
+  // Empty payload - system uses default signature automatically
+  "page": 1,
+  "x": 100,
+  "y": 100,
+  "width": 120,
+  "height": 40
+}
+```
+
+**Constraints:**
+- Only the current signer (lowest pending order) can sign.
+- Envelope must be in `pending` status.
+- Authentication required.
+- Either `signature_image`, `signature_id`, or a default signature must be available.
+- Position coordinates in request are fallback options if not defined in `EnvelopeDocument`.
+
 **Response (Success - 200):**
 ```json
 {
   "success": true,
   "message": "Document signed successfully",
   "data": {
-    "signature_id": "550e8400-e29b-41d4-a716-446655440005",
+    "id": "uuid-of-signature-1",
     "signer": "550e8400-e29b-41d4-a716-446655440001",
+    "signer_email": "signer1@example.com",
+    "signer_name": "Test Signer 1",
     "status": "signed",
+    "signing_order": 1,
     "signed_at": "2024-01-01T12:10:00Z",
-    "envelope_status": "sent",
-    "next_signer": "550e8400-e29b-41d4-a716-446655440002"
+    "signature_image": "base64-encoded-signature-data",
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:05:00Z"
   }
 }
 ```
 
-#### 8. Decline Signature
+**Error Responses:**
+- `400 Bad Request`: Invalid signature data, invalid position coordinates.
+- `401 Unauthorized`: Missing or invalid authentication.
+- `403 Forbidden`: Not current signer, already signed/declined, or not authorized.
+- `404 Not Found`: Envelope not found.
 
-**Endpoint:** `POST /signatures/{envelope_id}/decline/`
+#### 2. Decline Signature
 
-Current signer declines to sign. This immediately rejects the entire envelope.
+**Endpoint:** `POST /api/signatures/{envelope_id}/decline/`
+
+Current signer declines to sign all documents within the envelope. This immediately rejects the entire envelope.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-446655440003/decline/ \
+curl -X POST http://localhost:8000/api/signatures/550e8400-e29b-41d4-a716-446655440003/decline/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1889,7 +1756,7 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 - Method: POST
 - Authentication: Required (JWT Bearer token)
 - URL Parameter: `{envelope_id}` - UUID of the envelope
-- Body: Optional JSON with `decline_message`
+- Body: Optional JSON with `decline_message` (string).
 
 **Payload Options:**
 ```json
@@ -1907,87 +1774,40 @@ curl -X POST http://localhost:8000/signatures/550e8400-e29b-41d4-a716-4466554400
 ```
 
 **Constraints:**
-- Only the current signer can decline
-- Envelope must be in "pending" status
-- Authentication required
+- Only the current signer can decline.
+- Envelope must be in `pending` status.
+- Authentication required.
 
 **Response (Success - 200):**
 ```json
 {
   "success": true,
-  "message": "Signature declined successfully",
+  "message": "Document declined successfully. Envelope has been rejected.",
   "data": {
-    "signature_id": "550e8400-e29b-41d4-a716-446655440005",
+    "id": "uuid-of-signature-1",
     "signer": "550e8400-e29b-41d4-a716-446655440001",
+    "signer_email": "signer1@example.com",
+    "signer_name": "Test Signer 1",
     "status": "declined",
-    "declined_at": "2024-01-01T12:10:00Z",
-    "envelope_status": "rejected"
+    "signing_order": 1,
+    "signed_at": null,
+    "signature_image": null,
+    "created_at": "2024-01-01T12:00:00Z",
+    "updated_at": "2024-01-01T12:05:00Z"
   }
 }
 ```
 
-#### Important Notes
+**Error Responses:**
+- `400 Bad Request`: Envelope not in `pending` status.
+- `401 Unauthorized`: Missing or invalid authentication.
+- `403 Forbidden`: Not current signer or already signed/declined, or not authorized.
+- `404 Not Found`: Envelope not found.
 
-**Sequential Signing:**
-- Signatures must be completed in the order specified in `signing_order`
-- Only the current signer (next in sequence) can perform signing actions
-- Previous signers cannot modify their signatures once completed
+### Notifications and Audit Logs
 
-**Access Control:**
-- **Creator:** Can create, send, and reject envelopes they created
-- **Signers:** Can view envelopes they're assigned to and sign when it's their turn
-- **Other Users:** Cannot access unrelated envelopes (returns 404)
-
-**Status Transitions:**
-- **Envelope:** `draft` → `pending` → `completed` / `rejected`
-- **Signature:** `pending` → `signed` / `declined`
-
-**Automatic Actions:**
-- When all signers complete: envelope status → `completed`
-- When any signer declines: envelope status → `rejected`
-- When creator rejects: envelope status → `rejected`
-
-**Security Features:**
-- JWT authentication required for all endpoints
-- Users can only access envelopes they created or are assigned to sign
-- Current signer validation prevents out-of-order signing
-- Comprehensive input validation and error handling
-
-#### Testing the Complete Workflow
-
-**Run All Envelope & Signature Tests:**
-```bash
-# Run envelope tests
-pytest envelopes/tests/ -v
-
-# Run signature tests  
-pytest signatures/tests/ -v
-
-# Run specific test categories
-pytest envelopes/tests/test_creation.py -v      # Envelope creation
-pytest envelopes/tests/test_send_reject.py -v   # Send/reject functionality
-pytest envelopes/tests/test_retrieval.py -v     # List/retrieve functionality
-pytest signatures/tests/test_signatures.py -v   # Signing workflow
-```
-
-**Test Coverage:**
-- ✅ **Envelope Creation & Management (29 tests):**
-  - Creation, validation, send/reject functionality
-  - Retrieval and listing with proper access control
-  - Comprehensive error handling and security
-
-- ✅ **Signature Workflow (19 tests):**
-  - Sequential signing enforcement
-  - Sign and decline functionality
-  - Current signer validation
-  - Envelope status transitions
-  - Security and edge case testing
-
-**Total Coverage:** 48 tests covering the complete envelope and signing workflow.
-
-### ✍️ Signatures
-
-Complete signature management system for sequential document signing workflow with automatic signature placement.
+- Notification messages (in-app and email) now use the envelope's custom `name` (e.g., "[Creator Name] has requested you to sign the document '[Envelope Name]'.") and reflect the number of documents in the envelope where appropriate.
+- Audit log entries for envelope and signature actions now include the envelope's custom `name` and the count of documents in the message.
 
 ## 🎯 Automatic Signature Placement
 
@@ -2495,771 +2315,3 @@ curl -X GET http://localhost:8000/notifications/ \
 curl -X PATCH http://localhost:8000/notifications/550e8400-e29b-41d4-a716-446655440000/read/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
-
-**Programmatic Notification Creation:**
-```python
-from notifications.utils import create_notification, create_envelope_sent_notification
-
-# Create custom notification asynchronously
-create_notification.delay(
-    str(user.id),
-    "Custom notification message"
-)
-
-# Create notification using template functions
-envelope = Envelope.objects.get(id=envelope_id)
-message = create_envelope_sent_notification(envelope)
-create_notification.delay(str(signer.id), message)
-```
-
-#### Notification Model
-
-The `Notification` model includes:
-- `id`: Unique identifier (UUID)
-- `user`: User who receives the notification (ForeignKey)
-- `message`: Notification content (TextField)
-- `is_read`: Read status (BooleanField, default=False)
-- `created_at`: Creation timestamp (DateTimeField, auto_now_add=True)
-
-#### Notification Template System
-
-The notification system uses a unified template approach that ensures consistency between in-app and email notifications:
-
-**Template Functions:**
-- `create_envelope_sent_notification(envelope)` - For envelope sent notifications
-- `create_signer_turn_notification(envelope)` - For signer turn notifications  
-- `create_envelope_completed_notification(envelope)` - For envelope completion
-- `create_signer_declined_notification(envelope, signer)` - For signature declines
-- `create_envelope_rejected_notification(envelope)` - For envelope rejections
-
-**Template Features:**
-- **Actor Identity**: Always includes the relevant user's name (creator/signer)
-- **Document Context**: Always includes the document file name
-- **Consistent Formatting**: Standardized message structure across all notification types
-- **Reusable**: Same templates can be used for both in-app and email notifications
-
-#### Testing Notifications
-
-Run notification tests:
-```bash
-pytest notifications/tests/test_notifications.py -v
-```
-
-Test coverage includes:
-- ✅ **Model Tests (3 tests):**
-  - Notification creation and validation
-  - String representation
-  - Ordering by creation date
-
-- ✅ **Utility Tests (2 tests):**
-  - Celery task execution
-  - Error handling for invalid users
-
-- ✅ **Template Tests (5 tests):**
-  - Envelope sent notification template
-  - Signer turn notification template
-  - Envelope completed notification template
-  - Signer declined notification template
-  - Envelope rejected notification template
-
-- ✅ **API Tests (6 tests):**
-  - List notifications for authenticated users
-  - Authentication requirements
-  - User isolation (users only see their own notifications)
-  - Mark notifications as read
-  - Permission validation
-
-- ✅ **Integration Tests (5 tests):**
-  - Envelope send notifies first signer with creator name and file name
-  - Envelope reject notifies all signers with creator name and file name
-  - Signing notifies next signer with file name
-  - Last signer signing notifies creator with file name
-  - Declining notifies creator with signer name and file name
-
-**Total Coverage:** 21 tests covering all notification functionality, templates, API endpoints, and workflow integration.
-
-### 🔍 Audit Logging
-
-The E-Sign application includes comprehensive audit logging to track all user actions and system events. This ensures compliance, security, and provides a complete audit trail for all document and signature operations.
-
-#### Purpose and Features
-
-The audit logging system provides:
-- **Immutable Records**: All audit logs are read-only and cannot be modified or deleted
-- **Complete Action Tracking**: Records all significant user actions and system events
-- **IP and User Agent Logging**: Captures request metadata for security analysis
-- **Admin-Only Access**: Audit logs are only accessible to administrators
-- **Generic Target Support**: Can track actions on any model instance
-
-#### Audit Log Fields
-
-Each audit log entry contains:
-- **`id`**: Unique UUID identifier
-- **`actor`**: User who performed the action (null for system actions)
-- **`action`**: Action type (e.g., "UPLOAD_DOC", "SEND_ENVELOPE", "SIGN_DOC")
-- **`target_object`**: The model instance being acted upon
-- **`message`**: Descriptive message about the action
-- **`ip_address`**: IP address of the request (supports X-Forwarded-For)
-- **`user_agent`**: Browser/client user agent string
-- **`created_at`**: Timestamp when the action occurred
-
-#### Tracked Actions
-
-The system automatically logs the following actions:
-
-1. **Document Operations:**
-   - `UPLOAD_DOC`: When a user uploads a document
-   - `DELETE_DOC`: When a user deletes a document
-
-2. **Envelope Operations:**
-   - `CREATE_ENVELOPE`: When a user creates an envelope
-   - `SEND_ENVELOPE`: When a user sends an envelope for signing
-   - `REJECT_ENVELOPE`: When a user rejects an envelope
-
-3. **Signature Operations:**
-   - `SIGN_DOC`: When a user signs a document
-   - `DECLINE_SIGN`: When a user declines to sign a document
-
-#### Sample Audit Log Entries
-
-```
-2024-01-15T10:30:45Z | Abdulmalik | UPLOAD_DOC
-User Abdulmalik uploaded document 'Contract.pdf'.
-
-2024-01-15T10:35:12Z | Fatima | SIGN_DOC  
-User Fatima signed envelope #123 for document 'Agreement.pdf'.
-
-2024-01-15T10:40:22Z | John Doe | DECLINE_SIGN
-User John Doe declined to sign envelope #456 for document 'Proposal.pdf'.
-```
-
-#### Accessing Audit Logs
-
-**Django Admin Interface:**
-- Navigate to `/admin/` and login as an admin user
-- Go to "Audit Logs" section
-- View all audit entries in read-only format
-- Search and filter by action, user, or date
-
-**API Endpoints (Admin Only):**
-- `GET /audit/logs/` - List all audit logs with search and filtering
-- `GET /audit/logs/{id}/` - Retrieve specific audit log details
-
-Example API usage:
-```bash
-# List audit logs (admin only)
-curl -X GET http://localhost:8000/audit/logs/ \
-  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
-
-# Search audit logs
-curl -X GET "http://localhost:8000/audit/logs/?search=upload" \
-  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
-
-# Get specific audit log
-curl -X GET http://localhost:8000/audit/logs/{audit_log_id}/ \
-  -H "Authorization: Bearer ADMIN_ACCESS_TOKEN"
-```
-
-#### Security and Immutability
-
-- **Read-Only Design**: Audit logs cannot be modified or deleted through normal application flows
-- **Admin Protection**: Only admin users can access audit logs via API or admin interface
-- **Exception Handling**: Audit logging failures do not break user workflows
-- **IP Tracking**: Captures both direct IP and X-Forwarded-For headers for proxy scenarios
-
-#### Testing Audit Logging
-
-Run audit logging tests:
-```bash
-pytest audit/tests/test_audit.py -v
-```
-
-Test coverage includes:
-- ✅ **Model Tests (3 tests):**
-  - Audit log creation and validation
-  - String representation with and without actor
-  - Generic foreign key relationships
-
-- ✅ **Utility Tests (5 tests):**
-  - log_action function creates entries correctly
-  - Request metadata extraction (IP, user agent)
-  - X-Forwarded-For header handling
-  - Unauthenticated user handling
-  - Exception handling and graceful failures
-
-- ✅ **API Tests (4 tests):**
-  - Admin-only access enforcement
-  - Audit log list and detail views
-  - Search functionality
-  - Proper serialization of audit data
-
-- ✅ **Integration Tests (7 tests):**
-  - Document upload creates audit log
-  - Document deletion creates audit log
-  - Envelope creation creates audit log
-  - Envelope send creates audit log
-  - Envelope rejection creates audit log
-  - Document signing creates audit log
-  - Signature decline creates audit log
-
-- ✅ **Admin Tests (4 tests):**
-  - Read-only field enforcement
-  - Add permission blocking
-  - Change permission blocking
-  - Delete permission blocking
-
-**Total Coverage:** 23 tests covering all audit logging functionality, API endpoints, admin interface, and workflow integration.
-
-#### Developer Usage
-
-To add audit logging to new actions, use the `log_action` utility:
-
-```python
-from audit.utils import log_action
-
-# Log a user action
-log_action(
-    actor=request.user,
-    action="CUSTOM_ACTION",
-    target=model_instance,
-    message=f"User {request.user.get_full_name()} performed custom action on {model_instance}.",
-    request=request  # Optional: for IP and user agent extraction
-)
-```
-
-The audit logging system ensures complete traceability of all user actions while maintaining security and immutability of the audit trail.
-
-## 🤝 Contributing
-
-We welcome contributions to the E-Sign Application! Please follow these guidelines:
-
-### Development Workflow
-1. **Fork the repository** and create a feature branch
-2. **Follow naming conventions**:
-   - Branches: `feature/description`, `bugfix/description`, `chore/description`
-   - Commits: Use conventional commit format (`feat:`, `fix:`, `docs:`, etc.)
-
-### Coding Standards
-- **Python**: Follow PEP 8, use snake_case for variables
-- **Django**: Follow Django best practices and conventions
-- **Tests**: Write tests for new features (aim for ≥90% coverage)
-- **Documentation**: Update API docs and README for changes
-
-### Code Review Process
-- All code must pass peer review before merging
-- Ensure all tests pass: `pytest --cov`
-- Update documentation for API changes
-- Follow the project's coding style guidelines
-
-### Reporting Issues
-- Use GitHub Issues for bug reports and feature requests
-- Provide clear reproduction steps for bugs
-- Include relevant logs and environment details
-
-### Pull Request Guidelines
-- Write clear, descriptive commit messages
-- Include tests for new functionality
-- Update documentation as needed
-- Ensure CI/CD checks pass
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-### MIT License Summary
-- ✅ Commercial use allowed
-- ✅ Modification allowed
-- ✅ Distribution allowed
-- ✅ Private use allowed
-- ❌ No liability or warranty provided
-
----
-
-## 📞 Support
-
-For support and questions:
-- Create an issue on GitHub
-- Check the documentation above
-- Review the test cases for usage examples
-
----
-
-**Built with ❤️ using Django, Django REST Framework, and modern web technologies.**
-
----
-
-## 🆕 Recent Updates: Automatic Signature Placement
-
-### What's New
-
-The E-Sign Application now includes **automatic signature placement** functionality that automatically positions signatures on PDF documents using predefined coordinates stored in the envelope's signing order.
-
-### Key Features Added
-
-- **🎯 Automatic Placement**: Signatures are automatically placed at predefined coordinates without manual input
-- **📐 Position Storage**: Signature coordinates stored in envelope's `signing_order` field
-- **🔄 Fallback Support**: Graceful fallback to manual coordinates or defaults when positions aren't defined
-- **✅ Backward Compatible**: Existing workflows continue to work unchanged
-
-### Implementation Details
-
-**Enhanced Envelope Model:**
-- Extended `signing_order` validation to support optional `position` coordinates
-- Position includes: `page`, `x`, `y`, `width`, `height` fields
-- All position values must be positive numbers (integers or floats)
-
-**Updated Signing Logic:**
-- Automatic extraction of position data from signer's envelope entry
-- Priority system: envelope position → request position → defaults
-- Comprehensive error handling and validation
-
-**New Test Coverage:**
-- 6 comprehensive test cases covering automatic placement scenarios
-- Tests for position priority, fallback behavior, and edge cases
-- Integration with existing signature workflows (base64 images, UserSignature IDs, default signatures)
-
-### API Usage Examples
-
-**Create Envelope with Position Coordinates:**
-```json
-{
-  "document_id": "550e8400-e29b-41d4-a716-446655440000",
-  "signing_order": [
-    {
-      "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
-      "order": 1,
-      "position": {
-        "page": 1,
-        "x": 150,
-        "y": 450,
-        "width": 200,
-        "height": 50
-      }
-    },
-    {
-      "signer_id": "550e8400-e29b-41d4-a716-446655440002", 
-      "order": 2,
-      "position": {
-        "page": 2,
-        "x": 120,
-        "y": 600,
-        "width": 180,
-        "height": 40
-      }
-    }
-  ]
-}
-```
-
-**Sign Document (Automatic Placement):**
-```json
-{
-  "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-}
-```
-
-No position coordinates needed - the system automatically uses the predefined coordinates from the envelope!
-
-### Benefits
-
-- **Professional Documents**: Consistent signature placement across all signers
-- **Improved UX**: Signers don't need to manually position their signatures
-- **Reliable Workflows**: Reduces errors from manual coordinate specification
-- **Flexible Integration**: Works with all existing signature methods (inline images, UserSignature IDs, default signatures)
-
-### ✍️ Reusable Signatures
-
-The E-Sign application supports reusable signatures, allowing users to upload and manage multiple signature images that can be reused across different documents. This feature enhances user experience by eliminating the need to create new signatures for each document.
-
-#### Features
-
-- **Multiple Signatures**: Users can upload one or more signature images
-- **Default Signature**: Users can set one signature as their default
-- **Automatic Fallback**: When signing documents, the system automatically uses the default signature if no specific signature is provided
-- **Signature ID Support**: Users can specify which signature to use when signing documents
-- **File Validation**: Signature images are validated for size (≤1MB) and format (JPEG, PNG, GIF, BMP, WEBP)
-- **User Isolation**: Users can only access and manage their own signatures
-
-#### Endpoints Overview
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| `GET` | `/signatures/user/` | List user's signatures | ✅ |
-| `POST` | `/signatures/user/` | Upload new signature | ✅ |
-| `GET` | `/signatures/user/{id}/` | Get signature details | ✅ |
-| `PATCH` | `/signatures/user/{id}/` | Update signature (e.g., set as default) | ✅ |
-| `DELETE` | `/signatures/user/{id}/` | Delete signature | ✅ |
-
-#### 1. List User Signatures
-
-**Endpoint:** `GET /signatures/user/`
-
-Retrieve all signatures owned by the authenticated user.
-
-**Request:**
-```bash
-curl -X GET http://localhost:8000/signatures/user/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "results": [
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "image": "/media/user_signatures/signature1.png",
-      "is_default": true,
-      "created_at": "2024-01-01T12:00:00Z"
-    },
-    {
-      "id": "550e8400-e29b-41d4-a716-446655440001",
-      "image": "/media/user_signatures/signature2.png",
-      "is_default": false,
-      "created_at": "2024-01-01T11:00:00Z"
-    }
-  ]
-}
-```
-
-#### 2. Upload New Signature
-
-**Endpoint:** `POST /signatures/user/`
-
-Upload a new signature image.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8000/signatures/user/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -F "image=@signature.png" \
-  -F "is_default=true"
-```
-
-**Request Details:**
-- Content-Type: `multipart/form-data`
-- Authentication: Required (JWT Bearer token)
-- Body: Form data with `image` file and optional `is_default` boolean
-
-**Constraints:**
-- File size: ≤ 1MB
-- File formats: JPEG, JPG, PNG, GIF, BMP, WEBP
-- Authentication: Required
-
-**Response (Success - 201):**
-```json
-{
-  "status": "success",
-  "message": "Signature created successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "image": "/media/user_signatures/signature.png",
-    "is_default": true,
-    "created_at": "2024-01-01T12:00:00Z"
-  }
-}
-```
-
-**Error Responses:**
-- `400 Bad Request`: Invalid file type, size, or format
-- `401 Unauthorized`: Missing or invalid authentication
-
-#### 3. Get Signature Details
-
-**Endpoint:** `GET /signatures/user/{id}/`
-
-Retrieve details of a specific signature.
-
-**Request:**
-```bash
-curl -X GET http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 200):**
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "image": "/media/user_signatures/signature.png",
-  "is_default": true,
-  "created_at": "2024-01-01T12:00:00Z"
-}
-```
-
-**Error Responses:**
-- `401 Unauthorized`: Missing or invalid authentication
-- `404 Not Found`: Signature not found or user is not the owner
-
-#### 4. Update Signature
-
-**Endpoint:** `PATCH /signatures/user/{id}/`
-
-Update signature properties (e.g., set as default).
-
-**Request:**
-```bash
-curl -X PATCH http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "is_default": true
-  }'
-```
-
-**Response (Success - 200):**
-```json
-{
-  "status": "success",
-  "message": "Signature updated successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "image": "/media/user_signatures/signature.png",
-    "is_default": true,
-    "created_at": "2024-01-01T12:00:00Z"
-  }
-}
-```
-
-**Note:** When setting a signature as default, all other signatures for the user are automatically set to non-default.
-
-#### 5. Delete Signature
-
-**Endpoint:** `DELETE /signatures/user/{id}/`
-
-Delete a signature.
-
-**Request:**
-```bash
-curl -X DELETE http://localhost:8000/signatures/user/550e8400-e29b-41d4-a716-446655440000/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
-**Response (Success - 204):**
-```json
-{
-  "status": "success",
-  "message": "Signature deleted successfully"
-}
-```
-
-**Error Responses:**
-- `401 Unauthorized`: Missing or invalid authentication
-- `404 Not Found`: Signature not found or user is not the owner
-
-#### Using Reusable Signatures in Document Signing
-
-The document signing endpoint now supports three ways to provide signatures:
-
-**1. Inline Signature Image (Original Method):**
-```bash
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-  }'
-```
-
-**2. Reusable Signature ID:**
-```bash
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "signature_id": "550e8400-e29b-41d4-a716-446655440000"
-  }'
-```
-
-**3. Default Signature (No Parameters):**
-```bash
-curl -X POST http://localhost:8000/signatures/ENVELOPE_ID/sign/ \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-#### Signature Priority Logic
-
-When signing documents, the system follows this priority order:
-
-1. **Explicit signature_image**: If provided, use the inline signature
-2. **Explicit signature_id**: If provided, use the specified UserSignature
-3. **Default signature**: If user has a default signature, use it automatically
-4. **Error**: If none of the above are available, return an error
-
-#### Constraints and Validation
-
-**File Upload Constraints:**
-- Maximum file size: 1MB
-- Allowed formats: JPEG, JPG, PNG, GIF, BMP, WEBP
-- File must be a valid image
-
-**Default Signature Constraints:**
-- Only one signature can be default per user
-- Setting a signature as default automatically unsets all others
-- Users can have zero or one default signature
-
-**Access Control:**
-- Users can only access their own signatures
-- Attempting to access another user's signature returns 404
-- All operations require valid JWT authentication
-
-#### Testing Reusable Signatures
-
-**Run User Signature Tests:**
-```bash
-# Run all user signature tests
-pytest signatures/tests/test_user_signatures.py -v
-
-# Run all signature tests
-pytest signatures/tests/ -v
-```
-
-**Test Coverage:**
-- ✅ **Model Tests (3 tests):**
-  - User signature creation and validation
-  - Default signature constraint enforcement
-  - String representation
-
-- ✅ **Serializer Tests (2 tests):**
-  - File size validation (≤1MB)
-  - File format validation (image formats only)
-
-- ✅ **API Tests (8 tests):**
-  - Create user signature with authentication
-  - List user signatures (user isolation)
-  - Update signature (set as default)
-  - Delete signature
-  - Unauthorized access prevention
-  - Cross-user access prevention
-
-- ✅ **Document Signing Integration Tests (6 tests):**
-  - Sign document with signature_id
-  - Sign document with default signature
-  - Sign document with no signature provided (error)
-  - Sign document with invalid signature_id
-  - Sign document with another user's signature_id
-  - Sign document with both signature_image and signature_id (error)
-
-**Total Coverage:** 19 tests covering all reusable signature functionality, API endpoints, and document signing integration.
-
-#### User Signature Model
-
-The `UserSignature` model includes:
-- `id`: Unique identifier (UUID)
-- `user`: User who owns this signature (ForeignKey)
-- `image`: Signature image file (ImageField)
-- `is_default`: Whether this is the user's default signature (BooleanField)
-- `created_at`: Creation timestamp (DateTimeField, auto_now_add=True)
-
-**Features:**
-- Automatic UUID generation for signature IDs
-- Cascade delete when user is deleted
-- Database constraint ensuring only one default signature per user
-- Model-level logic to automatically unset other defaults when setting a new default
-- Indexes for efficient querying by user and default status
-
-## Integration Tests for Reusable Signatures
-
-The application includes comprehensive integration tests for the reusable signatures feature located in `tests/test_user_signatures_integration.py`. These tests validate the complete workflow of the UserSignature feature using Django REST Framework's APITestCase and APIClient.
-
-### Test Coverage
-
-The integration tests cover the following scenarios:
-
-#### 1. Upload Reusable Signature (`UploadReusableSignatureTest`)
-- **Success Case**: Upload signature with base64 image, verify it's saved and belongs to user, assert it appears in GET `/signatures/user/`
-- **Unauthorized Access**: Test uploading without authentication (401 Unauthorized)
-- **Invalid File Format**: Test uploading non-image files (400 Bad Request)
-
-#### 2. Set Default Signature (`SetDefaultSignatureTest`)
-- **Multiple Signatures**: Upload 2 signatures, set one as default
-- **Single Default Constraint**: Assert only one signature can be default at a time
-- **Default Switching**: Change default signature and verify previous default is unset
-
-#### 3. Sign with Explicit Signature ID (`SignWithExplicitSignatureTest`)
-- **Successful Signing**: Create envelope requiring signer, signer uploads reusable signature, signer signs using signature_id
-- **Signature Record Creation**: Assert Signature record created with image copied from UserSignature
-- **Invalid Signature ID**: Test signing with non-existent signature_id (400 Bad Request)
-- **Other User's Signature**: Test signing with another user's signature_id (400 Bad Request)
-
-#### 4. Sign with Auto-Default (`SignWithAutoDefaultTest`)
-- **Auto-Default Usage**: Upload default signature, create envelope, sign without providing signature
-- **Default Applied**: Assert default signature is used automatically
-- **No Default Available**: Test signing with no signature provided and no default signature (400 Bad Request)
-
-#### 5. Delete Reusable Signature (`DeleteReusableSignatureTest`)
-- **Successful Deletion**: Upload signature, DELETE `/signatures/user/<id>/`, assert removed from database
-- **Deletion Impact**: Attempt to sign with deleted signature_id → 400 Bad Request
-- **Unauthorized Deletion**: Another user tries to delete your UserSignature → 404 Not Found
-
-#### 6. Permission Enforcement (`PermissionEnforcementTest`)
-- **Access Control**: Users can only access their own signatures
-- **Cross-User Access**: Another user tries to GET or UPDATE your UserSignature → 404 Not Found
-- **Data Isolation**: Verify users cannot see each other's signatures
-
-#### 7. Complete Workflow Integration (`UserSignatureWorkflowIntegrationTest`)
-- **End-to-End Flow**: Upload → set default → sign → delete
-- **Multiple Signatures**: Upload multiple signatures, set one as default
-- **Explicit vs Auto**: Sign using explicit signature_id, then sign using default
-- **Deletion Verification**: Delete signature and verify it can't be used
-
-#### 8. Edge Cases (`UserSignatureEdgeCasesTest`)
-- **Conflicting Parameters**: Test signing with both signature_image and signature_id provided
-- **Large File Upload**: Test uploading signature exceeding size limit
-- **User Isolation**: Verify multiple users can have default signatures independently
-
-### Test Setup and Fixtures
-
-The tests use the following setup:
-- **Test Users**: Creator and two signers with JWT authentication
-- **Test Images**: Generated PNG images in different colors for signature testing
-- **Test Documents**: PDF content for envelope creation
-- **Mock Celery**: Celery tasks are mocked to avoid Redis dependency in tests
-
-### Authentication and Authorization
-
-All tests use JWT token authentication:
-```python
-self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-```
-
-### Database Verification
-
-Tests verify both API responses and database state:
-- Signature records are created with correct status
-- UserSignature records are properly associated with users
-- Audit logs are created for all major actions
-- Cascade deletions work correctly
-
-### Running the Tests
-
-```bash
-# Run all user signature integration tests
-python -m pytest tests/test_user_signatures_integration.py -v
-
-# Run with coverage
-python -m pytest tests/test_user_signatures_integration.py --cov=signatures --cov-report=term-missing
-
-# Run specific test class
-python -m pytest tests/test_user_signatures_integration.py::UploadReusableSignatureTest -v
-```
-
-### Test Validation
-
-These integration tests ensure that:
-- The reusable signature workflow functions correctly end-to-end
-- Security and permission enforcement work as expected
-- Database integrity is maintained throughout operations
-- Error handling provides appropriate responses
-- Audit trails are properly maintained
-
-### Embedded PDF Signatures
-
-When a user signs, the backend embeds the provided signature image directly onto the original PDF at the specified coordinates using ReportLab overlays merged via PyPDF. The signed PDF is stored at `/media/signed_docs/{envelope_id}_signed.pdf` and its path is recorded on the `Document` as `signed_file_url`.
-
-Notes:
-- Placement uses UI convention coordinates (origin at top-left) which are automatically converted to PDF coordinates (origin at bottom-left). If placement fields are not provided, defaults are applied.
-- If the original PDF is stored remotely or not accessible on disk in the current environment, embedding may be skipped, but the signing workflow still completes. The `signed_file_url` will only be set when embedding succeeds.
-
-

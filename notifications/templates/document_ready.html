@@ -1,0 +1,14 @@
+{% extends 'base_email.html' %}
+
+{% block content %}
+    <h2>Document Ready for Signing</h2>
+    <p>Dear {{ user_name }},</p>
+    <p>A document titled <strong>{{ document_title }}</strong> has been shared with you for signing.</p>
+    <p>Please click the button below to review and sign the document:</p>
+    <div class="button-container">
+        <a href="{{ sign_document_url }}" class="button">Sign Document</a>
+    </div>
+    <p>If you have any questions, please contact our support team.</p>
+    <p>Thank you,</p>
+    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+{% endblock %}
