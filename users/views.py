@@ -12,7 +12,9 @@ from django.core import signing
 from django.urls import reverse
 from django.conf import settings
 
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, UserSearchSerializer
+from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, UserSearchSerializer, UserProfileSerializer
+from envelopes.models import Envelope
+from envelopes.serializers import EnvelopeSerializer
 
 
 # Create your views here.
@@ -210,3 +212,34 @@ class ConfirmEmailView(APIView):
             return Response({"status": "success", "message": "Email confirmed successfully"}, status=status.HTTP_200_OK)
         except Exception:
             return Response({"status": "error", "message": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserProfileDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        target_user_id = request.query_params.get('user_id')
+        User = get_user_model()
+        target_user = request.user if not target_user_id else get_object_or_404(User, id=target_user_id, is_active=True)
+
+        involves_requester = Q(creator=request.user) | Q(signatures__signer=request.user)
+        involves_target = Q(creator=target_user) | Q(signatures__signer=target_user)
+        envelopes_qs = Envelope.objects.filter(involves_requester).filter(involves_target).distinct()
+
+        user_data = UserProfileSerializer(target_user, context={'request': request}).data
+        envelopes_data = EnvelopeSerializer(envelopes_qs, many=True, context={'request': request}).data
+        return Response({
+            "status": "success",
+            "message": "Profile retrieved",
+            "data": {"user": user_data, "envelopes_between_users": envelopes_data}
+        }, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        serializer = UserProfileSerializer(request.user, data=request.data, partial=True, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({
+            "status": "success",
+            "message": "Profile updated",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)

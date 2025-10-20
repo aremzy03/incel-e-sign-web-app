@@ -11,10 +11,11 @@ User = get_user_model()
 
 class ContactSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
+    contact_user_id = serializers.UUIDField(read_only=True)
 
     class Meta:
         model = Contact
-        fields = ["id", "email", "name", "status"]
+        fields = ["id", "email", "name", "contact_user_id", "status", "created_at"]
 
     def get_status(self, obj: Contact) -> str:
         return "registered" if obj.contact_user_id else "invited"

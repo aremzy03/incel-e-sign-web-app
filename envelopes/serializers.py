@@ -345,19 +345,6 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
         instance.save(update_fields=list(validated_data.keys()) + ['updated_at'])
         return instance
 
-class SignatureSerializer(serializers.ModelSerializer):
-    """
-    Serializer for signature details (read-only).
-    
-    Used for nested serialization within envelope responses.
-    """
-    
-    class Meta:
-        model = None  # Will be set dynamically
-        fields = ['signer', 'status', 'signed_at']
-        read_only_fields = ['signer', 'status', 'signed_at']
-
-
 class EnvelopeSerializer(serializers.ModelSerializer):
     """
     Serializer for envelope details (read-only).

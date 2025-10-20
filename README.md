@@ -403,6 +403,99 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 | `POST` | `/api/auth/login/` | User login (JWT tokens) | ❌ |
 | `POST` | `/api/auth/logout/` | User logout (blacklist token) | ✅ |
 | `GET` | `/api/auth/profile/` | Get user profile | ✅ |
+| `GET` | `/api/auth/profile/detail/` | Get user profile with shared envelopes | ✅ |
+| `PATCH` | `/api/auth/profile/detail/` | Update own profile (name/photo) | ✅ |
+### Profile Detail Endpoint
+
+Get a user's profile (including profile photo) and envelopes that involve both the authenticated user and the target user. Update your own profile with name and/or profile photo.
+
+#### GET /api/auth/profile/detail/
+
+- Returns the target user's profile and all envelopes where BOTH the requester and the target user participate (as creator or signer).
+- If `user_id` is omitted, returns the requester's own profile and envelopes shared with self.
+
+Request:
+```bash
+curl -X GET "http://localhost:8000/api/auth/profile/detail/?user_id=<TARGET_USER_UUID>" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+Query parameters:
+- `user_id` (optional, UUID): Target user's id. When omitted, defaults to the authenticated user.
+
+Response (200):
+```json
+{
+  "status": "success",
+  "message": "Profile retrieved",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "user@example.com",
+      "full_name": "User Name",
+      "is_active": true,
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-02T00:00:00Z",
+      "profile_photo": null,
+      "profile_photo_url": null
+    },
+    "envelopes_between_users": [
+      {
+        "id": "uuid",
+        "creator": "uuid",
+        "name": "Envelope Name",
+        "status": "pending",
+        "signing_order": [],
+        "signer_count": 2,
+        "documents": [],
+        "signatures": [],
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+Errors:
+- 401 Unauthorized: Missing/invalid token
+- 404 Not Found: `user_id` does not exist or inactive
+
+#### PATCH /api/auth/profile/detail/
+
+- Update the authenticated user's own profile. Supports partial updates.
+- Fields: `full_name` (string), `profile_photo` (file)
+
+Request (multipart/form-data):
+```bash
+curl -X PATCH "http://localhost:8000/api/auth/profile/detail/" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: multipart/form-data" \
+  -F "full_name=New Name" \
+  -F "profile_photo=@/path/to/photo.jpg"
+```
+
+Response (200):
+```json
+{
+  "status": "success",
+  "message": "Profile updated",
+  "data": {
+    "id": "uuid",
+    "email": "you@example.com",
+    "full_name": "New Name",
+    "is_active": true,
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-02T00:00:00Z",
+    "profile_photo": "profile_photos/filename.jpg",
+    "profile_photo_url": "http://localhost:8000/media/profile_photos/filename.jpg"
+  }
+}
+```
+
+Notes:
+- Ensure MEDIA_URL and MEDIA_ROOT are configured so `profile_photo_url` resolves correctly.
+- Any authenticated user can GET this endpoint for any `user_id`; only the requester can PATCH.
 | `GET` | `/api/auth/users/` | Search users by email/name | ✅ |
 
 ### Document Management

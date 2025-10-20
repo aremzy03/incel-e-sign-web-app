@@ -62,3 +62,21 @@ class UserSearchSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'email', 'full_name', 'is_active', 'created_at']
 
 
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    profile_photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id', 'email', 'full_name', 'is_active', 'created_at', 'updated_at',
+            'profile_photo', 'profile_photo_url'
+        ]
+        read_only_fields = ['id', 'email', 'is_active', 'created_at', 'updated_at', 'profile_photo_url']
+
+    def get_profile_photo_url(self, obj):
+        request = self.context.get('request')
+        if getattr(obj, 'profile_photo', None) and hasattr(obj.profile_photo, 'url') and obj.profile_photo:
+            return request.build_absolute_uri(obj.profile_photo.url) if request else obj.profile_photo.url
+        return None
+
