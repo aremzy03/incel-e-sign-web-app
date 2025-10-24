@@ -342,9 +342,14 @@ class SignDocumentView(APIView):
                         send_turn_to_sign_email_task.delay(
                             recipient_email,
                             envelope.name, # Use envelope name
+                            str(envelope.id) # Pass envelope ID for URL generation
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Log the error but don't block the main process
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error sending turn-to-sign email: {e}")
+                    # TODO: Add proper error handling and monitoring
         
         # Return signature details
         signature_serializer = SignatureSerializer(signature)

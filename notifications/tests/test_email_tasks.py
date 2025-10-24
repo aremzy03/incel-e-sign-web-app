@@ -10,7 +10,7 @@ from unittest.mock import patch
 def test_send_envelope_assigned_email_task_sends_email(mock_email_message):
     from notifications.tasks import send_envelope_assigned_email_task
 
-    send_envelope_assigned_email_task("user@example.com", "Creator Name", "contract.pdf")
+    send_envelope_assigned_email_task("user@example.com", "Creator Name", "contract.pdf", "envelope-uuid-123")
 
     assert mock_email_message.called
     instance = mock_email_message.return_value
@@ -21,7 +21,7 @@ def test_send_envelope_assigned_email_task_sends_email(mock_email_message):
 def test_send_turn_to_sign_email_task_sends_email(mock_email_message):
     from notifications.tasks import send_turn_to_sign_email_task
 
-    send_turn_to_sign_email_task("user2@example.com", "nda.pdf")
+    send_turn_to_sign_email_task("user2@example.com", "nda.pdf", "envelope-uuid-456")
 
     assert mock_email_message.called
     instance = mock_email_message.return_value

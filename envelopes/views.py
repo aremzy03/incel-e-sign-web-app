@@ -160,13 +160,11 @@ class EnvelopeSendView(APIView):
                 try:
                     recipient_email = getattr(first_signer, 'email', None)
                     if recipient_email:
-                        # Generate the sign document URL
-                        sign_document_url = f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope.id}/sign"
                         send_envelope_assigned_email_task.delay(
                             recipient_email,
                             request.user.full_name or request.user.username,
                             envelope.name,
-                            sign_document_url # Pass the generated URL
+                            str(envelope.id) # Pass envelope ID instead of URL
                         )
                 except Exception as e:
                     # Log email sending error but don't block the main process

@@ -48,14 +48,14 @@ def send_invite_email_task(email: str, inviter_name: str, registration_url: str)
 
 
 @shared_task
-def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, envelope_name: str, sign_document_url: str) -> None:
+def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, envelope_name: str, envelope_id: str) -> None:
     subject = "You have a document to sign"
     context = {
         'email_title': subject,
         'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
         'creator_name': creator_name,
         'document_title': envelope_name,
-        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_name}/sign", # This URL is passed from views.py, so it might be overwritten by the next call. This is just for consistency in tasks.py.
+        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_id}/sign",
         'brand_name': 'Incel E-Sign',
         'year': '2025',
     }
@@ -66,13 +66,13 @@ def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, e
 
 
 @shared_task
-def send_turn_to_sign_email_task(recipient_email: str, envelope_name: str, sign_document_url: str) -> None:
+def send_turn_to_sign_email_task(recipient_email: str, envelope_name: str, envelope_id: str) -> None:
     subject = "It's your turn to sign"
     context = {
         'email_title': subject,
         'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
         'document_title': envelope_name,
-        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_name}/sign", # This URL is passed from views.py, so it might be overwritten by the next call. This is just for consistency in tasks.py.
+        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_id}/sign",
         'brand_name': 'Incel E-Sign',
         'year': '2025',
     }
