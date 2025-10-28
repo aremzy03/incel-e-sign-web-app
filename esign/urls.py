@@ -25,6 +25,7 @@ urlpatterns = [
     path('api/documents/', include('documents.urls')),
     path('api/envelopes/', include('envelopes.urls')),
     path('api/signatures/', include('signatures.urls')),
+    path('api/fields/', include('fields.urls')),
     path('api/notifications/', include('notifications.urls')),
     path('api/audit/', include('audit.urls')),
     path('api/contacts/', include('contacts.urls')),

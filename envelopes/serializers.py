@@ -10,7 +10,10 @@ from django.contrib.auth import get_user_model
 from .models import Envelope, EnvelopeDocument
 from documents.models import Document
 from signatures.serializers import SignatureSerializer # Import SignatureSerializer
+from fields.serializers import FieldSerializer
 import uuid
+from django.db import transaction
+from fields.models import Field as FieldModel
 
 User = get_user_model()
 
@@ -71,9 +74,18 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         help_text="Optional list of document_ids with their respective signer-document-positions."
     )
 
+    # New: fields to be created atomically with the envelope
+    fields = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+        help_text="Optional list of non-signature fields to create with the envelope."
+    )
+
     class Meta:
         model = Envelope
-        fields = ['document_ids', 'name', 'signing_order', 'documents_with_positions']
+        fields = ['document_ids', 'name', 'signing_order', 'documents_with_positions', 'fields']
 
     def validate_document_ids(self, value):
         """
@@ -176,11 +188,69 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(f"Signer ID {signer_id} in signer_document_positions for document {doc_id} is not part of the envelope's signing_order.")
         return value
 
+    def validate_fields(self, value):
+        # Basic schema validation for field items
+        allowed_types = {"initials", "date", "text", "designation"}
+        document_ids_in_envelope = set(str(doc_id) for doc_id in self.initial_data.get('document_ids', []))
+        signer_ids_in_envelope = set(str(s['signer_id']) for s in self.initial_data.get('signing_order', []))
+
+        for i, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise serializers.ValidationError(f"fields[{i}] must be an object")
+
+            # Required keys
+            required_keys = ["document_id", "page", "x", "y", "width", "height", "type", "assigned_signer", "required"]
+            missing = [k for k in required_keys if k not in item]
+            if missing:
+                raise serializers.ValidationError(f"fields[{i}] missing keys: {missing}")
+
+            # Validate document id membership
+            doc_id = str(item.get('document_id'))
+            if doc_id not in document_ids_in_envelope:
+                raise serializers.ValidationError(f"fields[{i}].document_id {doc_id} not in document_ids")
+
+            # Validate signer membership
+            signer_id = str(item.get('assigned_signer'))
+            if signer_id not in signer_ids_in_envelope:
+                raise serializers.ValidationError(f"fields[{i}].assigned_signer {signer_id} not in signing_order")
+
+            # Type
+            typ = str(item.get('type'))
+            if typ not in allowed_types:
+                raise serializers.ValidationError(f"fields[{i}].type must be one of {sorted(list(allowed_types))}")
+
+            # Numerics
+            try:
+                page = int(item.get('page'))
+                x = float(item.get('x'))
+                y = float(item.get('y'))
+                width = float(item.get('width'))
+                height = float(item.get('height'))
+            except Exception:
+                raise serializers.ValidationError(f"fields[{i}] numeric fields must be numbers")
+            if page < 1 or x < 0 or y < 0 or width < 0 or height < 0:
+                raise serializers.ValidationError(f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0")
+
+            # Text constraints
+            if typ in {"text", "designation"}:
+                max_length = item.get('max_length')
+                if max_length is not None and int(max_length) <= 0:
+                    raise serializers.ValidationError(f"fields[{i}].max_length must be positive when provided")
+
+            # Date value sanity
+            if typ == "date":
+                dv = item.get('prefill_value')
+                if dv is not None and len(str(dv)) > 64:
+                    raise serializers.ValidationError(f"fields[{i}].prefill_value too long for date")
+
+        return value
+
     def create(self, validated_data):
         document_ids = validated_data.pop('document_ids')
         name = validated_data.pop('name', None)
         signing_order = validated_data.pop('signing_order', [])
         documents_with_positions_data = validated_data.pop('documents_with_positions', [])
+        fields_data = validated_data.pop('fields', [])
 
         request = self.context.get('request')
         creator = request.user if request else None
@@ -188,39 +258,70 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         if not creator:
             raise serializers.ValidationError("User authentication required.")
 
-        envelope = Envelope.objects.create(
-            creator=creator,
-            name=name,
-            status="draft",
-            signing_order=signing_order
-        )
-
-        # Add documents to the envelope via the intermediary model
-        for i, doc_id in enumerate(document_ids, 1):
-            document = Document.objects.get(id=doc_id)
-            
-            # Find corresponding signer_document_positions for this document
-            doc_pos_for_envelope_doc = next(
-                (item for item in documents_with_positions_data if str(item['document_id']) == str(doc_id)),
-                None
+        with transaction.atomic():
+            envelope = Envelope.objects.create(
+                creator=creator,
+                name=name,
+                status="draft",
+                signing_order=signing_order
             )
-            signer_doc_positions_for_this_doc = []
-            if doc_pos_for_envelope_doc:
-                for entry in doc_pos_for_envelope_doc.get('signer_document_positions', []):
-                    # Create a mutable copy of the entry dictionary
-                    mutable_entry = entry.copy()
-                    # Ensure signer_id is a string for JSONField compatibility
-                    if 'signer_id' in mutable_entry:
-                        mutable_entry['signer_id'] = str(mutable_entry['signer_id'])
-                    signer_doc_positions_for_this_doc.append(mutable_entry)
 
-            EnvelopeDocument.objects.create(
-                envelope=envelope,
-                document=document,
-                order=i,
-                signer_document_positions=signer_doc_positions_for_this_doc
-            )
-        
+            # Add documents to the envelope via the intermediary model
+            for i, doc_id in enumerate(document_ids, 1):
+                document = Document.objects.get(id=doc_id)
+
+                # Find corresponding signer_document_positions for this document
+                doc_pos_for_envelope_doc = next(
+                    (item for item in documents_with_positions_data if str(item['document_id']) == str(doc_id)),
+                    None
+                )
+                signer_doc_positions_for_this_doc = []
+                if doc_pos_for_envelope_doc:
+                    for entry in doc_pos_for_envelope_doc.get('signer_document_positions', []):
+                        mutable_entry = entry.copy()
+                        if 'signer_id' in mutable_entry:
+                            mutable_entry['signer_id'] = str(mutable_entry['signer_id'])
+                        signer_doc_positions_for_this_doc.append(mutable_entry)
+
+                EnvelopeDocument.objects.create(
+                    envelope=envelope,
+                    document=document,
+                    order=i,
+                    signer_document_positions=signer_doc_positions_for_this_doc
+                )
+
+            # Create fields if provided
+            if fields_data:
+                # Map documents for quick lookup and ensure membership already validated
+                documents_by_id = {str(doc.id): doc for doc in Document.objects.filter(id__in=document_ids)}
+                signer_ids_in_envelope = {str(s['signer_id']) for s in signing_order}
+
+                for item in fields_data:
+                    doc_id = str(item['document_id'])
+                    assigned_signer_id = str(item['assigned_signer'])
+                    # Safety checks (should have been validated above)
+                    if doc_id not in documents_by_id or assigned_signer_id not in signer_ids_in_envelope:
+                        raise serializers.ValidationError("Invalid field references to document or signer.")
+
+                    FieldModel.objects.create(
+                        envelope=envelope,
+                        document=documents_by_id[doc_id],
+                        page=int(item['page']),
+                        x=float(item['x']),
+                        y=float(item['y']),
+                        width=float(item['width']),
+                        height=float(item['height']),
+                        type=str(item['type']),
+                        assigned_signer_id=assigned_signer_id,
+                        required=bool(item['required']),
+                        prefill_value=item.get('prefill_value'),
+                        placeholder=item.get('placeholder'),
+                        font_family=item.get('font_family'),
+                        font_size=item.get('font_size'),
+                        date_format=item.get('date_format'),
+                        max_length=item.get('max_length'),
+                    )
+
         return envelope
 
 
@@ -244,6 +345,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     
     creator_email = serializers.CharField(source='creator.email', read_only=True)
     documents = EnvelopeDocumentSerializer(source='envelopedocument_set', many=True, read_only=True)
+    fields = FieldSerializer(many=True, read_only=True)
     signatures = SignatureSerializer(many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
     
@@ -251,7 +353,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
         model = Envelope
         fields = [
             'id', 'creator', 'creator_email', 'name', 'status', 
-            'signing_order', 'signer_count', 'documents', 'signatures',
+            'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
             'created_at', 'updated_at'
         ]
         read_only_fields = [

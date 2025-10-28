@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'documents',
     'envelopes',
     'signatures',
+    'fields',
     'notifications',
     'audit',
     'contacts',

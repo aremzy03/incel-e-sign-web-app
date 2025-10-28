@@ -263,7 +263,7 @@ class DocumentDeleteView(DestroyAPIView):
                     'status': 'success',
                     'message': 'Document deleted successfully'
                 },
-                status=status.HTTP_204_NO_CONTENT
+                status=status.HTTP_200_OK
             )
         except Exception as e:
             # Let 404 errors pass through (handled by get_object_or_404)

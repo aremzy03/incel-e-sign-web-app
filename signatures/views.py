@@ -14,7 +14,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import Signature, UserSignature
 from .serializers import SignatureSerializer, SignDocumentSerializer, DeclineSignatureSerializer, UserSignatureSerializer
-from .utils.pdf_signing import embed_signature, get_media_absolute_path_from_url
+from .utils.pdf_signing import embed_signature, embed_text, get_media_absolute_path_from_url
 from django.conf import settings
 import os
 
@@ -246,6 +246,62 @@ class SignDocumentView(APIView):
                                 logger = logging.getLogger(__name__)
                                 logger.warning(f"Skipping invalid position {idx} for document {document.id}: invalid position data")
                         
+                        # After signatures, flatten any assigned fields values for this signer on this document
+                        try:
+                            from fields.models import Field as FieldModel
+                            signer_fields = FieldModel.objects.filter(
+                                envelope=envelope,
+                                document=document,
+                                assigned_signer=request.user
+                            )
+                        except Exception:
+                            signer_fields = []
+
+                        # Stamp text-like fields sequentially
+                        for f in signer_fields:
+                            field_value = f.prefill_value if f.prefill_value is not None else f.value
+                            if not field_value:
+                                continue
+                            if f.type in ['initials', 'text', 'designation', 'date']:
+                                # Format date if necessary
+                                text_to_draw = str(field_value)
+                                if f.type == 'date' and f.date_format:
+                                    # Assume value may be ISO; we won't reformat aggressively
+                                    try:
+                                        from datetime import datetime
+                                        parsed = None
+                                        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+                                            try:
+                                                parsed = datetime.strptime(text_to_draw, fmt)
+                                                break
+                                            except Exception:
+                                                continue
+                                        if parsed:
+                                            # Map common tokens
+                                            fmt_map = {
+                                                'YYYY-MM-DD': "%Y-%m-%d",
+                                                'DD/MM/YYYY': "%d/%m/%Y",
+                                                'MMM D, YYYY': "%b %-d, %Y",
+                                            }
+                                            out_fmt = fmt_map.get(f.date_format, "%Y-%m-%d")
+                                            text_to_draw = parsed.strftime(out_fmt)
+                                    except Exception:
+                                        pass
+
+                                # Determine next IO paths
+                                current_output_path = output_pdf_path
+                                embed_text(
+                                    pdf_path=current_input_path,
+                                    output_path=current_output_path,
+                                    text=text_to_draw,
+                                    page=f.page,
+                                    x=f.x,
+                                    y=f.y,
+                                    font_family=f.font_family or 'Helvetica',
+                                    font_size=float(f.font_size or 12),
+                                )
+                                current_input_path = current_output_path
+
                         # Clean up temporary files
                         for temp_file in temp_files_to_cleanup:
                             try:

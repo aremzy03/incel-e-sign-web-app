@@ -13,6 +13,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **👥 Contacts Management**: Save recipients, search by email, and invite non-users
 - **📋 Audit Logging**: Immutable audit trails for compliance and security
 - **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
+- **🧩 Form Fields**: Backend support for initials, date, text, and designation fields (assign to signers, prefill by sender, flattened into final PDF)
 - **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
 - **⚡ Async Processing**: Background task processing with Celery and Redis
 
@@ -526,6 +527,91 @@ Notes:
 |--------|----------|-------------|---------------|
 | `POST` | `/api/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
+
+### Fields (Non-signature Annotations)
+
+Backend-only APIs to manage non-signature fields: initials, date, text, designation. Senders can place and prefill fields and assign them to specific signers. During signing, assignees can submit values for their fields. On signing completion, the backend flattens field values into the PDF.
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/api/fields/{envelope_id}/` | List all fields for envelope (creator only) | ✅ |
+| `POST` | `/api/fields/{envelope_id}/` | Bulk create/update fields (creator only) | ✅ |
+| `GET` | `/api/fields/signing/{envelope_id}/` | List fields assigned to current signer | ✅ |
+| `POST` | `/api/fields/signing/{envelope_id}/values/` | Bulk save signer field values | ✅ |
+
+Field object shape (JSON):
+
+```json
+{
+  "id": "uuid-optional-for-update",
+  "envelope": "uuid",                
+  "document": "uuid",                
+  "page": 1,
+  "x": 150,
+  "y": 450,
+  "width": 200,
+  "height": 40,
+  "type": "initials | date | text | designation",
+  "assigned_signer": "uuid-of-user",
+  "required": true,
+  "prefill_value": "AC" ,            
+  "value": null,                      
+  "placeholder": "Enter text",
+  "font_family": "Helvetica",
+  "font_size": 12,
+  "date_format": "YYYY-MM-DD",
+  "max_length": 50
+}
+```
+
+Notes:
+- Coordinates are in PDF points; `y` is measured from the top (UI convention). Backend converts for stamping.
+- If `prefill_value` is set, the signer cannot override it; otherwise, signer-provided `value` is used.
+- Supported types stamped as text: `initials`, `date`, `text`, `designation`.
+
+Examples
+
+List envelope fields (creator):
+
+```bash
+curl -X GET http://localhost:8000/api/fields/ENVELOPE_ID/ \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+Bulk upsert fields (creator):
+
+```bash
+curl -X POST http://localhost:8000/api/fields/ENVELOPE_ID/ \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"document":"DOC_UUID","page":1,"x":150,"y":450,"width":100,"height":24,"type":"initials","assigned_signer":"USER_UUID","required":true,"prefill_value":null,"font_family":"Helvetica","font_size":12},
+    {"document":"DOC_UUID","page":1,"x":150,"y":500,"width":220,"height":24,"type":"text","assigned_signer":"USER_UUID","required":false,"placeholder":"Your company","max_length":60}
+  ]'
+```
+
+List fields for signer:
+
+```bash
+curl -X GET http://localhost:8000/api/fields/signing/ENVELOPE_ID/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN"
+```
+
+Submit signer values:
+
+```bash
+curl -X POST http://localhost:8000/api/fields/signing/ENVELOPE_ID/values/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"id":"FIELD_UUID_1","value":"AC"},
+    {"id":"FIELD_UUID_2","value":"Senior Engineer"}
+  ]'
+```
+
+Flattening behavior
+- During `POST /api/signatures/{envelope_id}/sign/`, after embedding signatures, the backend stamps text for any assigned fields per document using `font_family`, `font_size`, and `date_format` where applicable.
+- If both `prefill_value` and `value` are empty for a required field, you can enforce blocking completion; open an issue if you want strict enforcement enabled by default.
 
 ### Reusable Signatures
 
