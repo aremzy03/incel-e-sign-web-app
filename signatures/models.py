@@ -148,9 +148,15 @@ class Signature(models.Model):
         if not pending_signatures.exists():
             return False
         
+        # Convert to list to avoid QuerySet iteration issues
+        pending_signatures_list = list(pending_signatures)
+        
+        if not pending_signatures_list:
+            return False
+        
         # Find the signature with the lowest signing order
         current_signature = min(
-            pending_signatures,
+            pending_signatures_list,
             key=lambda sig: sig.get_signing_order()
         )
         

@@ -168,12 +168,13 @@ class SignDocumentView(APIView):
         for env_doc in envelope_documents:
             document = env_doc.document
 
-            # Determine signature position for this specific document and signer
-            signer_position_for_doc = None
+            # Collect ALL signature positions for this specific document and signer
+            signer_positions_for_doc = []
             for pos_entry in env_doc.signer_document_positions:
                 if str(pos_entry.get('signer_id')) == str(request.user.id):
-                    signer_position_for_doc = pos_entry.get('position')
-                    break
+                    position = pos_entry.get('position')
+                    if position:
+                        signer_positions_for_doc.append(position)
 
             # Always start from the latest available file: previously signed version if present
             source_url = document.signed_file_url or document.file_url
@@ -204,34 +205,58 @@ class SignDocumentView(APIView):
             # Try to embed signature; if it fails, continue workflow without blocking
             if os.path.exists(input_pdf_path):
                 try:
-                    # Use position from EnvelopeDocument if available, otherwise use defaults or request data
-                    if signer_position_for_doc and isinstance(signer_position_for_doc, dict):
-                        required_fields = ['page', 'x', 'y', 'width', 'height']
-                        if all(field in signer_position_for_doc for field in required_fields):
-                            embed_signature(
-                                pdf_path=input_pdf_path,
-                                output_path=output_pdf_path,
-                                signature_image=signature_image_data,
-                                page=signer_position_for_doc['page'],
-                                x=signer_position_for_doc['x'],
-                                y=signer_position_for_doc['y'],
-                                width=signer_position_for_doc['width'],
-                                height=signer_position_for_doc['height'],
-                            )
-                        else:
-                            # Position is incomplete, use request data or defaults
-                            embed_signature(
-                                pdf_path=input_pdf_path,
-                                output_path=output_pdf_path,
-                                signature_image=signature_image_data,
-                                page=validated_data.get('page', 1),
-                                x=validated_data.get('x', 100),
-                                y=validated_data.get('y', 100),
-                                width=validated_data.get('width', 120),
-                                height=validated_data.get('height', 40),
-                            )
+                    # Process all positions for this signer on this document
+                    if signer_positions_for_doc:
+                        # Apply signature at each position sequentially
+                        temp_files_to_cleanup = []
+                        current_input_path = input_pdf_path
+                        
+                        for idx, position_data in enumerate(signer_positions_for_doc):
+                            # Determine output path - final position uses final output, others use temp files
+                            if idx == len(signer_positions_for_doc) - 1:
+                                current_output_path = output_pdf_path
+                            else:
+                                current_output_path = f"{output_pdf_path}.tmp{idx}"
+                                temp_files_to_cleanup.append(current_output_path)
+                            
+                            if position_data and isinstance(position_data, dict):
+                                required_fields = ['page', 'x', 'y', 'width', 'height']
+                                if all(field in position_data for field in required_fields):
+                                    embed_signature(
+                                        pdf_path=current_input_path,
+                                        output_path=current_output_path,
+                                        signature_image=signature_image_data,
+                                        page=position_data['page'],
+                                        x=position_data['x'],
+                                        y=position_data['y'],
+                                        width=position_data['width'],
+                                        height=position_data['height'],
+                                    )
+                                    
+                                    # Update input path for next iteration
+                                    current_input_path = current_output_path
+                                else:
+                                    # Position is incomplete, skip this position
+                                    import logging
+                                    logger = logging.getLogger(__name__)
+                                    logger.warning(f"Skipping incomplete position {idx} for document {document.id}: missing required fields")
+                            else:
+                                # Invalid position data, skip this position
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.warning(f"Skipping invalid position {idx} for document {document.id}: invalid position data")
+                        
+                        # Clean up temporary files
+                        for temp_file in temp_files_to_cleanup:
+                            try:
+                                if os.path.exists(temp_file):
+                                    os.remove(temp_file)
+                            except Exception as e:
+                                import logging
+                                logger = logging.getLogger(__name__)
+                                logger.warning(f"Failed to cleanup temp file {temp_file}: {e}")
                     else:
-                        # No position defined in EnvelopeDocument, use request data or defaults
+                        # No positions defined in EnvelopeDocument, use request data or defaults
                         embed_signature(
                             pdf_path=input_pdf_path,
                             output_path=output_pdf_path,

@@ -4,6 +4,8 @@ globs:
 alwaysApply: true
 ---
 Project Cursor Rules for the E-Sign Application
+0. The project dependencies is in the .venv virtual environment.
+
 1. General Programming Practices
 
 Consistency over cleverness: Prioritize readability over fancy tricks. Anyone on the team should be able to glance at the code and understand what’s happening.
