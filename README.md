@@ -504,6 +504,7 @@ Notes:
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
 | `POST` | `/api/documents/upload/` | Upload PDF or Word document (≤20MB, Word auto-converted to PDF) | ✅ |
+| `POST` | `/api/documents/merge/` | Merge multiple existing PDFs into one new Document | ✅ |
 | `GET` | `/api/documents/` | List user's documents | ✅ |
 | `GET` | `/api/documents/{id}/` | Retrieve single document | ✅ |
 | `DELETE` | `/api/documents/{id}/delete/` | Delete document | ✅ |
@@ -925,6 +926,58 @@ curl -X GET http://localhost:8000/documents/ \
   }
 ]
 ```
+
+#### 2a. Merge Documents
+
+**Endpoint:** `POST /api/documents/merge/`
+
+Merge multiple existing PDF documents (owned by the authenticated user) into a single PDF. The merged file is stored as a new `Document`, and the endpoint returns its id and URL.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/api/documents/merge/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_ids": [
+      "550e8400-e29b-41d4-a716-446655440000",
+      "550e8400-e29b-41d4-a716-446655440005"
+    ],
+    "name": "merged.pdf"
+  }'
+```
+
+**Request Details:**
+- Method: POST
+- Authentication: Required (JWT Bearer token)
+- Body:
+  - `document_ids` (array<UUID>, required, length ≥ 2): Ordered list of source documents to merge
+  - `name` (string, optional): Desired filename for the merged PDF (defaults to "Merged Document")
+
+**Constraints:**
+- All `document_ids` must exist and be owned by the requester
+- Each source document must have a valid `file_url` on disk or accessible storage
+- Pages are appended preserving the order of `document_ids`
+
+**Response (Success - 201):**
+```json
+{
+  "status": "success",
+  "message": "Documents merged successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440099",
+    "file_url": "/media/merged_docs/550e8400-e29b-41d4-a716-446655440099_merged.pdf",
+    "name": "merged.pdf"
+  }
+}
+```
+
+**Error Responses:**
+- `400 Bad Request`: Fewer than two documents provided, missing source file
+- `401 Unauthorized`: Missing or invalid authentication
+- `403 Forbidden`: A referenced document is not owned by the requester
+- `500 Internal Server Error`: Merge/write failure
+
 
 **Features:**
 - Returns only documents owned by the authenticated user

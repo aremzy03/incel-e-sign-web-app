@@ -18,9 +18,12 @@ from urllib.parse import unquote
 from django.conf import settings
 from .models import Document
 from envelopes.models import Envelope
-from .serializers import DocumentUploadSerializer, DocumentSerializer
+from .serializers import DocumentUploadSerializer, DocumentSerializer, MergeDocumentsSerializer
 from django.db import models
 from envelopes.models import EnvelopeDocument
+from signatures.utils.pdf_signing import get_media_absolute_path_from_url
+from pypdf import PdfReader, PdfWriter
+import uuid
 
 
 class DocumentUploadView(APIView):
@@ -402,3 +405,125 @@ class DocumentDownloadView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class MergeDocumentsView(APIView):
+    """
+    API view to merge multiple existing documents owned by the user into one PDF.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MergeDocumentsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({
+                'status': 'error',
+                'message': 'Validation failed',
+                'data': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        document_ids = serializer.validated_data['document_ids']
+        desired_name = serializer.validated_data.get('name') or 'Merged Document'
+
+        # Fetch and validate ownership/access
+        docs = []
+        for doc_id in document_ids:
+            doc = Document.objects.filter(id=doc_id, owner=request.user).first()
+            if not doc:
+                return Response({
+                    'status': 'error',
+                    'message': f'Access denied or document not found: {doc_id}'
+                }, status=status.HTTP_403_FORBIDDEN)
+            # Resolve file path (prefer signed if exists)
+            source_url = doc.signed_file_url or doc.file_url
+            abs_path = get_media_absolute_path_from_url(source_url)
+            if not os.path.isabs(abs_path) or not os.path.exists(abs_path):
+                return Response({
+                    'status': 'error',
+                    'message': f'Source file missing on server for document {doc_id}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            docs.append((doc, abs_path))
+
+        # Perform merge preserving order
+        writer = PdfWriter()
+        try:
+            for _, abs_path in docs:
+                reader = PdfReader(abs_path)
+                for page in reader.pages:
+                    writer.add_page(page)
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Failed to read/merge PDFs: {e}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Write merged PDF to MEDIA_ROOT/merged_docs
+        merged_dir = os.path.join(str(settings.MEDIA_ROOT), 'merged_docs')
+        os.makedirs(merged_dir, exist_ok=True)
+        merged_id = uuid.uuid4()
+        safe_base = desired_name or 'Merged Document'
+        # Ensure .pdf extension
+        file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
+        # Prepend uuid to ensure uniqueness on disk
+        disk_name = f"{merged_id}_{file_name}"
+        abs_out = os.path.join(merged_dir, disk_name)
+        try:
+            with open(abs_out, 'wb') as fout:
+                writer.write(fout)
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Failed to write merged PDF: {e}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Build file_url relative to MEDIA_URL
+        rel_path = os.path.relpath(abs_out, str(settings.MEDIA_ROOT))
+        file_url = f"{settings.MEDIA_URL}{rel_path}"
+
+        # Create Document record
+        try:
+            file_size = os.path.getsize(abs_out)
+            new_doc = Document.objects.create(
+                owner=request.user,
+                file_url=file_url,
+                file_name=file_name,
+                file_size=file_size,
+                status='draft'
+            )
+        except Exception as e:
+            # Cleanup file if DB create fails
+            try:
+                if os.path.exists(abs_out):
+                    os.remove(abs_out)
+            except Exception:
+                pass
+            return Response({
+                'status': 'error',
+                'message': f'Failed to create merged Document record: {e}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Audit log
+        try:
+            from audit.utils import log_action
+            joined_ids = ", ".join([str(i) for i in document_ids])
+            log_action(
+                request.user,
+                "MERGE_DOCS",
+                new_doc,
+                f"User {request.user.full_name or request.user.username} merged documents [{joined_ids}] into '{file_name}'.",
+                request=request
+            )
+        except Exception:
+            # Do not fail main flow on audit issues
+            pass
+
+        return Response({
+            'status': 'success',
+            'message': 'Documents merged successfully',
+            'data': {
+                'id': str(new_doc.id),
+                'file_url': new_doc.file_url,
+                'name': new_doc.file_name
+            }
+        }, status=status.HTTP_201_CREATED)

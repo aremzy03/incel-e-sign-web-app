@@ -12,6 +12,24 @@ from django.conf import settings
 from .models import Document
 
 
+class MergeDocumentsSerializer(serializers.Serializer):
+    """
+    Serializer for validating merge request payload.
+    """
+
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+        help_text="Ordered list of Document UUIDs to merge"
+    )
+    name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_document_ids(self, value):
+        # Require at least 2 documents to merge
+        if len(value) < 2:
+            raise serializers.ValidationError("At least two documents are required to merge.")
+        return value
+
 class DocumentUploadSerializer(serializers.Serializer):
     """
     Serializer for document upload functionality.
