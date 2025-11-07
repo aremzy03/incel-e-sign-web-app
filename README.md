@@ -234,6 +234,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
       "550e8400-e29b-41d4-a716-446655440005"
     ],
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "signing_order": [
       {
         "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
@@ -265,13 +266,14 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
 **Request Details:**
 - Content-Type: `application/json`
 - Authentication: Required (JWT Bearer token)
-- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
+- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), optional `description` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
 
 **Payload Structure:**
 ```json
 {
   "document_ids": ["uuid-of-document-1", "uuid-of-document-2"], // List of document UUIDs
   "name": "Optional custom envelope name", // Optional string
+  "description": "Optional description or notes for recipients", // Optional string
   "signing_order": [
     {
       "signer_id": "uuid-user-1", 
@@ -321,6 +323,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
     "creator": "550e8400-e29b-41d4-a716-446655440004",
     "creator_email": "creator@example.com",
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "status": "draft",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
@@ -1164,6 +1167,8 @@ The Envelope model manages the signing workflow for documents, defining the orde
 - `id` (UUIDField): Unique identifier for the envelope (primary key)
 - `document` (ForeignKey): The document being signed (related_name="envelopes")
 - `creator` (ForeignKey): User who created the envelope (related_name="created_envelopes")
+- `name` (CharField): User-defined name of the envelope (optional, defaults to "Untitled Envelope" + timestamp)
+- `description` (TextField): Optional description or notes for recipients about this envelope
 - `status` (CharField): Current status with choices:
   - `draft`: Envelope is being prepared
   - `sent`: Envelope has been sent to signers
@@ -1269,6 +1274,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
       "550e8400-e29b-41d4-a716-446655440005"
     ],
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "signing_order": [
       {
         "signer_id": "550e8400-e29b-41d4-a716-446655440001", 
@@ -1300,13 +1306,14 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
 **Request Details:**
 - Content-Type: `application/json`
 - Authentication: Required (JWT Bearer token)
-- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
+- Body: JSON with `document_ids` (list of document UUIDs), optional `name` (string), optional `description` (string), `signing_order` (list of signers), and optional `documents_with_positions` (list of document-specific signer positions).
 
 **Payload Structure:**
 ```json
 {
   "document_ids": ["uuid-of-document-1", "uuid-of-document-2"], // List of document UUIDs
   "name": "Optional custom envelope name", // Optional string
+  "description": "Optional description or notes for recipients", // Optional string
   "signing_order": [
     {
       "signer_id": "uuid-user-1", 
@@ -1356,6 +1363,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
     "creator": "550e8400-e29b-41d4-a716-446655440004",
     "creator_email": "creator@example.com",
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "status": "draft",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
@@ -1430,6 +1438,7 @@ curl -X POST http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-4466554
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "status": "pending",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
@@ -1505,6 +1514,7 @@ curl -X POST http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-4466554
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "creator": "550e8400-e29b-41d4-a716-446655440002",
     "name": "My Important Contract Bundle",
+    "description": "Please review all terms carefully before signing",
     "status": "rejected",
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440003", "order": 1},
@@ -1538,7 +1548,7 @@ curl -X POST http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-4466554
 
 **Endpoint:** `PATCH /envelopes/{id}/edit/`
 
-Edit an existing draft or rejected envelope. Only the envelope creator can edit. Allows updating `name`, `document_ids`, `signing_order`, and `documents_with_positions`.
+Edit an existing draft or rejected envelope. Only the envelope creator can edit. Allows updating `name`, `description`, `document_ids`, `signing_order`, and `documents_with_positions`.
 
 **Request:**
 ```bash
@@ -1547,6 +1557,7 @@ curl -X PATCH http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655
   -H "Content-Type: application/json" \
   -d '{
     "name": "Revised Contract Bundle",
+    "description": "Updated terms - please review again",
     "document_ids": [
       "550e8400-e29b-41d4-a716-446655440000",
       "550e8400-e29b-41d4-a716-446655440006" // New document
@@ -1583,7 +1594,7 @@ curl -X PATCH http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655
 - Method: PATCH
 - Authentication: Required (JWT Bearer token)
 - URL Parameter: `{id}` - UUID of the envelope to edit
-- Body: JSON with optional `name`, `document_ids`, `signing_order`, and `documents_with_positions`.
+- Body: JSON with optional `name`, `description`, `document_ids`, `signing_order`, and `documents_with_positions`.
 
 **Constraints:**
 - Only the envelope creator can edit the envelope.
@@ -1602,6 +1613,7 @@ curl -X PATCH http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-446655
     "id": "550e8400-e29b-41d4-a716-446655440003",
     "creator": "550e8400-e29b-41d4-a716-446655440004",
     "name": "Revised Contract Bundle",
+    "description": "Updated terms - please review again",
     "status": "draft", // Status is reverted to draft if previously rejected
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},

@@ -94,6 +94,7 @@ class EnvelopeCreationTestCase(APITestCase):
         payload = {
             'document_ids': [str(self.document1.id), str(self.document2.id)],
             'name': "My Custom Envelope Name",
+            'description': "Quick summary for recipients",
             'signing_order': [
                 {'signer_id': str(self.signer1.id), 'order': 1},
                 {'signer_id': str(self.signer2.id), 'order': 2}
@@ -110,6 +111,7 @@ class EnvelopeCreationTestCase(APITestCase):
         envelope = Envelope.objects.get(id=response.data['data']['id'])
         self.assertEqual(envelope.creator, self.creator)
         self.assertEqual(envelope.name, "My Custom Envelope Name")
+        self.assertEqual(envelope.description, "Quick summary for recipients")
         self.assertEqual(envelope.status, 'draft')
         self.assertEqual(len(envelope.signing_order), 2)
         self.assertEqual(envelope.signing_order[0]['signer_id'], str(self.signer1.id))
@@ -126,6 +128,8 @@ class EnvelopeCreationTestCase(APITestCase):
         # Check that name field is included in response
         self.assertIn('name', response.data['data'])
         self.assertEqual(response.data['data']['name'], "My Custom Envelope Name")
+        self.assertIn('description', response.data['data'])
+        self.assertEqual(response.data['data']['description'], "Quick summary for recipients")
 
     def test_successful_envelope_creation_with_default_name(self):
         """Test successful envelope creation with multiple documents and default name."""
@@ -147,6 +151,8 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertIsNotNone(envelope.name)
         self.assertIn("Untitled Envelope", envelope.name)
         self.assertIn(envelope.name, response.data['data']['name'])
+        self.assertIn('description', response.data['data'])
+        self.assertIsNone(response.data['data']['description'])
 
     def test_envelope_creation_fails_if_no_documents(self):
         """Test creation fails if no document IDs are provided."""

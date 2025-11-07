@@ -82,6 +82,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.envelope = Envelope.objects.create(
             creator=self.creator,
             name="Test Envelope for Signing",
+            description="Please review carefully",
             status="pending",
             signing_order=[
                 {"signer_id": str(self.signer1.id), "order": 1},
@@ -159,6 +160,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
+        self.assertEqual(envelope_data['description'], "Please review carefully")
         self.assertEqual(len(envelope_data['signatures']), 2)
         self.assertEqual(len(envelope_data['documents']), 1)
         self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
@@ -178,6 +180,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
+        self.assertEqual(envelope_data['description'], "Please review carefully")
         self.assertEqual(len(envelope_data['signatures']), 2)
         self.assertEqual(len(envelope_data['documents']), 1)
         self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
@@ -231,6 +234,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(len(response.data['data']), 1)
         self.assertEqual(response.data['data'][0]['id'], str(self.other_envelope.id))
         self.assertEqual(response.data['data'][0]['name'], "Other User Envelope")
+        self.assertIsNone(response.data['data'][0]['description'])
     
     def test_unauthenticated_request_returns_401(self):
         """Test that unauthenticated requests return 401."""
@@ -254,6 +258,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
+        self.assertEqual(envelope_data['description'], "Please review carefully")
         self.assertEqual(len(envelope_data['signatures']), 2)
         self.assertEqual(len(envelope_data['documents']), 1)
         self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
@@ -283,6 +288,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
+        self.assertEqual(envelope_data['description'], "Please review carefully")
         self.assertEqual(len(envelope_data['signatures']), 2)
         self.assertEqual(len(envelope_data['documents']), 1)
         self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
@@ -328,7 +334,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         
         envelope_data = response.data['data']
         required_fields = [
-            'id', 'creator', 'creator_email', 'name', 'status', 'signing_order',
+            'id', 'creator', 'creator_email', 'name', 'description', 'status', 'signing_order',
             'signer_count', 'documents', 'signatures', 'created_at', 'updated_at'
         ]
         
@@ -393,6 +399,7 @@ class EnvelopeRetrievalTestCase(APITestCase):
         
         envelope_data = response.data['data']
         self.assertEqual(envelope_data['id'], str(self.other_envelope.id))
+        self.assertIsNone(envelope_data['description'])
         self.assertEqual(len(envelope_data['signatures']), 0)
         self.assertEqual(len(envelope_data['documents']), 1)
         self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.other_document.id)) # Explicitly convert to string

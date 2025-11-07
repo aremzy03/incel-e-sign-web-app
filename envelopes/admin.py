@@ -9,6 +9,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     list_display = [
         'id',
         'name',
+        'description_preview',
         'creator',
         'status',
         'signer_count',
@@ -24,6 +25,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     
     search_fields = [
         'name',
+        'description',
         'creator__email',
         'creator__full_name',
         'id'
@@ -38,7 +40,7 @@ class EnvelopeAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('id', 'name', 'creator', 'status')
+            'fields': ('id', 'name', 'description', 'creator', 'status')
         }),
         ('Signing Configuration', {
             'fields': ('signing_order', 'signer_count'),
@@ -56,6 +58,13 @@ class EnvelopeAdmin(admin.ModelAdmin):
         """Display the number of signers."""
         return obj.signer_count
     signer_count.short_description = 'Number of Signers'
+
+    def description_preview(self, obj):
+        """Show a truncated version of the description for list display."""
+        if not obj.description:
+            return ""
+        return (obj.description[:75] + '...') if len(obj.description) > 75 else obj.description
+    description_preview.short_description = 'Description'
 
 
 @admin.register(EnvelopeDocument)

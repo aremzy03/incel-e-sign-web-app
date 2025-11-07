@@ -49,6 +49,12 @@ class Envelope(models.Model):
         null=True,
         help_text="User-defined name of the envelope. Defaults to 'Untitled Envelope' + timestamp."
     )
+
+    description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Optional description or notes for recipients about this envelope."
+    )
     
     status = models.CharField(
         max_length=20,

@@ -75,6 +75,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.draft_envelope = Envelope.objects.create(
             creator=self.creator,
             name="Draft Envelope",
+            description="Draft envelope instructions",
             status='draft',
             signing_order=[
                 {'signer_id': str(self.signer1.id), 'order': 1},
@@ -152,6 +153,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope sent successfully')
         self.assertEqual(response.data['data']['status'], 'pending') # Changed to pending
+        self.assertEqual(response.data['data']['description'], 'Draft envelope instructions')
         
         # Verify envelope status was updated in database
         self.draft_envelope.refresh_from_db()
@@ -188,6 +190,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope rejected successfully')
         self.assertEqual(response.data['data']['status'], 'rejected')
+        self.assertEqual(response.data['data']['description'], 'Draft envelope instructions')
         
         # Verify envelope status was updated in database
         self.draft_envelope.refresh_from_db()
@@ -413,6 +416,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertIn('id', data)
         self.assertIn('creator', data)
         self.assertIn('name', data)
+        self.assertIn('description', data)
         self.assertIn('status', data)
         self.assertIn('signing_order', data)
         self.assertIn('documents', data) # Check for documents field
@@ -428,6 +432,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(data['id'], str(self.draft_envelope.id))
         self.assertEqual(data['status'], 'pending') # Changed to pending
         self.assertEqual(data['name'], self.draft_envelope.name)
+        self.assertEqual(data['description'], 'Draft envelope instructions')
         self.assertEqual(len(data['documents']), 1) # Expect 1 document for this setup
     
     def test_reject_response_contains_correct_data_structure(self):
@@ -451,6 +456,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertIn('id', data)
         self.assertIn('creator', data)
         self.assertIn('name', data)
+        self.assertIn('description', data)
         self.assertIn('status', data)
         self.assertIn('signing_order', data)
         self.assertIn('documents', data) # Check for documents field
@@ -467,4 +473,5 @@ class EnvelopeSendRejectTestCase(APITestCase):
         self.assertEqual(data['id'], str(self.draft_envelope.id))
         self.assertEqual(data['status'], 'rejected')
         self.assertEqual(data['name'], self.draft_envelope.name)
+        self.assertEqual(data['description'], 'Draft envelope instructions')
         self.assertEqual(len(data['documents']), 1) # Expect 1 document for this setup

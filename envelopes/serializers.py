@@ -58,6 +58,13 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         allow_blank=True,
         help_text="Optional user-defined name for the envelope."
     )
+
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Optional description or notes for recipients about this envelope."
+    )
     
     signing_order = serializers.ListField(
         child=serializers.DictField(),
@@ -85,7 +92,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Envelope
-        fields = ['document_ids', 'name', 'signing_order', 'documents_with_positions', 'fields']
+        fields = ['document_ids', 'name', 'description', 'signing_order', 'documents_with_positions', 'fields']
 
     def validate_document_ids(self, value):
         """
@@ -248,6 +255,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         document_ids = validated_data.pop('document_ids')
         name = validated_data.pop('name', None)
+        description = validated_data.pop('description', None)
         signing_order = validated_data.pop('signing_order', [])
         documents_with_positions_data = validated_data.pop('documents_with_positions', [])
         fields_data = validated_data.pop('fields', [])
@@ -262,6 +270,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
             envelope = Envelope.objects.create(
                 creator=creator,
                 name=name,
+                description=description,
                 status="draft",
                 signing_order=signing_order
             )
@@ -352,12 +361,12 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Envelope
         fields = [
-            'id', 'creator', 'creator_email', 'name', 'status', 
+            'id', 'creator', 'creator_email', 'name', 'description', 'status', 
             'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'creator', 'name', 'status', 'created_at', 'updated_at'
+            'id', 'creator', 'name', 'description', 'status', 'created_at', 'updated_at'
         ]
     
     def get_signer_count(self, obj):
@@ -378,6 +387,13 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
         help_text="Optional user-defined name for the envelope."
     )
 
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Optional description or notes for recipients about this envelope."
+    )
+
     document_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
@@ -391,19 +407,45 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Envelope
-        fields = ['name', 'document_ids', 'signing_order', 'documents_with_positions']
+        fields = ['name', 'description', 'document_ids', 'signing_order', 'documents_with_positions']
+
+    def _current_document_ids(self):
+        if 'document_ids' in self.initial_data:
+            return [str(doc_id) for doc_id in self.initial_data.get('document_ids', [])]
+        if self.instance:
+            return [str(doc_id) for doc_id in self.instance.envelopedocument_set.order_by('order').values_list('document_id', flat=True)]
+        return []
+
+    def _current_signing_order(self):
+        if 'signing_order' in self.initial_data:
+            return self.initial_data.get('signing_order', [])
+        if self.instance:
+            return self.instance.signing_order or []
+        return []
+
+    def _build_create_serializer(self, *, document_ids=None, signing_order=None, documents_with_positions=None, fields=None):
+        helper_data = {
+            'document_ids': document_ids if document_ids is not None else self._current_document_ids(),
+            'signing_order': signing_order if signing_order is not None else self._current_signing_order(),
+            'documents_with_positions': documents_with_positions if documents_with_positions is not None else [],
+            'fields': fields if fields is not None else []
+        }
+        return EnvelopeCreateSerializer(data=helper_data, context=self.context)
 
     def validate_document_ids(self, value):
         # Reuse validation from EnvelopeCreateSerializer
-        return EnvelopeCreateSerializer(context=self.context).validate_document_ids(value)
+        helper = self._build_create_serializer(document_ids=[str(doc_id) for doc_id in value])
+        return helper.validate_document_ids(value)
 
     def validate_signing_order(self, value):
         # Reuse the same validation logic as creation
-        return EnvelopeCreateSerializer(context=self.context).validate_signing_order(value)
+        helper = self._build_create_serializer(signing_order=value)
+        return helper.validate_signing_order(value)
 
     def validate_documents_with_positions(self, value):
         # Reuse validation from EnvelopeCreateSerializer
-        return EnvelopeCreateSerializer(context=self.context).validate_documents_with_positions(value)
+        helper = self._build_create_serializer(documents_with_positions=value)
+        return helper.validate_documents_with_positions(value)
 
     def update(self, instance, validated_data):
         document_ids = validated_data.pop('document_ids', None)
@@ -411,6 +453,8 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
 
         # Update simple fields
         instance.name = validated_data.get('name', instance.name)
+        if 'description' in validated_data:
+            instance.description = validated_data.get('description')
         instance.signing_order = validated_data.get('signing_order', instance.signing_order)
 
         # Update documents and their positions if provided
@@ -462,12 +506,12 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Envelope
         fields = [
-            'id', 'creator', 'name', 'status', 'signing_order', 
+            'id', 'creator', 'name', 'description', 'status', 'signing_order', 
             'signer_count', 'documents', 'signatures',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'creator', 'name', 'status', 'signing_order', 
+            'id', 'creator', 'name', 'description', 'status', 'signing_order', 
             'signer_count', 'documents', 'signatures',
             'created_at', 'updated_at'
         ]

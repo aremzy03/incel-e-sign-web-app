@@ -149,6 +149,22 @@ class EnvelopeModelTest(TestCase):
         self.assertIn("Envelope: Untitled Envelope", str(envelope_default_name))
         self.assertIn("(draft)", str(envelope_default_name))
 
+    def test_envelope_description_field_optional(self):
+        """Test that the description field can be set or left empty."""
+        description_text = "Important details for recipients"
+        envelope_with_description = Envelope.objects.create(
+            creator=self.creator,
+            name="Descriptive Envelope",
+            description=description_text
+        )
+        self.assertEqual(envelope_with_description.description, description_text)
+
+        envelope_without_description = Envelope.objects.create(
+            creator=self.creator,
+            name="No Description Envelope"
+        )
+        self.assertIsNone(envelope_without_description.description)
+
     def test_signer_count_property(self):
         """Test the signer_count property."""
         # Empty signing order
