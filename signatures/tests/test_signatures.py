@@ -222,10 +222,19 @@ class SignatureTestCase(APITestCase):
         # Verify envelope is now completed
         self.envelope.refresh_from_db()
         self.assertEqual(self.envelope.status, 'completed')
+        self.assertIsNotNone(self.envelope.pdf_lock_password)
+        self.assertGreaterEqual(len(self.envelope.pdf_lock_password), 8)
         
         # Verify third signer is signed
         self.signature3.refresh_from_db()
         self.assertEqual(self.signature3.status, 'signed')
+
+        # Ensure envelope detail surface exposes the PDF lock password to participants.
+        detail_url = reverse('envelopes:envelope_detail', kwargs={'pk': self.envelope.id})
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer3_token}')
+        detail_response = self.client.get(detail_url)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['data']['pdf_lock_password'], self.envelope.pdf_lock_password)
     
     def test_signer_can_decline_marking_envelope_rejected(self):
         """Test that signer can decline, marking envelope as rejected."""

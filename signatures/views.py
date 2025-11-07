@@ -15,8 +15,31 @@ from django.utils import timezone
 from .models import Signature, UserSignature
 from .serializers import SignatureSerializer, SignDocumentSerializer, DeclineSignatureSerializer, UserSignatureSerializer
 from .utils.pdf_signing import embed_signature, embed_text, get_media_absolute_path_from_url
+from envelopes.utils.pdf_security import lock_pdf_with_password
 from django.conf import settings
+import logging
 import os
+import secrets
+import string
+
+
+def _generate_pdf_lock_password(length: int = 16) -> str:
+    """
+    Generate a random password for locking PDFs.
+
+    Args:
+        length (int): Desired password length.
+
+    Returns:
+        str: Randomly generated password consisting of letters and digits.
+    """
+    if length < 8:
+        length = 8
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SignDocumentView(APIView):
@@ -365,15 +388,70 @@ class SignDocumentView(APIView):
         User = get_user_model()
         
         if remaining_pending == 0:
-            # All signers have signed - mark envelope as completed
-            envelope.status = "completed"
-            envelope.save()
+            # All signers have signed - mark envelope as completed and apply PDF locking.
+            generated_password = False
+            if not envelope.pdf_lock_password:
+                envelope.pdf_lock_password = _generate_pdf_lock_password()
+                generated_password = True
 
-            # Update the status of all documents in this envelope to 'completed'
-            for envelope_document in envelope.envelopedocument_set.all():
+            envelope.status = "completed"
+
+            envelope_update_fields = ["status", "updated_at"]
+            if generated_password:
+                envelope_update_fields.append("pdf_lock_password")
+            envelope.save(update_fields=envelope_update_fields)
+
+            # Update the status of all documents in this envelope to 'completed' and lock PDFs.
+            media_root = str(settings.MEDIA_ROOT)
+            for envelope_document in envelope.envelopedocument_set.select_related('document'):
                 document = envelope_document.document
                 document.status = "completed"
-                document.save()
+
+                locked_url = None
+                source_url = document.signed_file_url or document.file_url
+                if source_url and envelope.pdf_lock_password:
+                    source_path = None
+                    try:
+                        source_path = get_media_absolute_path_from_url(source_url)
+                    except ValueError:
+                        if os.path.isabs(source_url):
+                            source_path = source_url
+                    if source_path:
+                        locked_path = lock_pdf_with_password(
+                            pdf_path=source_path,
+                            password=envelope.pdf_lock_password,
+                        )
+                        if locked_path:
+                            try:
+                                relative_locked = os.path.relpath(locked_path, media_root)
+                                locked_url = f"{settings.MEDIA_URL}{relative_locked}"
+                            except ValueError:
+                                # If the locked file is not within MEDIA_ROOT, fall back to absolute path.
+                                locked_url = locked_path
+                        else:
+                            LOGGER.error(
+                                "Failed to lock PDF for document %s in envelope %s",
+                                document.id,
+                                envelope.id,
+                            )
+                    else:
+                        LOGGER.warning(
+                            "Unable to resolve path for document %s in envelope %s (url=%s)",
+                            document.id,
+                            envelope.id,
+                            source_url,
+                        )
+
+                document_update_fields = ["status", "updated_at"]
+                if locked_url:
+                    document.signed_file_url = locked_url
+                    document.file_url = locked_url
+                    document_update_fields.extend(["signed_file_url", "file_url"])
+                else:
+                    # Ensure we at least persist status changes.
+                    document.signed_file_url = document.signed_file_url or None
+
+                document.save(update_fields=document_update_fields)
             
             # Notify creator that envelope is completed
             message = create_envelope_completed_notification(envelope)

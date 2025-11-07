@@ -79,6 +79,13 @@ class Envelope(models.Model):
         help_text="Timestamp when the envelope was last updated."
     )
 
+    pdf_lock_password = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Password applied to lock signed PDFs once the envelope is completed."
+    )
+
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Envelope"

@@ -357,12 +357,14 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     fields = FieldSerializer(many=True, read_only=True)
     signatures = SignatureSerializer(many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
+    pdf_lock_password = serializers.CharField(read_only=True, allow_null=True)
     
     class Meta:
         model = Envelope
         fields = [
             'id', 'creator', 'creator_email', 'name', 'description', 'status', 
             'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
+            'pdf_lock_password',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -502,17 +504,18 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     signatures = SignatureSerializer(many=True, read_only=True)
     documents = EnvelopeDocumentSerializer(source='envelopedocument_set', many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
+    pdf_lock_password = serializers.CharField(read_only=True, allow_null=True)
     
     class Meta:
         model = Envelope
         fields = [
             'id', 'creator', 'name', 'description', 'status', 'signing_order', 
-            'signer_count', 'documents', 'signatures',
+            'signer_count', 'documents', 'signatures', 'pdf_lock_password',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'creator', 'name', 'description', 'status', 'signing_order', 
-            'signer_count', 'documents', 'signatures',
+            'signer_count', 'documents', 'signatures', 'pdf_lock_password',
             'created_at', 'updated_at'
         ]
     

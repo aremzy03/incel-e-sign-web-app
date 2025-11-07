@@ -14,6 +14,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **📋 Audit Logging**: Immutable audit trails for compliance and security
 - **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
 - **🧩 Form Fields**: Backend support for initials, date, text, and designation fields (assign to signers, prefill by sender, flattened into final PDF)
+- **🔒 Locked PDFs**: Completed envelopes automatically password-protect signed PDFs and surface the password to creators and recipients
 - **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
 - **⚡ Async Processing**: Background task processing with Celery and Redis
 
@@ -330,6 +331,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
     ],
     "signer_count": 2,
+    "pdf_lock_password": null,
     "documents": [
       {
         "id": "uuid-of-envelopedocument-1",
@@ -669,7 +671,7 @@ Envelope  to      Complete
 2. **Envelope Creation**: Create envelope with signing order
 3. **Envelope Sending**: Send to first signer in sequence
 4. **Sequential Signing**: Each signer signs in order
-5. **Completion**: All signers complete or any declines
+5. **Completion & PDF Locking**: When all signers finish, the system locks every signed PDF with a generated password (visible on the envelope detail view); any decline still halts the workflow
 
 ### Signing Order Logic
 - Signers must sign in the order specified in `signing_order`
@@ -1730,6 +1732,8 @@ curl -X GET http://localhost:8000/api/envelopes/ \
   ]
 }
 ```
+
+**Password Visibility:** When an envelope reaches `completed`, the `pdf_lock_password` field will contain the generated password required to open the locked PDFs. Creators and participants can retrieve it from the envelope detail endpoint.
 
 #### 5. Retrieve Envelope Details
 
