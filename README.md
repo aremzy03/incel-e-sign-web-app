@@ -15,6 +15,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
 - **🧩 Form Fields**: Backend support for initials, date, text, and designation fields (assign to signers, prefill by sender, flattened into final PDF)
 - **🔒 Locked PDFs**: Completed envelopes automatically password-protect signed PDFs and surface the password to creators and recipients
+- **📊 Metrics Dashboard**: Quick overview of your personal signing activity (documents signed, pending signatures, active envelopes, completion rate)
 - **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
 - **⚡ Async Processing**: Background task processing with Celery and Redis
 
@@ -1806,6 +1807,37 @@ curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665544
   }
 }
 ```
+
+#### 6. Envelope Metrics
+
+**Endpoint:** `GET /envelopes/metrics/`
+
+Retrieve a quick metrics overview for the authenticated user.
+
+**Request:**
+```bash
+curl -X GET http://localhost:8000/api/envelopes/metrics/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**Response (Success - 200):**
+```json
+{
+  "status": "success",
+  "message": "Metrics retrieved successfully",
+  "data": {
+    "documents_signed": 8,
+    "pending_signatures": 3,
+    "active_envelopes": 5,
+    "completion_rate": 57.14
+  }
+}
+```
+
+**Notes:**
+- `documents_signed` / `pending_signatures` reflect the user's signature records.
+- `active_envelopes` counts envelopes created by the user that are still draft or pending.
+- `completion_rate` is the percentage of the user's envelopes that have reached `completed`.
 
 #### 5a. Retrieve Envelope Documents
 

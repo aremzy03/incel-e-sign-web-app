@@ -22,6 +22,8 @@ import os
 import secrets
 import string
 
+SIGNATURE_X_OFFSET = 5.0
+
 
 def _generate_pdf_lock_password(length: int = 16) -> str:
     """
@@ -250,7 +252,7 @@ class SignDocumentView(APIView):
                                         output_path=current_output_path,
                                         signature_image=signature_image_data,
                                         page=position_data['page'],
-                                        x=position_data['x'],
+                                        x=float(position_data['x']) + SIGNATURE_X_OFFSET,
                                         y=position_data['y'],
                                         width=position_data['width'],
                                         height=position_data['height'],
@@ -318,7 +320,7 @@ class SignDocumentView(APIView):
                                     output_path=current_output_path,
                                     text=text_to_draw,
                                     page=f.page,
-                                    x=f.x,
+                                    x=float(f.x) + SIGNATURE_X_OFFSET,
                                     y=f.y,
                                     font_family=f.font_family or 'Helvetica',
                                     font_size=float(f.font_size or 12),
@@ -341,7 +343,7 @@ class SignDocumentView(APIView):
                             output_path=output_pdf_path,
                             signature_image=signature_image_data,
                             page=validated_data.get('page', 1),
-                            x=validated_data.get('x', 100),
+                            x=float(validated_data.get('x', 100)) + SIGNATURE_X_OFFSET,
                             y=validated_data.get('y', 100),
                             width=validated_data.get('width', 120),
                             height=validated_data.get('height', 40),

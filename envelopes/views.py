@@ -18,6 +18,7 @@ from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, Env
 from documents.serializers import DocumentSerializer
 from .serializers import EnvelopeDocumentSerializer
 from django.conf import settings # Import settings
+from signatures.models import Signature
 
 
 class EnvelopeCreateView(APIView):
@@ -620,3 +621,51 @@ class EnvelopeEditView(APIView):
             "message": "Validation failed",
             "data": serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EnvelopeMetricsView(APIView):
+    """
+    API view providing high-level metrics for the authenticated user.
+
+    Endpoint: GET /envelopes/metrics/
+    Requires authentication.
+    Returns counts for documents signed, pending signatures, active envelopes, and completion rate.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """
+        Return a metrics summary for the current user.
+        """
+        user = request.user
+
+        documents_signed = Signature.objects.filter(
+            signer=user,
+            status='signed'
+        ).count()
+
+        pending_signatures = Signature.objects.filter(
+            signer=user,
+            status='pending'
+        ).count()
+
+        user_envelopes = Envelope.objects.filter(creator=user)
+        active_envelopes = user_envelopes.filter(status__in=['draft', 'pending']).count()
+        completed_envelopes = user_envelopes.filter(status='completed').count()
+        total_envelopes = user_envelopes.count()
+
+        completion_rate = 0.0
+        if total_envelopes:
+            completion_rate = round((completed_envelopes / total_envelopes) * 100, 2)
+
+        return Response({
+            "status": "success",
+            "message": "Metrics retrieved successfully",
+            "data": {
+                "documents_signed": documents_signed,
+                "pending_signatures": pending_signatures,
+                "active_envelopes": active_envelopes,
+                "completion_rate": completion_rate,
+            }
+        }, status=status.HTTP_200_OK)

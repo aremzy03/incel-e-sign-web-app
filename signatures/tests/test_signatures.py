@@ -5,8 +5,12 @@ This module tests the signature signing and declining endpoints
 and their validation logic.
 """
 
-import uuid
 import base64
+import os
+import uuid
+from unittest.mock import patch
+
+from django.conf import settings
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -18,6 +22,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from signatures.models import Signature
 from envelopes.models import Envelope, EnvelopeDocument # Import EnvelopeDocument
 from documents.models import Document
+from fields.models import Field
 
 User = get_user_model()
 
@@ -125,6 +130,20 @@ class SignatureTestCase(APITestCase):
         other_refresh = RefreshToken.for_user(self.other_user)
         self.other_token = str(other_refresh.access_token)
     
+    def _prepare_local_document_pdf(self, document):
+        pdf_dir = os.path.join(str(settings.MEDIA_ROOT), 'tests')
+        os.makedirs(pdf_dir, exist_ok=True)
+        pdf_path = os.path.join(pdf_dir, f"{document.id}.pdf")
+        if not os.path.exists(pdf_path):
+            with open(pdf_path, 'wb') as pdf_file:
+                pdf_file.write(b'%PDF-1.4 test pdf content')
+
+        relative_path = os.path.relpath(pdf_path, str(settings.MEDIA_ROOT))
+        document.file_url = f"{settings.MEDIA_URL}{relative_path}"
+        document.signed_file_url = None
+        document.save(update_fields=['file_url', 'signed_file_url'])
+        return pdf_path
+
     def test_first_signer_can_sign_successfully(self):
         """Test that the first signer can sign successfully."""
         url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
@@ -236,6 +255,102 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data['data']['pdf_lock_password'], self.envelope.pdf_lock_password)
     
+    @patch('signatures.views.embed_signature')
+    def test_signature_x_offset_applied(self, mock_embed):
+        """Ensure signatures are offset along the X-axis when embedded."""
+        env_doc = self.envelope.envelopedocument_set.first()
+        env_doc.signer_document_positions = [
+            {
+                'signer_id': str(self.signer1.id),
+                'position': {
+                    'page': 1,
+                    'x': 150,
+                    'y': 100,
+                    'width': 120,
+                    'height': 40,
+                },
+            }
+        ]
+        env_doc.save()
+
+        document = env_doc.document
+        self._prepare_local_document_pdf(document)
+
+        url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        response = self.client.post(url, payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(mock_embed.called)
+        offset_x = mock_embed.call_args.kwargs['x']
+        self.assertEqual(offset_x, 155.0)
+
+    @patch('signatures.views.embed_text')
+    @patch('signatures.views.embed_signature')
+    def test_field_x_offset_applied(self, mock_embed_signature, mock_embed_text):
+        """Ensure non-signature fields are offset along the X-axis when flattened."""
+        env_doc = self.envelope.envelopedocument_set.first()
+        document = env_doc.document
+
+        env_doc.signer_document_positions = [
+            {
+                'signer_id': str(self.signer1.id),
+                'position': {
+                    'page': 1,
+                    'x': 150,
+                    'y': 100,
+                    'width': 120,
+                    'height': 40,
+                },
+            }
+        ]
+        env_doc.save()
+
+        self._prepare_local_document_pdf(document)
+
+        Field.objects.create(
+            envelope=self.envelope,
+            document=document,
+            page=1,
+            x=200,
+            y=150,
+            width=120,
+            height=30,
+            type=Field.FieldType.TEXT,
+            assigned_signer=self.signer1,
+            required=True,
+            prefill_value="Hello",
+            font_family="Helvetica",
+            font_size=12,
+        )
+
+        url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        response = self.client.post(url, payload, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(mock_embed_text.called)
+        offset_x = mock_embed_text.call_args.kwargs['x']
+        self.assertEqual(offset_x, 205.0)
+
     def test_signer_can_decline_marking_envelope_rejected(self):
         """Test that signer can decline, marking envelope as rejected."""
         url = reverse('signatures:decline_signature', kwargs={'envelope_id': self.envelope.id})
