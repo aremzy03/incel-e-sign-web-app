@@ -28,7 +28,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-placeholder-secret-ke
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', cast=bool, default=True)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default='127.0.0.1,localhost')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv())
 
 # Security settings validation (after DEBUG is defined)
 if DEBUG and SECRET_KEY == 'django-insecure-placeholder-secret-key':
