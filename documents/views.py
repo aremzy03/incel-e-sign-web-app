@@ -5,6 +5,7 @@ This module contains API views for document upload and management
 functionality in the e-signature workflow.
 """
 
+import logging
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.response import Response
@@ -24,6 +25,8 @@ from envelopes.models import EnvelopeDocument
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
 from pypdf import PdfReader, PdfWriter
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentUploadView(APIView):
@@ -47,18 +50,12 @@ class DocumentUploadView(APIView):
         Returns:
             Response: JSON response with document details or error
         """
-        # Debug: Log request data
-        print(f"DEBUG: Request method: {request.method}")
-        print(f"DEBUG: Request content type: {request.content_type}")
-        print(f"DEBUG: Request data keys: {list(request.data.keys()) if hasattr(request, 'data') else 'No data attr'}")
-        print(f"DEBUG: Request files keys: {list(request.FILES.keys()) if hasattr(request, 'FILES') else 'No FILES attr'}")
-        print(f"DEBUG: User: {request.user}")
-        
-        if 'file' in request.FILES:
-            file = request.FILES['file']
-            print(f"DEBUG: File details - Name: {file.name}, Size: {file.size}, Type: {file.content_type}")
-        else:
-            print("DEBUG: No 'file' key in request.FILES")
+        # Log request data for debugging (only in DEBUG mode)
+        if settings.DEBUG:
+            logger.debug(f"Document upload request - Method: {request.method}, User: {request.user.id}")
+            if 'file' in request.FILES:
+                file = request.FILES['file']
+                logger.debug(f"File details - Name: {file.name}, Size: {file.size}, Type: {file.content_type}")
         
         # Create serializer with request data (includes files when multipart/form-data)
         serializer = DocumentUploadSerializer(data=request.data)
@@ -67,6 +64,8 @@ class DocumentUploadView(APIView):
             try:
                 # Save the document
                 document = serializer.save(owner=request.user)
+                
+                logger.info(f"Document uploaded successfully - ID: {document.id}, User: {request.user.id}, File: {document.file_name}")
                 
                 # Log the document upload action
                 from audit.utils import log_action
@@ -90,31 +89,38 @@ class DocumentUploadView(APIView):
                 )
                 
             except Exception as e:
+                logger.error(f"Error uploading document - User: {request.user.id}, Error: {str(e)}", exc_info=True)
+                error_message = 'Error uploading document'
+                if settings.DEBUG:
+                    error_message = f'Error uploading document: {str(e)}'
                 return Response(
                     {
                         'status': 'error',
-                        'message': f'Error uploading document: {str(e)}'
+                        'message': error_message
                     },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
         
-        # Log serializer errors for debugging
-        print(f"DEBUG: Serializer validation failed")
-        print(f"DEBUG: Serializer errors: {serializer.errors}")
-        print(f"DEBUG: Request data: {request.data}")
+        # Log serializer errors
+        logger.warning(f"Document upload validation failed - User: {request.user.id}, Errors: {serializer.errors}")
+        
+        response_data = {
+            'status': 'error',
+            'message': 'Invalid file data',
+            'errors': serializer.errors,
+        }
+        
+        # Only include debug info in development
+        if settings.DEBUG:
+            response_data['debug_info'] = {
+                'content_type': request.content_type,
+                'has_files': bool(request.FILES),
+                'files_keys': list(request.FILES.keys()) if request.FILES else [],
+                'data_keys': list(request.data.keys()) if hasattr(request, 'data') else []
+            }
         
         return Response(
-            {
-                'status': 'error',
-                'message': 'Invalid file data',
-                'errors': serializer.errors,
-                'debug_info': {
-                    'content_type': request.content_type,
-                    'has_files': bool(request.FILES),
-                    'files_keys': list(request.FILES.keys()) if request.FILES else [],
-                    'data_keys': list(request.data.keys()) if hasattr(request, 'data') else []
-                }
-            },
+            response_data,
             status=status.HTTP_400_BAD_REQUEST
         )
 
@@ -137,7 +143,7 @@ class DocumentListView(ListAPIView):
         Returns:
             QuerySet: Documents owned by the current user
         """
-        return Document.objects.filter(owner=self.request.user).order_by('-created_at')
+        return Document.objects.filter(owner=self.request.user).select_related('owner').order_by('-created_at')
 
 
 class DocumentDetailView(RetrieveAPIView):
@@ -162,20 +168,38 @@ class DocumentDetailView(RetrieveAPIView):
         - The user is listed as a signer in an envelope that contains the document.
         """
         user = self.request.user
+        user_id_str = str(user.id)
+        
         # Collect documents owned by the user
         owned_documents = Document.objects.filter(owner=user)
 
-        # Collect document IDs from envelopes where user is creator or signer
-        # Filter envelopes where user is creator
-        creator_envelopes_docs_pks = set(EnvelopeDocument.objects.filter(envelope__creator=user).values_list('document__id', flat=True))
+        # Collect document IDs from envelopes where user is creator
+        creator_envelopes_docs_pks = set(
+            EnvelopeDocument.objects
+            .filter(envelope__creator=user)
+            .select_related('document', 'envelope')
+            .values_list('document__id', flat=True)
+        )
 
-        # Filter envelopes where user is a signer (Python-based for SQLite compatibility)
+        # Optimize signer check: Use prefetch to avoid N+1 queries
+        # For PostgreSQL, we could use JSON queries, but for compatibility with SQLite tests,
+        # we'll fetch envelopes with prefetch and check signing_order in Python
+        # This is still much better than fetching ALL EnvelopeDocuments
+        from envelopes.models import Envelope
         signer_envelopes_docs_pks = set()
-        # Get all EnvelopeDocuments that link to an envelope the user is a signer in
-        for env_doc in EnvelopeDocument.objects.all(): # Fetch all EnvelopeDocument for iteration
-            for signer_entry in env_doc.envelope.signing_order:
-                if str(signer_entry.get('signer_id')) == str(user.id):
-                    signer_envelopes_docs_pks.add(env_doc.document.id) # Use env_doc.document.id
+        
+        # Fetch only envelopes (not all EnvelopeDocuments)
+        # Then check their signing_order and fetch related documents
+        envelopes_as_signer = Envelope.objects.prefetch_related('envelopedocument_set__document').all()
+        
+        for envelope in envelopes_as_signer:
+            # Check if user is in signing_order
+            for signer_entry in envelope.signing_order:
+                if str(signer_entry.get('signer_id')) == user_id_str:
+                    # User is a signer, add all documents from this envelope
+                    signer_envelopes_docs_pks.update(
+                        env_doc.document.id for env_doc in envelope.envelopedocument_set.all()
+                    )
                     break
 
         accessible_ids = creator_envelopes_docs_pks.union(signer_envelopes_docs_pks)
@@ -183,7 +207,7 @@ class DocumentDetailView(RetrieveAPIView):
         # Combine owned documents and documents from accessible envelopes
         accessible_documents = owned_documents | Document.objects.filter(id__in=list(accessible_ids))
         
-        return accessible_documents.distinct().order_by('-created_at')
+        return accessible_documents.select_related('owner').distinct().order_by('-created_at')
     
     def get_object(self):
         """

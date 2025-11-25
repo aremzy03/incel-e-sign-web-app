@@ -313,13 +313,12 @@ class EnvelopeListView(ListAPIView):
         Return envelopes where the user is either the creator or a signer.
         """
         user = self.request.user
-        print(f"DEBUG: Filtering queryset for user: {user.id}") # Debug print
         
         # Fetch all envelopes and filter in Python due to SQLite's
         # limited JSONField __contains lookup support in testing.
         # In production with PostgreSQL, Q(signing_order__contains=...) would be preferred.
         # Filter first, then order and prefetch
-        all_envelopes = Envelope.objects.all()
+        all_envelopes = Envelope.objects.select_related('creator').all()
         
         filtered_envelopes_pks = set()
         for envelope in all_envelopes:
@@ -335,7 +334,6 @@ class EnvelopeListView(ListAPIView):
         queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks)).order_by('-created_at')
         queryset = queryset.select_related('creator').prefetch_related('signatures', 'envelopedocument_set__document')
         
-        print(f"DEBUG (List View - filtered): Queryset count: {queryset.count()}") # Debug print
         return queryset
     
     def list(self, request, *args, **kwargs):
@@ -343,7 +341,6 @@ class EnvelopeListView(ListAPIView):
         Override list to return custom response format.
         """
         queryset = self.get_queryset()
-        print(f"DEBUG: EnvelopeListView queryset count: {queryset.count()}") # Debug print
         serializer = self.get_serializer(queryset, many=True)
         
         return Response({

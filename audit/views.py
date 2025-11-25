@@ -19,7 +19,7 @@ class AuditLogListView(generics.ListAPIView):
     
     Provides paginated list of all audit log entries with search and filtering.
     """
-    queryset = AuditLog.objects.all().order_by("-created_at")
+    queryset = AuditLog.objects.select_related('actor', 'target_content_type').all().order_by("-created_at")
     serializer_class = AuditLogSerializer
     permission_classes = [IsAdmin]
     filter_backends = [filters.OrderingFilter, filters.SearchFilter]
@@ -50,6 +50,6 @@ class AuditLogDetailView(generics.RetrieveAPIView):
     
     Provides detailed view of a specific audit log entry.
     """
-    queryset = AuditLog.objects.all()
+    queryset = AuditLog.objects.select_related('actor', 'target_content_type').all()
     serializer_class = AuditLogSerializer
     permission_classes = [IsAdmin]

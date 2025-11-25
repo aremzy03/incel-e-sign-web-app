@@ -4,7 +4,9 @@ djangorestframework-simplejwt
 django-allauth
 django-rest-auth
 python-decouple
+django-ratelimit
 psycopg2-binary
+dj-database-url
 pytest
 pytest-django
 pytest-cov
@@ -15,9 +17,12 @@ pypdf
 celery
 requests
 redis
+django-redis
 reportlab
 pillow
 django-celery-results
+sentry-sdk
+gunicorn
 #
 # System dependency required for Word → PDF conversion used in documents upload:
 # Install LibreOffice on the host and ensure `soffice` is on PATH.

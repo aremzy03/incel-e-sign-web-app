@@ -18,9 +18,12 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from . import health
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('health/', health.health_check, name='health'),
+    path('health/detailed/', health.health_detailed, name='health-detailed'),
     path('api/auth/', include('users.urls')),
     path('api/documents/', include('documents.urls')),
     path('api/envelopes/', include('envelopes.urls')),
@@ -31,6 +34,8 @@ urlpatterns = [
     path('api/contacts/', include('contacts.urls')),
 ]
 
-# Serve media files during development
+# Serve media files during development only
+# In production, use a web server or S3 for serving media files
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

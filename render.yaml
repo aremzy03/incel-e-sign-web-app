@@ -1,0 +1,89 @@
+services:
+  # Django Web Service
+  - type: web
+    name: esign-web-app
+    runtime: python
+    plan: starter
+    buildCommand: ./build.sh
+    startCommand: gunicorn esign.wsgi:application --bind 0.0.0.0:$PORT
+    healthCheckPath: /health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: esign-database
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: False
+      - key: ALLOWED_HOSTS
+        value: your-app-name.onrender.com  # Update with your actual Render domain
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false  # Set your frontend URL(s) in Render dashboard
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: esign-redis
+          property: connectionString
+      - key: CACHE_LOCATION
+        fromService:
+          type: redis
+          name: esign-redis
+          property: connectionString
+      - key: SENTRY_DSN
+        sync: false  # Optional: Set if using Sentry
+
+  # PostgreSQL Database
+  - type: pg
+    name: esign-database
+    plan: starter
+    databaseName: esign_db
+    user: esign_user
+
+  # Redis Instance (for Celery and Caching)
+  - type: redis
+    name: esign-redis
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+
+  # Celery Worker (Recommended for background tasks)
+  - type: worker
+    name: esign-celery-worker
+    runtime: python
+    plan: starter
+    buildCommand: ./build.sh
+    startCommand: celery -A esign worker -l info
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: esign-database
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: esign-redis
+          property: connectionString
+      - key: CACHE_LOCATION
+        fromService:
+          type: redis
+          name: esign-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        value: django-db
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: esign-web-app
+          property: SECRET_KEY
+      - key: DEBUG
+        value: False
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: esign-web-app
+          property: ALLOWED_HOSTS
+

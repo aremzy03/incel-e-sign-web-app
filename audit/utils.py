@@ -27,7 +27,16 @@ def log_action(actor, action, target, message, request=None):
         
         if request is not None:
             # Extract IP address from request
-            ip = request.META.get("REMOTE_ADDR") or request.META.get("HTTP_X_FORWARDED_FOR")
+            # Handle proxies: X-Forwarded-For can contain multiple IPs separated by commas
+            # Format: "client_ip, proxy1_ip, proxy2_ip"
+            # We want the first (original client) IP
+            x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+            if x_forwarded_for:
+                # Get the first IP from the comma-separated list
+                ip = x_forwarded_for.split(",")[0].strip()
+            else:
+                ip = request.META.get("REMOTE_ADDR")
+            
             # Extract user agent
             ua = request.META.get("HTTP_USER_AGENT")
         

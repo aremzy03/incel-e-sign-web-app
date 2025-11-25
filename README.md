@@ -51,6 +51,38 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **Django Allauth**: Authentication utilities
 - **ReportLab**: PDF canvas generation for overlays
 - **Pillow**: Image handling for signature processing
+- **dj-database-url**: Database URL configuration
+- **django-redis**: Redis caching backend
+- **sentry-sdk**: Error tracking and monitoring
+
+## 🔒 Security & Production Features
+
+### Security Enhancements
+
+- **Security Headers**: Comprehensive HTTP security headers including HSTS, XSS protection, content type sniffing protection
+- **HTTPS Enforcement**: Automatic SSL redirect and secure cookie settings in production
+- **Rate Limiting**: Built-in throttling for API endpoints to prevent abuse
+- **Input Validation**: Comprehensive input sanitization and validation
+- **Secure Secret Management**: Environment-based configuration with validation warnings
+- **IP Address Extraction**: Proper proxy header handling for accurate audit logging
+- **CORS Configuration**: Environment-based CORS settings with strict production defaults
+
+### Production Readiness
+
+- **Comprehensive Logging**: Structured logging with file rotation, error tracking, and JSON formatting
+- **Health Check Endpoints**: `/health/` and `/health/detailed/` for monitoring system status
+- **Database Connection Pooling**: Optimized PostgreSQL connection management
+- **Error Monitoring**: Sentry SDK integration for production error tracking
+- **Environment-Based Configuration**: All sensitive settings configurable via environment variables
+- **Static & Media Files**: Production-ready S3 storage support with local fallback
+
+### Performance Optimizations
+
+- **Query Optimization**: select_related and prefetch_related across all views to prevent N+1 queries
+- **Database Indexing**: Optimized indexes on frequently queried fields
+- **Redis Caching**: Configurable Redis caching backend with fallback support
+- **Pagination**: Default pagination for all list views with configurable page sizes
+- **Connection Pooling**: Persistent database connections for improved performance
 
 ## 🚀 Setup Instructions
 
@@ -99,41 +131,87 @@ cp .env.example .env  # If example exists, or create manually
 Required environment variables:
 ```env
 # Database Configuration
+DATABASE_URL=postgresql://user:password@host:port/dbname
+# OR use individual components:
 DB_NAME=esign_db
 DB_USER=esign_user
 DB_PASSWORD=esign_pass
 DB_HOST=localhost
 DB_PORT=5432
+DB_CONN_MAX_AGE=600  # Connection pool timeout (seconds)
 
 # Django Configuration
-SECRET_KEY=your-secret-key-here
-DEBUG=True
-ALLOWED_HOSTS=127.0.0.1,localhost
+SECRET_KEY=your-secret-key-here  # MUST be set in production
+DEBUG=False  # MUST be False in production
+ALLOWED_HOSTS=yourdomain.com,www.yourdomain.com  # Comma-separated list
 
-# Redis Configuration (for Celery)
-REDIS_URL=redis://localhost:6379/0
+# Security Headers (Production)
+SECURE_SSL_REDIRECT=True  # Redirect HTTP to HTTPS
+SECURE_HSTS_SECONDS=31536000  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS=True
+SECURE_HSTS_PRELOAD=True
+SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO, https  # If behind reverse proxy
 
-# Email Configuration (optional)
+# CORS Configuration
+CORS_ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com  # Comma-separated
+
+# Redis Configuration (for Celery and Caching)
+CELERY_BROKER_URL=redis://localhost:6379/0
+CELERY_RESULT_BACKEND=django-db  # or redis://localhost:6379/1
+CACHE_LOCATION=redis://127.0.0.1:6379/1
+CACHE_TIMEOUT=300  # Cache timeout in seconds (default: 5 minutes)
+
+# Static & Media Files
+STATIC_URL=/static/
+STATIC_ROOT=/path/to/staticfiles
+MEDIA_URL=/media/
+MEDIA_ROOT=/path/to/media
+
+# AWS S3 Configuration (optional, for production)
+USE_S3=True  # Set to True to enable S3 storage
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_STORAGE_BUCKET_NAME=your-bucket-name
+AWS_S3_REGION_NAME=us-east-1
+AWS_S3_CUSTOM_DOMAIN=your-cdn-domain.com  # Optional CDN domain
+
+# Email Configuration
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USE_TLS=True
 EMAIL_HOST_USER=your-email@gmail.com
 EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=no-reply@yourdomain.com
+FRONTEND_BASE_URL=https://yourdomain.com
 
-# AWS S3 Configuration (optional, for production)
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
-AWS_STORAGE_BUCKET_NAME=your-bucket-name
-AWS_S3_REGION_NAME=us-east-1
+# Rate Limiting (API Throttling)
+THROTTLE_RATE_ANON=100/hour  # Anonymous users
+THROTTLE_RATE_USER=1000/hour  # Authenticated users
+THROTTLE_RATE_AUTH=10/minute  # Login/register endpoints
+THROTTLE_RATE_UPLOAD=20/hour  # File upload endpoints
+
+# Pagination
+PAGE_SIZE=20  # Default items per page
+MAX_PAGE_SIZE=100  # Maximum items per page
+
+# Error Monitoring (Sentry)
+SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id  # Optional
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0.1  # 10% of transactions
+SENTRY_RELEASE=1.0.0  # Optional version tag
 ```
 
 ### 5. Database Setup
 ```bash
-# Create PostgreSQL database
+# Create PostgreSQL database (if using individual DB settings)
 createdb esign_db
 
-# Run migrations
+# Run migrations (includes new performance indexes for notifications and audit logs)
 python manage.py migrate
+
+# Verify migrations were applied
+python manage.py showmigrations
 ```
 
 ### 6. Start Services
@@ -154,6 +232,124 @@ python manage.py runserver
 ```
 
 The application will be available at `http://localhost:8000`
+
+## 🚀 Production Deployment
+
+### Pre-Deployment Checklist
+
+1. **Environment Variables**
+   - Set `DEBUG=False` in production
+   - Set a strong, unique `SECRET_KEY`
+   - Configure `ALLOWED_HOSTS` with your domain(s)
+   - Set `DATABASE_URL` or individual DB settings for production database
+   - Configure CORS origins appropriately
+   - Set up email configuration
+   - Configure Redis/Celery URLs
+
+2. **Security Settings**
+   - All security headers are automatically enabled when `DEBUG=False`
+   - Ensure HTTPS is configured (SECURE_SSL_REDIRECT will enforce it)
+   - Set up reverse proxy headers if behind load balancer
+   - Configure rate limiting thresholds as needed
+
+3. **Static & Media Files**
+   - Run `python manage.py collectstatic` to collect static files
+   - Configure web server (Nginx/Apache) or CDN for static files
+   - Set up S3 or other cloud storage for media files in production
+
+4. **Database**
+   - Run all migrations: `python manage.py migrate`
+   - Set up database backups
+   - Configure connection pooling settings
+
+5. **Monitoring**
+   - Set up Sentry DSN for error tracking
+   - Configure logging to appropriate handlers
+   - Set up health check monitoring (use `/health/detailed/` endpoint)
+
+6. **Performance**
+   - Configure Redis for caching (recommended)
+   - Set up Celery workers for background tasks
+   - Review and adjust pagination settings
+   - Monitor database query performance
+
+### Production Server Setup
+
+**Using Gunicorn:**
+```bash
+pip install gunicorn
+gunicorn esign.wsgi:application --bind 0.0.0.0:8000 --workers 4
+```
+
+**Using Docker (Example):**
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+RUN python manage.py collectstatic --noinput
+CMD ["gunicorn", "esign.wsgi:application", "--bind", "0.0.0.0:8000"]
+```
+
+### Collect Static Files
+```bash
+python manage.py collectstatic --noinput
+```
+
+### Deploying to Render
+
+The application includes configuration files for easy deployment to Render:
+
+1. **render.yaml**: Blueprint configuration for all services (web, database, Redis, Celery)
+2. **build.sh**: Build script that runs during deployment
+3. **gunicorn_config.py**: Production Gunicorn configuration
+4. **Procfile**: Alternative service definition
+
+#### Quick Deploy Steps:
+
+1. Push your code to GitHub/GitLab
+2. In Render Dashboard:
+   - Click "New +" → "Blueprint"
+   - Connect your repository
+   - Render will detect `render.yaml` automatically
+3. Configure environment variables in Render dashboard:
+   - `ALLOWED_HOSTS`: Your Render app domain (e.g., `your-app.onrender.com`)
+   - `CORS_ALLOWED_ORIGINS`: Your frontend URL(s)
+   - `DATABASE_URL`: Auto-linked if using Render PostgreSQL
+   - `CELERY_BROKER_URL`: Auto-linked if using Render Redis
+   - `CACHE_LOCATION`: Auto-linked if using Render Redis
+   - Email and other optional settings
+4. Deploy: Render will automatically build and deploy
+
+**Note**: Update `ALLOWED_HOSTS` in `render.yaml` with your actual Render domain before deploying.
+
+#### Manual Service Setup (Alternative):
+
+If not using Blueprint, create services manually:
+- **PostgreSQL**: New → PostgreSQL
+- **Redis**: New → Redis  
+- **Web Service**: New → Web Service (use `build.sh` and gunicorn start command)
+- **Background Worker**: New → Background Worker (for Celery)
+
+### Logging
+
+Logs are automatically configured and written to:
+- `logs/django.log` - General application logs
+- `logs/django_errors.log` - Error-level logs
+- Console output for development
+
+Log levels are automatically adjusted based on `DEBUG` setting.
+
+### Rate Limiting
+
+API endpoints are automatically rate-limited:
+- **Anonymous users**: 100 requests/hour
+- **Authenticated users**: 1000 requests/hour  
+- **Auth endpoints** (login/register): 10 requests/minute
+- **Upload endpoints**: 20 requests/hour
+
+Adjust limits via environment variables if needed.
 
 ## 🧪 Running Tests
 
@@ -645,6 +841,65 @@ Flattening behavior
 | `POST` | `/api/contacts/search/` | Search by email; invite if not found | ✅ |
 | `POST` | `/api/contacts/add/` | Add contact by email/name (links if user exists) | ✅ |
 | `POST` | `/api/contacts/invite/` | Send invite email and store as invited | ✅ |
+
+### Health Check & Monitoring
+
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| `GET` | `/health/` | Basic health check | ❌ |
+| `GET` | `/health/detailed/` | Detailed health check (database, cache, Celery) | ❌ |
+
+**Health Check Endpoints:**
+
+The application provides two health check endpoints for monitoring:
+
+**Basic Health Check (`GET /health/`):**
+```bash
+curl http://localhost:8000/health/
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "e-sign-api"
+}
+```
+
+**Detailed Health Check (`GET /health/detailed/`):**
+```bash
+curl http://localhost:8000/health/detailed/
+```
+
+**Response (200 - All healthy):**
+```json
+{
+  "status": "healthy",
+  "service": "e-sign-api",
+  "checks": {
+    "database": {
+      "status": "healthy",
+      "engine": "django.db.backends.postgresql"
+    },
+    "cache": {
+      "status": "healthy",
+      "backend": "django_redis.cache.RedisCache"
+    },
+    "celery": {
+      "status": "healthy",
+      "workers": 2
+    }
+  }
+}
+```
+
+**Response (503 - Degraded):**
+Returns status code 503 if any critical service (database) is unhealthy.
+
+Use these endpoints for:
+- Load balancer health checks
+- Monitoring systems (Prometheus, Datadog, etc.)
+- Kubernetes liveness/readiness probes
 
 ### Audit Logs (Admin Only)
 
@@ -2595,3 +2850,30 @@ curl -X GET http://localhost:8000/notifications/ \
 curl -X PATCH http://localhost:8000/notifications/550e8400-e29b-41d4-a716-446655440000/read/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
+
+## 🔒 Security Features
+
+### Security Headers
+- **HSTS**: HTTP Strict Transport Security enabled in production
+- **XSS Protection**: Browser XSS filter enabled
+- **Content Type Protection**: Prevents MIME type sniffing
+- **Frame Options**: X-Frame-Options set to DENY
+- **Secure Cookies**: All cookies marked secure in production
+
+### Authentication & Authorization
+- **JWT Authentication**: Stateless token-based authentication
+- **Token Blacklisting**: Secure token revocation support
+- **Permission Classes**: All endpoints require authentication by default
+- **Rate Limiting**: Prevents brute force and API abuse
+
+### Data Protection
+- **Input Validation**: All user inputs validated and sanitized
+- **SQL Injection Protection**: Django ORM provides built-in protection
+- **Audit Logging**: Comprehensive audit trails for compliance
+- **IP Address Tracking**: Proper proxy header handling for accurate logging
+
+### Environment Security
+- **Secret Management**: All secrets via environment variables
+- **DEBUG Mode**: Automatically disabled security features in production
+- **CORS Configuration**: Strict origin checking in production
+- **HTTPS Enforcement**: Automatic redirect from HTTP to HTTPS

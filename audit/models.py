@@ -37,6 +37,11 @@ class AuditLog(models.Model):
         ordering = ["-created_at"]
         verbose_name = "Audit Log"
         verbose_name_plural = "Audit Logs"
+        indexes = [
+            models.Index(fields=['actor', 'created_at']),
+            models.Index(fields=['action', 'created_at']),
+            models.Index(fields=['created_at']),
+        ]
 
     def __str__(self):
         actor = self.actor.get_full_name() if self.actor else "System"
