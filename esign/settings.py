@@ -23,20 +23,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-placeholder-secret-key')
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', cast=bool, default=True)
-
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default='127.0.0.1,localhost,incel-e-sign-web-app.onrender.com')
-
-# Security settings validation (after DEBUG is defined)
-if DEBUG and SECRET_KEY == 'django-insecure-placeholder-secret-key':
+SECRET_KEY = config('SECRET_KEY', default=None)
+if SECRET_KEY is None:
+    # Allow missing SECRET_KEY in local/dev, but warn loudly
     import warnings
     warnings.warn(
-        "SECRET_KEY is set to placeholder value. Set a secure SECRET_KEY in production!",
+        "SECRET_KEY is not set in environment. Using insecure default key for development only!",
         UserWarning
     )
+    SECRET_KEY = 'django-insecure-placeholder-secret-key'
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = config('DEBUG', cast=bool, default=None)
+if DEBUG is None:
+    DEBUG = True
+
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default=None)
+if ALLOWED_HOSTS is None:
+    # Sensible default for local development
+    ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
 # Sentry SDK for error tracking (only in production)
 SENTRY_DSN = config('SENTRY_DSN', default=None)
@@ -46,6 +51,13 @@ if SENTRY_DSN and not DEBUG:
     from sentry_sdk.integrations.celery import CeleryIntegration
     from sentry_sdk.integrations.redis import RedisIntegration
     
+    sentry_traces_sample_rate = config('SENTRY_TRACES_SAMPLE_RATE', cast=float, default=None)
+    if sentry_traces_sample_rate is None:
+        sentry_traces_sample_rate = 0.1
+
+    sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or 'production'
+    sentry_release = config('SENTRY_RELEASE', default=None)
+
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         integrations=[
@@ -53,19 +65,31 @@ if SENTRY_DSN and not DEBUG:
             CeleryIntegration(),
             RedisIntegration(),
         ],
-        traces_sample_rate=config('SENTRY_TRACES_SAMPLE_RATE', cast=float, default=0.1),
+        traces_sample_rate=sentry_traces_sample_rate,
         send_default_pii=False,  # Don't send personally identifiable information
-        environment=config('SENTRY_ENVIRONMENT', default='production'),
-        release=config('SENTRY_RELEASE', default=None),
+        environment=sentry_environment,
+        release=sentry_release,
     )
 
 # Security Headers & HTTPS Configuration
 # Only enforce HTTPS in production (when DEBUG=False)
 if not DEBUG:
-    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=True)
-    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', cast=int, default=31536000)  # 1 year
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=True)
-    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=True)
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=None)
+    if SECURE_SSL_REDIRECT is None:
+        SECURE_SSL_REDIRECT = True
+
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', cast=int, default=None)
+    if SECURE_HSTS_SECONDS is None:
+        SECURE_HSTS_SECONDS = 31536000  # 1 year
+
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=None)
+    if SECURE_HSTS_INCLUDE_SUBDOMAINS is None:
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+
+    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=None)
+    if SECURE_HSTS_PRELOAD is None:
+        SECURE_HSTS_PRELOAD = True
+
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 else:
@@ -84,7 +108,7 @@ X_FRAME_OPTIONS = 'DENY'
 # Proxy SSL header configuration (if behind reverse proxy)
 SECURE_PROXY_SSL_HEADER = config(
     'SECURE_PROXY_SSL_HEADER',
-    default='HTTP_X_FORWARDED_PROTO, https'
+    default=None
 )
 if SECURE_PROXY_SSL_HEADER:
     try:
@@ -151,10 +175,18 @@ WSGI_APPLICATION = 'esign.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+DATABASE_URL = config('DATABASE_URL', default=None)
+if DATABASE_URL:
+    default_db = dj_database_url.config(default=DATABASE_URL)
+else:
+    # Fallback to local SQLite when DATABASE_URL is not provided
+    default_db = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
+
 DATABASES = {
-    'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='sqlite:///db.sqlite3')
-    )
+    'default': default_db
 }
 
 # Database connection pooling configuration
@@ -162,7 +194,11 @@ DATABASES = {
 # 0 = disable persistent connections (SQLite default)
 # None = unlimited persistent connections (recommended for PostgreSQL)
 if 'postgresql' in DATABASES['default'].get('ENGINE', ''):
-    DATABASES['default']['CONN_MAX_AGE'] = config('DB_CONN_MAX_AGE', cast=int, default=600)  # 10 minutes
+    DB_CONN_MAX_AGE = config('DB_CONN_MAX_AGE', cast=int, default=None)
+    if DB_CONN_MAX_AGE is None:
+        DB_CONN_MAX_AGE = 600  # 10 minutes
+
+    DATABASES['default']['CONN_MAX_AGE'] = DB_CONN_MAX_AGE
     # Connection pool settings
     DATABASES['default']['OPTIONS'] = {
         'connect_timeout': 10,
@@ -171,24 +207,36 @@ if 'postgresql' in DATABASES['default'].get('ENGINE', ''):
 # Cache configuration
 try:
     import django_redis
-    CACHE_BACKEND = config('CACHE_BACKEND', default='django_redis.cache.RedisCache')
-    CACHE_LOCATION = config('CACHE_LOCATION', default='redis://127.0.0.1:6379/1')
-    
-    CACHES = {
-        'default': {
-            'BACKEND': CACHE_BACKEND,
-            'LOCATION': CACHE_LOCATION,
-            'OPTIONS': {
-                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-                'SOCKET_CONNECT_TIMEOUT': 5,
-                'SOCKET_TIMEOUT': 5,
-                'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
-                'IGNORE_EXCEPTIONS': True,  # Don't fail on cache errors
-            },
-            'KEY_PREFIX': 'esign',
-            'TIMEOUT': config('CACHE_TIMEOUT', cast=int, default=300),  # 5 minutes default
+    CACHE_BACKEND = config('CACHE_BACKEND', default=None)
+    CACHE_LOCATION = config('CACHE_LOCATION', default=None)
+    CACHE_TIMEOUT = config('CACHE_TIMEOUT', cast=int, default=None)
+
+    if CACHE_BACKEND and CACHE_LOCATION:
+        if CACHE_TIMEOUT is None:
+            CACHE_TIMEOUT = 300  # 5 minutes default
+
+        CACHES = {
+            'default': {
+                'BACKEND': CACHE_BACKEND,
+                'LOCATION': CACHE_LOCATION,
+                'OPTIONS': {
+                    'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                    'SOCKET_CONNECT_TIMEOUT': 5,
+                    'SOCKET_TIMEOUT': 5,
+                    'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+                    'IGNORE_EXCEPTIONS': True,  # Don't fail on cache errors
+                },
+                'KEY_PREFIX': 'esign',
+                'TIMEOUT': CACHE_TIMEOUT,
+            }
         }
-    }
+    else:
+        # If cache env vars are not provided, fall back to dummy cache
+        CACHES = {
+            'default': {
+                'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+            }
+        }
 except ImportError:
     # Fallback to dummy cache if django-redis is not installed
     CACHES = {
@@ -208,6 +256,15 @@ if 'pytest' in sys.modules:
 
 
 # Django REST Framework
+PAGE_SIZE = config('PAGE_SIZE', cast=int, default=None)
+if PAGE_SIZE is None:
+    PAGE_SIZE = 20
+
+THROTTLE_RATE_ANON = config('THROTTLE_RATE_ANON', default=None) or '100/hour'
+THROTTLE_RATE_USER = config('THROTTLE_RATE_USER', default=None) or '1000/hour'
+THROTTLE_RATE_AUTH = config('THROTTLE_RATE_AUTH', default=None) or '10/minute'
+THROTTLE_RATE_UPLOAD = config('THROTTLE_RATE_UPLOAD', default=None) or '20/hour'
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -219,7 +276,7 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': config('PAGE_SIZE', cast=int, default=20),
+    'PAGE_SIZE': PAGE_SIZE,
     'PAGE_SIZE_QUERY_PARAM': 'page_size',
     'MAX_PAGE_SIZE': 100,
     # Rate limiting/throttling
@@ -228,10 +285,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': config('THROTTLE_RATE_ANON', default='100/hour'),
-        'user': config('THROTTLE_RATE_USER', default='1000/hour'),
-        'auth': config('THROTTLE_RATE_AUTH', default='10/minute'),  # For login/register
-        'upload': config('THROTTLE_RATE_UPLOAD', default='20/hour'),  # For file uploads
+        'anon': THROTTLE_RATE_ANON,
+        'user': THROTTLE_RATE_USER,
+        'auth': THROTTLE_RATE_AUTH,    # For login/register
+        'upload': THROTTLE_RATE_UPLOAD,  # For file uploads
     },
 }
 
@@ -239,7 +296,7 @@ REST_FRAMEWORK = {
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
     cast=Csv(),
-    default='http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001'
+    default=None
 )
 
 # Additional CORS settings for file uploads
@@ -258,9 +315,17 @@ CORS_ALLOWED_HEADERS = [
 ]
 
 # File upload settings
-FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
-DATA_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+FILE_UPLOAD_MAX_MEMORY_SIZE = config('FILE_UPLOAD_MAX_MEMORY_SIZE', cast=int, default=None)
+if FILE_UPLOAD_MAX_MEMORY_SIZE is None:
+    FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', cast=int, default=None)
+if DATA_UPLOAD_MAX_MEMORY_SIZE is None:
+    DATA_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+
+DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', cast=int, default=None)
+if DATA_UPLOAD_MAX_NUMBER_FIELDS is None:
+    DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 
 
 # Password validation
@@ -297,14 +362,14 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = config('STATIC_URL', default='/static/')
-STATIC_ROOT = config('STATIC_ROOT', default=BASE_DIR / 'staticfiles')
+STATIC_URL = config('STATIC_URL', default=None) or '/static/'
+STATIC_ROOT = config('STATIC_ROOT', default=None) or (BASE_DIR / 'staticfiles')
 STATICFILES_DIRS = []
 
 # Media files (User uploads)
 # https://docs.djangoproject.com/en/5.2/topics/files/
-MEDIA_URL = config('MEDIA_URL', default='/media/')
-MEDIA_ROOT = config('MEDIA_ROOT', default=BASE_DIR / 'media')
+MEDIA_URL = config('MEDIA_URL', default=None) or '/media/'
+MEDIA_ROOT = config('MEDIA_ROOT', default=None) or (BASE_DIR / 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -313,7 +378,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # File storage
 # Use S3 in production if configured, otherwise use local storage
-USE_S3 = config('USE_S3', cast=bool, default=False)
+USE_S3 = config('USE_S3', cast=bool, default=None)
+if USE_S3 is None:
+    USE_S3 = False
 
 if USE_S3:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
@@ -356,8 +423,8 @@ SIMPLE_JWT = {
 }
 
 # Celery Configuration
-CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='django-db')
+CELERY_BROKER_URL = config('CELERY_BROKER_URL')
+CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND')
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -372,15 +439,26 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
 
 # Email configuration
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = config('EMAIL_HOST', default='smtp.gmail.com')
-EMAIL_PORT = config('EMAIL_PORT', cast=int, default=587)
-EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
-EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool, default=True)
-EMAIL_USE_SSL = config('EMAIL_USE_SSL', cast=bool, default=False)
-DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@incel-esign.local')
-FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default='http://localhost:3000')
+EMAIL_BACKEND = config('EMAIL_BACKEND', default=None) or 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = config('EMAIL_HOST', default=None) or 'smtp.gmail.com'
+
+EMAIL_PORT = config('EMAIL_PORT', cast=int, default=None)
+if EMAIL_PORT is None:
+    EMAIL_PORT = 587
+
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default=None) or ''
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=None) or ''
+
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool, default=None)
+if EMAIL_USE_TLS is None:
+    EMAIL_USE_TLS = True
+
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', cast=bool, default=None)
+if EMAIL_USE_SSL is None:
+    EMAIL_USE_SSL = False
+
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=None) or 'no-reply@incel-esign.local'
+FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default=None)
 
 # Logging configuration
 LOGGING = {
