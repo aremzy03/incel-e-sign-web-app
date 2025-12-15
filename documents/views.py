@@ -385,13 +385,14 @@ class DocumentDownloadView(APIView):
                         status=status.HTTP_404_NOT_FOUND
                     )
             
-            # Create file response
+            # Create file response, forcing the download name to use the stored file_name
             response = FileResponse(
                 open(file_path, 'rb'),
                 content_type='application/pdf',
                 as_attachment=True,
-                filename=document.file_name
             )
+            # Explicitly set Content-Disposition so browsers use document.file_name
+            response["Content-Disposition"] = f'attachment; filename="{document.file_name}"'
             
             # Log the download action
             from audit.utils import log_action

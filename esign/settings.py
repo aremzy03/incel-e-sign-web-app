@@ -369,7 +369,18 @@ STATICFILES_DIRS = []
 # Media files (User uploads)
 # https://docs.djangoproject.com/en/5.2/topics/files/
 MEDIA_URL = config('MEDIA_URL', default=None) or '/media/'
-MEDIA_ROOT = config('MEDIA_ROOT', default=None) or (BASE_DIR / 'media')
+
+# Always resolve MEDIA_ROOT to an absolute path, even when provided as a
+# relative value via environment configuration (e.g., MEDIA_ROOT=media).
+media_root_config = config('MEDIA_ROOT', default=None)
+if media_root_config:
+    media_root_path = Path(media_root_config)
+    if not media_root_path.is_absolute():
+        media_root_path = BASE_DIR / media_root_path
+else:
+    media_root_path = BASE_DIR / 'media'
+
+MEDIA_ROOT = media_root_path
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
