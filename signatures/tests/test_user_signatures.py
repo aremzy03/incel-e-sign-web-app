@@ -170,6 +170,40 @@ class UserSignatureSerializerTest(TestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn('image', serializer.errors)
 
+    def test_serializer_background_removal_invoked(self):
+        """Test that background removal is attempted during create."""
+        from signatures.serializers import UserSignatureSerializer
+
+        # Create a simple white-background image
+        image = Image.new('RGB', (50, 50), color='white')
+        image_file = io.BytesIO()
+        image.save(image_file, format='PNG')
+        image_file.seek(0)
+
+        uploaded = SimpleUploadedFile(
+            'bg_signature.png',
+            image_file.getvalue(),
+            content_type='image/png'
+        )
+
+        # Build serializer with a fake request in context
+        class DummyRequest:
+            def __init__(self, user):
+                self.user = user
+
+        serializer = UserSignatureSerializer(
+            data={'image': uploaded, 'is_default': False},
+            context={'request': DummyRequest(self.user)}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+        with self.assertLogs('signatures.serializers', level='WARNING'):
+            # We can't assert on exact pixels without rembg installed, but
+            # we can ensure create() runs without raising and produces an instance.
+            instance = serializer.save()
+            self.assertIsInstance(instance, UserSignature)
+
 
 class UserSignatureAPITest(APITestCase):
     """Test cases for UserSignature API endpoints."""

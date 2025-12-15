@@ -7,6 +7,13 @@ in the e-signature workflow.
 
 from rest_framework import serializers
 from .models import Signature, UserSignature
+from django.core.files.base import ContentFile
+from PIL import Image
+from io import BytesIO
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class SignatureSerializer(serializers.ModelSerializer):
@@ -230,6 +237,70 @@ class UserSignatureSerializer(serializers.ModelSerializer):
             )
         
         return value
+
+    def _remove_background(self, image_field):
+        """
+        Run the uploaded image through rembg (if available) and then apply a
+        white/near-white background to transparent alpha mask.
+
+        Args:
+            image_field: Uploaded image file (InMemoryUploadedFile or similar)
+
+        Returns:
+            ContentFile or None: Processed PNG image with transparent background,
+            or None if processing is not available or fails.
+        """
+        # Read original bytes
+        original_bytes = image_field.read()
+        # Reset pointer so the original file can still be used if needed
+        image_field.seek(0)
+
+        processed_bytes = original_bytes
+
+        # First, try rembg if available
+        try:
+            from rembg import remove  # type: ignore
+
+            try:
+                processed_bytes = remove(original_bytes)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.error("rembg background removal failed: %s", exc, exc_info=True)
+                processed_bytes = original_bytes
+        except Exception as exc:  # pragma: no cover - environment-specific
+            logger.warning("rembg is not available; falling back to simple background removal: %s", exc)
+            processed_bytes = original_bytes
+
+        # Now enforce transparency for white / near-white pixels using Pillow
+        try:
+            img = Image.open(BytesIO(processed_bytes)).convert("RGBA")
+            datas = img.getdata()
+
+            new_data = []
+            # Threshold for what counts as "white / near-white"
+            threshold = 240
+            for r, g, b, a in datas:
+                if r >= threshold and g >= threshold and b >= threshold:
+                    # Make near-white fully transparent
+                    new_data.append((r, g, b, 0))
+                else:
+                    new_data.append((r, g, b, a))
+
+            img.putdata(new_data)
+
+            output = BytesIO()
+            img.save(output, format="PNG")
+            processed_bytes = output.getvalue()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Pillow background post-processing failed: %s", exc, exc_info=True)
+            # If Pillow fails, fall back to whatever we had
+            pass
+
+        # Ensure PNG filename
+        original_name = getattr(image_field, "name", "signature.png")
+        if not original_name.lower().endswith(".png"):
+            original_name = "signature.png"
+
+        return ContentFile(processed_bytes, name=original_name)
     
     def validate_is_default(self, value):
         """
@@ -277,7 +348,14 @@ class UserSignatureSerializer(serializers.ModelSerializer):
         # Set the user from the request context
         user = self.context['request'].user
         validated_data['user'] = user
-        
+
+        # Apply background removal if an image is provided
+        image = validated_data.get("image")
+        if image is not None:
+            processed = self._remove_background(image)
+            if processed is not None:
+                validated_data["image"] = processed
+
         return super().create(validated_data)
     
     def update(self, instance, validated_data):
@@ -291,4 +369,10 @@ class UserSignatureSerializer(serializers.ModelSerializer):
         Returns:
             UserSignature: Updated signature instance
         """
+        image = validated_data.get("image")
+        if image is not None:
+            processed = self._remove_background(image)
+            if processed is not None:
+                validated_data["image"] = processed
+
         return super().update(instance, validated_data)
