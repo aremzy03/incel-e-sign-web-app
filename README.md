@@ -185,6 +185,12 @@ EMAIL_HOST_PASSWORD=your-app-password
 DEFAULT_FROM_EMAIL=no-reply@yourdomain.com
 FRONTEND_BASE_URL=https://yourdomain.com
 
+# Google OAuth (for "Continue with Google")
+GOOGLE_OAUTH_CLIENT_ID=your-google-client-id
+GOOGLE_OAUTH_CLIENT_SECRET=your-google-client-secret
+# Next.js route that handles final login step after Django verifies Google
+GOOGLE_OAUTH_REDIRECT_PATH=/auth/google/callback
+
 # Rate Limiting (API Throttling)
 THROTTLE_RATE_ANON=100/hour  # Anonymous users
 THROTTLE_RATE_USER=1000/hour  # Authenticated users
@@ -608,6 +614,8 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
 | `GET` | `/api/auth/profile/` | Get user profile | ✅ |
 | `GET` | `/api/auth/profile/detail/` | Get user profile with shared envelopes | ✅ |
 | `PATCH` | `/api/auth/profile/detail/` | Update own profile (name/photo) | ✅ |
+| `GET` | `/api/auth/google/login/` | Start Google OAuth login flow (redirects to Google) | ❌ |
+| `GET` | `/api/auth/google/callback/` | Google OAuth callback → issues JWT tokens, redirects to frontend | ❌ |
 ### Profile Detail Endpoint
 
 Get a user's profile (including profile photo) and envelopes that involve both the authenticated user and the target user. Update your own profile with name and/or profile photo.
@@ -1027,6 +1035,29 @@ JWT-based authentication endpoints:
 - POST /auth/logout/
 - GET /auth/profile/
 - GET /auth/users/ - Search users by email or full name
+
+#### Google OAuth Login (Django backend + external frontend)
+
+The E-Sign app supports logging in with Google using a separate frontend (e.g., Next.js) and this Django backend:
+
+- **Backend flow**:
+  - Frontend redirects browser to `GET /api/auth/google/login/?next=/desired/path`.
+  - User is redirected to Google, approves access, and Google calls back `GET /api/auth/google/callback/`.
+  - Backend exchanges the authorization code with Google, validates the `id_token`, and creates or fetches a `CustomUser` by verified email.
+  - Backend issues **JWT access/refresh tokens** (via SimpleJWT) and redirects back to `FRONTEND_BASE_URL + GOOGLE_OAUTH_REDIRECT_PATH` with query params:
+    - `status` (`success` or `error`)
+    - `access` (JWT access token, when successful)
+    - `refresh` (JWT refresh token, when successful)
+    - `next` (original `next` path from the login URL)
+    - `message` (optional error info)
+
+- **Frontend responsibilities (e.g., Next.js)**:
+  - Provide a “Continue with Google” button that sends the user to `/api/auth/google/login/`.
+  - Implement a route matching `GOOGLE_OAUTH_REDIRECT_PATH` (e.g., `/auth/google/callback`) to:
+    - Read `access`/`refresh` from the query string when `status=success`.
+    - Store tokens (e.g., in localStorage or via an API route into HttpOnly cookies).
+    - Redirect the user to the `next` path or a default dashboard.
+  - Attach the `access` token as `Authorization: Bearer <token>` for all API requests to this Django backend (same as email/password login).
 
 #### User Search Endpoint
 

@@ -141,6 +141,11 @@ INSTALLED_APPS = [
     'django_celery_results',
 ]
 
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',
+]
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -426,12 +431,20 @@ AUTH_USER_MODEL = 'users.CustomUser'
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),  # Increased from 5 minutes to 8 hours for better UX
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # Increased from 1 day to 7 days
+    # Increased from 5 minutes to 8 hours for better UX
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
+    # Increased from 1 day to 7 days
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
+
+# Google OAuth settings
+GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default=None)
+GOOGLE_OAUTH_CLIENT_SECRET = config('GOOGLE_OAUTH_CLIENT_SECRET', default=None)
+# Optional override for redirect; if not provided, views will derive it from FRONTEND_BASE_URL
+GOOGLE_OAUTH_REDIRECT_PATH = config('GOOGLE_OAUTH_REDIRECT_PATH', default='/auth/google/callback')
 
 # Celery Configuration
 CELERY_BROKER_URL = config('CELERY_BROKER_URL')

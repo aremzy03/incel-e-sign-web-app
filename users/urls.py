@@ -1,7 +1,18 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
-from .views import RegisterView, LoginView, LogoutView, ProfileView, UserSearchView, UserDetailView, ConfirmEmailView, UserProfileDetailView
+from .views import (
+    RegisterView,
+    LoginView,
+    LogoutView,
+    ProfileView,
+    UserSearchView,
+    UserDetailView,
+    ConfirmEmailView,
+    UserProfileDetailView,
+    GoogleOAuthLoginView,
+    GoogleOAuthCallbackView,
+)
 
 
 urlpatterns = [
@@ -14,6 +25,8 @@ urlpatterns = [
     path('users/', UserSearchView.as_view(), name='auth-users-search'),
     path('users/<uuid:id>/', UserDetailView.as_view(), name='auth-user-detail'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    # Google OAuth 2.0 endpoints
+    path('google/login/', GoogleOAuthLoginView.as_view(), name='auth-google-login'),
+    path('google/callback/', GoogleOAuthCallbackView.as_view(), name='auth-google-callback'),
 ]
-
 

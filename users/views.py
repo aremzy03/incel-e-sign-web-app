@@ -1,24 +1,63 @@
+from urllib.parse import urlencode, urlparse
+
+import requests
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core import signing
+from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
 from rest_framework import status
+from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.pagination import PageNumberPagination
-from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import get_user_model
-from django.db.models import Q
-from django.shortcuts import get_object_or_404
-from django.core import signing
-from django.urls import reverse
-from django.conf import settings
 
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer, UserSearchSerializer, UserProfileSerializer
+from .serializers import (
+    RegisterSerializer,
+    LoginSerializer,
+    UserSerializer,
+    UserSearchSerializer,
+    UserProfileSerializer,
+)
 from envelopes.models import Envelope
 from envelopes.serializers import EnvelopeSerializer
 
 
-# Create your views here.
+def _sanitize_next_path(raw_next: str | None) -> str:
+    """
+    Ensure the `next` path used in OAuth flow is a safe, relative URL.
 
+    - Disallows absolute URLs (with scheme or netloc)
+    - Forces a leading slash
+    - Preserves query string and fragment for relative paths
+    """
+    if not raw_next:
+        return "/"
+
+    parsed = urlparse(raw_next)
+
+    # Reject absolute URLs or protocol-relative URLs
+    if parsed.scheme or parsed.netloc:
+        return "/"
+
+    path = parsed.path or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+
+    # Rebuild relative URL with query and fragment if present
+    safe_next = path
+    if parsed.query:
+        safe_next += f"?{parsed.query}"
+    if parsed.fragment:
+        safe_next += f"#{parsed.fragment}"
+
+    return safe_next
+
+
+# Create your views here.
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -57,6 +96,251 @@ class LoginView(APIView):
                 "refresh": str(refresh)
             }
         }, status=status.HTTP_200_OK)
+
+
+class GoogleOAuthLoginView(APIView):
+    """
+    Starts the Google OAuth 2.0 flow by redirecting the user to Google's consent screen.
+
+    Frontend should redirect the browser to this endpoint, e.g.:
+    GET /api/auth/google/login/?next=/dashboard
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+        if not client_id:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Google OAuth is not configured on the server.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Where Google will redirect back to on this backend
+        callback_url = request.build_absolute_uri(
+            reverse("auth-google-callback")
+        )
+
+        # Optional 'next' parameter to redirect the user after login
+        raw_next = request.query_params.get("next") or "/"
+        next_path = _sanitize_next_path(raw_next)
+        state_payload = {"next": next_path}
+        state = signing.dumps(state_payload)
+
+        params = {
+            "client_id": client_id,
+            "redirect_uri": callback_url,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "access_type": "offline",
+            "include_granted_scopes": "true",
+            "state": state,
+            "prompt": "consent",
+        }
+
+        google_auth_url = (
+            "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+        )
+        return redirect(google_auth_url)
+
+
+class GoogleOAuthCallbackView(APIView):
+    """
+    Handles the redirect back from Google.
+
+    - Exchanges the authorization code for tokens
+    - Retrieves the user's profile
+    - Creates or fetches the local user
+    - Returns JWT access/refresh tokens to the frontend via redirect
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Extract and validate state first to get next_path; required for CSRF protection
+        state = request.query_params.get("state")
+        next_path = "/"
+
+        if not state:
+            # Missing state – treat as invalid OAuth attempt
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Missing state parameter from Google OAuth callback.",
+            )
+
+        try:
+            state_data = signing.loads(state, max_age=600)
+            next_path = _sanitize_next_path(state_data.get("next"))
+        except Exception:
+            # Invalid or expired state – reject the callback
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Invalid or expired login state. Please try signing in with Google again.",
+            )
+
+        error = request.query_params.get("error")
+        if error:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message=f"Google OAuth error: {error}",
+            )
+
+        code = request.query_params.get("code")
+        if not code:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Missing authorization code from Google OAuth callback.",
+            )
+
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+        client_secret = settings.GOOGLE_OAUTH_CLIENT_SECRET
+        if not client_id or not client_secret:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Google OAuth is not configured on the server.",
+            )
+
+        token_endpoint = "https://oauth2.googleapis.com/token"
+        callback_url = request.build_absolute_uri(
+            reverse("auth-google-callback")
+        )
+
+        token_data = {
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": callback_url,
+            "grant_type": "authorization_code",
+        }
+
+        try:
+            token_resp = requests.post(token_endpoint, data=token_data, timeout=10)
+            token_resp.raise_for_status()
+            token_json = token_resp.json()
+        except Exception:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Failed to exchange code for tokens with Google.",
+            )
+
+        id_token = token_json.get("id_token")
+        access_token = token_json.get("access_token")
+        if not id_token:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Missing id_token in Google response.",
+            )
+
+        # Validate and decode id_token using Google's tokeninfo endpoint
+        try:
+            info_resp = requests.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": id_token},
+                timeout=10,
+            )
+            info_resp.raise_for_status()
+            user_info = info_resp.json()
+        except Exception:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Failed to validate Google id_token.",
+            )
+
+        email = user_info.get("email")
+        email_verified = user_info.get("email_verified") in (True, "true", "1")
+        full_name = user_info.get("name") or ""
+
+        if not email or not email_verified:
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="Google account email is missing or not verified.",
+            )
+
+        User = get_user_model()
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": email,
+                "full_name": full_name or email,
+                "is_active": True,
+            },
+        )
+
+        if not user.is_active:
+            # If the account exists but is inactive, do not allow login
+            return self._redirect_to_frontend(
+                status_param="error",
+                next_path=next_path,
+                message="This account is inactive.",
+            )
+
+        refresh = RefreshToken.for_user(user)
+        access = refresh.access_token
+
+        # Redirect to the frontend with JWT tokens in the query string
+        return self._redirect_to_frontend(
+            status_param="success",
+            next_path=next_path,
+            access=str(access),
+            refresh=str(refresh),
+        )
+
+    def _redirect_to_frontend(
+        self,
+        status_param: str,
+        message: str | None = None,
+        next_path: str = "/",
+        access: str | None = None,
+        refresh: str | None = None,
+    ):
+        """
+        Helper to build a redirect URL back to the frontend app.
+        """
+        base_frontend = settings.FRONTEND_BASE_URL
+        redirect_path = settings.GOOGLE_OAUTH_REDIRECT_PATH or "/auth/google/callback"
+
+        # Validate that FRONTEND_BASE_URL is set
+        if not base_frontend:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "FRONTEND_BASE_URL is not configured. Please set FRONTEND_BASE_URL in your environment variables.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # Ensure we don't end up with double slashes
+        base_frontend = base_frontend.rstrip("/")
+
+        if not redirect_path.startswith("/"):
+            redirect_path = "/" + redirect_path
+
+        redirect_url = f"{base_frontend}{redirect_path}"
+
+        params = {
+            "status": status_param,
+            "next": next_path,
+        }
+        if message:
+            params["message"] = message
+        if access:
+            params["access"] = access
+        if refresh:
+            params["refresh"] = refresh
+
+        return redirect(f"{redirect_url}?{urlencode(params)}")
 
 
 class LogoutView(APIView):
