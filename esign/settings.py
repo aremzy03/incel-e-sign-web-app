@@ -51,9 +51,11 @@ if SENTRY_DSN and not DEBUG:
     from sentry_sdk.integrations.celery import CeleryIntegration
     from sentry_sdk.integrations.redis import RedisIntegration
     
-    sentry_traces_sample_rate = config('SENTRY_TRACES_SAMPLE_RATE', cast=float, default=None)
+    sentry_traces_sample_rate = config('SENTRY_TRACES_SAMPLE_RATE', default=None)
     if sentry_traces_sample_rate is None:
         sentry_traces_sample_rate = 0.1
+    else:
+        sentry_traces_sample_rate = float(sentry_traces_sample_rate)
 
     sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or 'production'
     sentry_release = config('SENTRY_RELEASE', default=None)
@@ -73,25 +75,44 @@ if SENTRY_DSN and not DEBUG:
 
 # Security Headers & HTTPS Configuration
 # Only enforce HTTPS in production (when DEBUG=False)
+# Note: Disable SECURE_SSL_REDIRECT when using Django's development server (runserver)
+# as it doesn't support HTTPS. Use a proper WSGI server (gunicorn) with SSL in production.
 if not DEBUG:
+    # Check if we're using Django's development server
+    using_runserver = 'runserver' in sys.argv
+    
     SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=None)
     if SECURE_SSL_REDIRECT is None:
-        SECURE_SSL_REDIRECT = True
+        # Don't enforce HTTPS redirect when using runserver (development server)
+        SECURE_SSL_REDIRECT = not using_runserver
 
-    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', cast=int, default=None)
+    SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=None)
     if SECURE_HSTS_SECONDS is None:
-        SECURE_HSTS_SECONDS = 31536000  # 1 year
+        # Disable HSTS when using runserver (development server) to prevent browser forcing HTTPS
+        SECURE_HSTS_SECONDS = 0 if using_runserver else 31536000  # 1 year
+    else:
+        SECURE_HSTS_SECONDS = int(SECURE_HSTS_SECONDS)
+        # Force HSTS to 0 when using runserver, even if set in .env
+        if using_runserver:
+            SECURE_HSTS_SECONDS = 0
 
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=None)
-    if SECURE_HSTS_INCLUDE_SUBDOMAINS is None:
-        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    # Force HSTS subdomains/preload to False when using runserver, regardless of .env
+    if using_runserver:
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+        SECURE_HSTS_PRELOAD = False
+    else:
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=None)
+        if SECURE_HSTS_INCLUDE_SUBDOMAINS is None:
+            SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
-    SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=None)
-    if SECURE_HSTS_PRELOAD is None:
-        SECURE_HSTS_PRELOAD = True
+        SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=None)
+        if SECURE_HSTS_PRELOAD is None:
+            SECURE_HSTS_PRELOAD = True
 
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    # Allow secure cookies to be disabled for local HTTP development
+    # In production with HTTPS, these should be True
+    SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', cast=bool, default=True)
+    CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', cast=bool, default=True)
 else:
     SECURE_SSL_REDIRECT = False
     SECURE_HSTS_SECONDS = 0
@@ -199,9 +220,11 @@ DATABASES = {
 # 0 = disable persistent connections (SQLite default)
 # None = unlimited persistent connections (recommended for PostgreSQL)
 if 'postgresql' in DATABASES['default'].get('ENGINE', ''):
-    DB_CONN_MAX_AGE = config('DB_CONN_MAX_AGE', cast=int, default=None)
+    DB_CONN_MAX_AGE = config('DB_CONN_MAX_AGE', default=None)
     if DB_CONN_MAX_AGE is None:
         DB_CONN_MAX_AGE = 600  # 10 minutes
+    else:
+        DB_CONN_MAX_AGE = int(DB_CONN_MAX_AGE)
 
     DATABASES['default']['CONN_MAX_AGE'] = DB_CONN_MAX_AGE
     # Connection pool settings
@@ -214,11 +237,13 @@ try:
     import django_redis
     CACHE_BACKEND = config('CACHE_BACKEND', default=None)
     CACHE_LOCATION = config('CACHE_LOCATION', default=None)
-    CACHE_TIMEOUT = config('CACHE_TIMEOUT', cast=int, default=None)
+    CACHE_TIMEOUT = config('CACHE_TIMEOUT', default=None)
 
     if CACHE_BACKEND and CACHE_LOCATION:
         if CACHE_TIMEOUT is None:
             CACHE_TIMEOUT = 300  # 5 minutes default
+        else:
+            CACHE_TIMEOUT = int(CACHE_TIMEOUT)
 
         CACHES = {
             'default': {
@@ -261,9 +286,11 @@ if 'pytest' in sys.modules:
 
 
 # Django REST Framework
-PAGE_SIZE = config('PAGE_SIZE', cast=int, default=None)
+PAGE_SIZE = config('PAGE_SIZE', default=None)
 if PAGE_SIZE is None:
     PAGE_SIZE = 20
+else:
+    PAGE_SIZE = int(PAGE_SIZE)
 
 THROTTLE_RATE_ANON = config('THROTTLE_RATE_ANON', default=None) or '100/hour'
 THROTTLE_RATE_USER = config('THROTTLE_RATE_USER', default=None) or '1000/hour'
@@ -320,17 +347,23 @@ CORS_ALLOWED_HEADERS = [
 ]
 
 # File upload settings
-FILE_UPLOAD_MAX_MEMORY_SIZE = config('FILE_UPLOAD_MAX_MEMORY_SIZE', cast=int, default=None)
+FILE_UPLOAD_MAX_MEMORY_SIZE = config('FILE_UPLOAD_MAX_MEMORY_SIZE', default=None)
 if FILE_UPLOAD_MAX_MEMORY_SIZE is None:
     FILE_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+else:
+    FILE_UPLOAD_MAX_MEMORY_SIZE = int(FILE_UPLOAD_MAX_MEMORY_SIZE)
 
-DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', cast=int, default=None)
+DATA_UPLOAD_MAX_MEMORY_SIZE = config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=None)
 if DATA_UPLOAD_MAX_MEMORY_SIZE is None:
     DATA_UPLOAD_MAX_MEMORY_SIZE = 26214400  # 25MB
+else:
+    DATA_UPLOAD_MAX_MEMORY_SIZE = int(DATA_UPLOAD_MAX_MEMORY_SIZE)
 
-DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', cast=int, default=None)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = config('DATA_UPLOAD_MAX_NUMBER_FIELDS', default=None)
 if DATA_UPLOAD_MAX_NUMBER_FIELDS is None:
     DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+else:
+    DATA_UPLOAD_MAX_NUMBER_FIELDS = int(DATA_UPLOAD_MAX_NUMBER_FIELDS)
 
 
 # Password validation
@@ -466,9 +499,11 @@ CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
 EMAIL_BACKEND = config('EMAIL_BACKEND', default=None) or 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = config('EMAIL_HOST', default=None) or 'smtp.gmail.com'
 
-EMAIL_PORT = config('EMAIL_PORT', cast=int, default=None)
+EMAIL_PORT = config('EMAIL_PORT', default=None)
 if EMAIL_PORT is None:
     EMAIL_PORT = 587
+else:
+    EMAIL_PORT = int(EMAIL_PORT)
 
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default=None) or ''
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=None) or ''

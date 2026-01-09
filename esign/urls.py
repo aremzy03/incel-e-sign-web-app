@@ -24,6 +24,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('health/', health.health_check, name='health'),
     path('health/detailed/', health.health_detailed, name='health-detailed'),
+    path('sentry-debug/', health.sentry_debug, name='sentry-debug'),
     path('api/auth/', include('users.urls')),
     path('api/documents/', include('documents.urls')),
     path('api/envelopes/', include('envelopes.urls')),

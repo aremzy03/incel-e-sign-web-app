@@ -115,3 +115,14 @@ def health_detailed(request):
     
     return JsonResponse(status, status=200)
 
+
+@require_http_methods(["GET"])
+def sentry_debug(request):
+    """
+    Test endpoint that intentionally raises an exception so Sentry can capture it.
+
+    Use this after configuring SENTRY_DSN to verify events appear in your Sentry project.
+    """
+    # This will be reported to Sentry as an unhandled error
+    raise RuntimeError("Sentry debug endpoint triggered")
+
