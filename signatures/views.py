@@ -173,16 +173,23 @@ class SignDocumentView(APIView):
                     "message": "No signature provided and no default signature found. Please provide signature_image, signature_id, or set a default signature."
                 }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Update the signature
-        signature.status = "signed"
-        signature.signed_at = timezone.now()
-        # The signature_image is now stored in the Signature model, so we don't update it on the document
-        signature.signature_image = signature_image_data
-        signature.save()
-        
         # Process each document in the envelope for signature embedding
+        # NOTE: Signature status is updated AFTER all documents are processed to prevent
+        # race conditions where multiple requests try to sign documents simultaneously
         from envelopes.models import EnvelopeDocument
         envelope_documents = EnvelopeDocument.objects.filter(envelope=envelope).order_by('order')
+        
+        # Check again if signature was already signed by another concurrent request
+        # Refresh from database to get latest status
+        signature.refresh_from_db()
+        if signature.is_signed:
+            # Another request already signed, return success
+            signature_serializer = SignatureSerializer(signature)
+            return Response({
+                "status": "success",
+                "message": "Document signed successfully",
+                "data": signature_serializer.data
+            }, status=status.HTTP_200_OK)
         
         if not envelope_documents.exists():
             return Response({
@@ -366,6 +373,14 @@ class SignDocumentView(APIView):
             
             document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
         
+        # Update the signature AFTER all documents are processed
+        # This prevents race conditions where multiple requests try to sign documents simultaneously
+        signature.status = "signed"
+        signature.signed_at = timezone.now()
+        # The signature_image is now stored in the Signature model, so we don't update it on the document
+        signature.signature_image = signature_image_data
+        signature.save()
+        
         # Log the signature action
         from audit.utils import log_action
         log_action(
@@ -377,6 +392,7 @@ class SignDocumentView(APIView):
         )
         
         # Check if this was the last signer
+        # Refresh from database to get accurate count after signature status update
         remaining_pending = Signature.objects.filter(
             envelope=envelope,
             status='pending'
@@ -391,17 +407,34 @@ class SignDocumentView(APIView):
         
         if remaining_pending == 0:
             # All signers have signed - mark envelope as completed and apply PDF locking.
-            generated_password = False
-            if not envelope.pdf_lock_password:
-                envelope.pdf_lock_password = _generate_pdf_lock_password()
-                generated_password = True
+            # Use database-level locking to prevent race conditions when generating password
+            from django.db import transaction
+            from envelopes.models import Envelope
+            
+            with transaction.atomic():
+                # Lock the envelope row to prevent concurrent password generation
+                locked_envelope = Envelope.objects.select_for_update().get(pk=envelope.id)
+                
+                generated_password = False
+                if not locked_envelope.pdf_lock_password:
+                    new_password = _generate_pdf_lock_password()
+                    locked_envelope.pdf_lock_password = new_password
+                    generated_password = True
 
-            envelope.status = "completed"
+                locked_envelope.status = "completed"
 
-            envelope_update_fields = ["status", "updated_at"]
-            if generated_password:
-                envelope_update_fields.append("pdf_lock_password")
-            envelope.save(update_fields=envelope_update_fields)
+                envelope_update_fields = ["status", "updated_at"]
+                if generated_password:
+                    envelope_update_fields.append("pdf_lock_password")
+                
+                locked_envelope.save(update_fields=envelope_update_fields)
+                
+                # Store the password that was actually saved for use in PDF locking
+                final_password = locked_envelope.pdf_lock_password
+            
+            # Refresh envelope from database to get the final password
+            envelope.refresh_from_db()
+            final_password = envelope.pdf_lock_password
 
             # Update the status of all documents in this envelope to 'completed' and lock PDFs.
             media_root = str(settings.MEDIA_ROOT)
@@ -411,7 +444,7 @@ class SignDocumentView(APIView):
 
                 locked_url = None
                 source_url = document.signed_file_url or document.file_url
-                if source_url and envelope.pdf_lock_password:
+                if source_url and final_password:
                     source_path = None
                     try:
                         source_path = get_media_absolute_path_from_url(source_url)
@@ -421,7 +454,7 @@ class SignDocumentView(APIView):
                     if source_path:
                         locked_path = lock_pdf_with_password(
                             pdf_path=source_path,
-                            password=envelope.pdf_lock_password,
+                            password=final_password,
                         )
                         if locked_path:
                             try:
