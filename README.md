@@ -239,6 +239,85 @@ python manage.py runserver
 
 The application will be available at `http://localhost:8000`
 
+### 7. Running with Docker (Production-style)
+
+You can run the backend in a production-like setup using the provided `Dockerfile`.
+
+#### Build the image
+
+```bash
+docker build -t esign-backend:latest .
+```
+
+#### Required environment variables
+
+At minimum you should provide (for production-style runs):
+
+- `SECRET_KEY`
+- `DEBUG` (usually `False`)
+- `ALLOWED_HOSTS`
+- `DATABASE_URL` (or individual DB vars)
+- `CELERY_BROKER_URL` (Redis URL)
+- `CACHE_LOCATION` (Redis URL for Django cache)
+
+You can either pass these with `-e` or keep them in a `.env` file (recommended).
+
+Example `.env` snippet:
+
+```env
+SECRET_KEY=change-me
+DEBUG=False
+ALLOWED_HOSTS=localhost,127.0.0.1
+DATABASE_URL=postgresql://user:password@host:5432/esign_db
+CELERY_BROKER_URL=redis://redis:6379/0
+CACHE_LOCATION=redis://redis:6379/1
+```
+
+#### Run the web API (Gunicorn)
+
+```bash
+docker run --env-file .env -p 8000:8000 esign-backend:latest
+```
+
+The default container role is `web`, which starts:
+
+```bash
+gunicorn -c gunicorn_config.py esign.wsgi:application
+```
+
+Migrations are run automatically on startup when `SERVICE_ROLE` is `web`
+and `RUN_MIGRATIONS_ON_START` is not explicitly set to `false`.
+
+#### Run a Celery worker (using the same image)
+
+Use the same image, but set the role to `worker`:
+
+```bash
+docker run --env-file .env \
+  -e SERVICE_ROLE=worker \
+  esign-backend:latest
+```
+
+This is equivalent to running:
+
+```bash
+celery -A esign worker -l info
+```
+
+By default, migrations are also attempted on worker startup, but you can
+disable that with:
+
+```bash
+docker run --env-file .env \
+  -e SERVICE_ROLE=worker \
+  -e RUN_MIGRATIONS_ON_START=false \
+  esign-backend:latest
+```
+
+> Note: The image includes LibreOffice, so Word → PDF uploads will work
+> inside the container as long as the necessary environment variables
+> (e.g. storage, DB, Redis) are configured correctly.
+
 ## 🚀 Production Deployment
 
 ### Pre-Deployment Checklist
