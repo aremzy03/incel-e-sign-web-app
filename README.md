@@ -318,6 +318,133 @@ docker run --env-file .env \
 > inside the container as long as the necessary environment variables
 > (e.g. storage, DB, Redis) are configured correctly.
 
+### 8. GitHub Actions CI/CD Pipeline
+
+The project includes a comprehensive CI/CD workflow that automates testing, Docker image building, and deployment.
+
+#### Workflow Overview
+
+The GitHub Actions workflow (`.github/workflows/ci-cd.yml`) provides:
+
+1. **Continuous Integration (CI)**: Runs on all pushes and pull requests
+   - Executes pytest test suite with coverage reporting
+   - Validates code quality before merging
+
+2. **Continuous Deployment (CD)**: Runs on pushes to `main` branch
+   - Builds production Docker image
+   - Pushes image to GitHub Container Registry (GHCR)
+   - Deploys to production server via SSH
+
+#### Workflow Jobs
+
+**Test Job** (runs on all triggers):
+- Sets up Python 3.12 environment
+- Installs dependencies from `requirements.txt`
+- Runs `pytest` with coverage reporting
+- Uploads coverage reports to Codecov (optional)
+
+**Build & Push Job** (main branch only):
+- Builds Docker image using the project's `Dockerfile`
+- Tags image with `latest` and commit SHA
+- Pushes to `ghcr.io/<username>/<repository>:latest`
+- Uses Docker layer caching for faster builds
+
+**Deploy Job** (main branch only, after successful build):
+- Connects to deployment server via SSH
+- Pulls latest image from GHCR
+- Stops and removes existing container
+- Starts new container with updated image
+- Performs health check to verify deployment
+
+#### Required GitHub Secrets
+
+Configure the following secrets in your GitHub repository settings (`Settings` → `Secrets and variables` → `Actions`):
+
+**Deployment Secrets:**
+- `DEPLOY_HOST`: SSH hostname or IP address of your deployment server
+- `DEPLOY_USER`: SSH username for the deployment server
+- `DEPLOY_SSH_KEY`: Private SSH key for authentication (contents of `~/.ssh/id_rsa` or similar)
+- `DEPLOY_PORT`: SSH port (optional, defaults to 22)
+
+**Application Secrets:**
+- `SECRET_KEY`: Django secret key for production
+- `ALLOWED_HOSTS`: Comma-separated list of allowed hostnames
+- `DATABASE_URL`: PostgreSQL connection string
+- `CELERY_BROKER_URL`: Redis URL for Celery broker
+- `CACHE_LOCATION`: Redis URL for Django cache
+
+**Optional:**
+- `GHCR_PAT`: GitHub Personal Access Token with `read:packages` permission (if `GITHUB_TOKEN` doesn't have sufficient permissions)
+
+#### Setting Up SSH Key for Deployment
+
+1. **Generate SSH key pair** (if you don't have one):
+   ```bash
+   ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/github_actions_deploy
+   ```
+
+2. **Copy public key to deployment server**:
+   ```bash
+   ssh-copy-id -i ~/.ssh/github_actions_deploy.pub user@your-server.com
+   ```
+
+3. **Add private key to GitHub Secrets**:
+   - Copy the contents of `~/.ssh/github_actions_deploy` (private key)
+   - Go to GitHub repository → Settings → Secrets → New repository secret
+   - Name: `DEPLOY_SSH_KEY`
+   - Value: Paste the entire private key (including `-----BEGIN` and `-----END` lines)
+
+#### Workflow Triggers
+
+The workflow automatically runs:
+- **On every push to `main`**: Runs tests, builds image, and deploys
+- **On pull requests to `main`**: Runs tests only (no deployment)
+
+You can also manually trigger the workflow:
+- Go to `Actions` tab → Select workflow → `Run workflow`
+
+#### Viewing Workflow Results
+
+1. Navigate to the `Actions` tab in your GitHub repository
+2. Click on a workflow run to see detailed logs
+3. Each job shows:
+   - Test results and coverage
+   - Docker build logs
+   - Deployment status and health checks
+
+#### Troubleshooting
+
+**Tests failing:**
+- Check that all dependencies are in `requirements.txt`
+- Verify test database configuration
+- Review test logs in the Actions tab
+
+**Docker build failing:**
+- Ensure `Dockerfile` is in the repository root
+- Check that all required files are present (not in `.dockerignore`)
+- Review build logs for specific errors
+
+**Deployment failing:**
+- Verify SSH key is correctly configured in secrets
+- Check that deployment server is accessible
+- Ensure Docker is installed on the deployment server
+- Verify all required secrets are set (especially `SECRET_KEY`, `DATABASE_URL`)
+- Check deployment logs for container startup errors
+
+**Image pull failing:**
+- Ensure repository has `packages: write` permission
+- Verify `GITHUB_TOKEN` has sufficient permissions (or use `GHCR_PAT`)
+- Check that image was successfully pushed in the build job
+
+#### Customizing the Workflow
+
+You can customize the workflow by editing `.github/workflows/ci-cd.yml`:
+
+- **Change deployment target**: Modify the deploy job's SSH commands
+- **Add additional test steps**: Add new steps in the test job
+- **Modify image tags**: Update the metadata extraction step
+- **Add notifications**: Integrate Slack, Discord, or email notifications
+
 ## 🚀 Production Deployment
 
 ### Pre-Deployment Checklist
