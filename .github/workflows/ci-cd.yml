@@ -37,6 +37,8 @@ jobs:
           DEBUG: 'True'
           ALLOWED_HOSTS: localhost,127.0.0.1
           DATABASE_URL: sqlite:///test_db.sqlite3
+          # Prevent rembg from calling sys.exit(1) when it cannot download its model
+          U2NET_HOME: /tmp/u2net_cache
         run: |
           pytest --cov=. --cov-report=term-missing --cov-report=xml
 

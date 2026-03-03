@@ -263,10 +263,10 @@ class UserSignatureSerializer(serializers.ModelSerializer):
 
             try:
                 processed_bytes = remove(original_bytes)
-            except Exception as exc:  # pragma: no cover - defensive
+            except (Exception, SystemExit) as exc:  # SystemExit raised when model download fails
                 logger.error("rembg background removal failed: %s", exc, exc_info=True)
                 processed_bytes = original_bytes
-        except Exception as exc:  # pragma: no cover - environment-specific
+        except (Exception, SystemExit) as exc:  # pragma: no cover - environment-specific
             logger.warning("rembg is not available; falling back to simple background removal: %s", exc)
             processed_bytes = original_bytes
 
