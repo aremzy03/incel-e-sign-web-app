@@ -34,9 +34,7 @@ if SECRET_KEY is None:
     SECRET_KEY = 'django-insecure-placeholder-secret-key'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', cast=bool, default=None)
-if DEBUG is None:
-    DEBUG = True
+DEBUG = config('DEBUG', cast=bool, default=True)
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default=None)
 if ALLOWED_HOSTS is None:
@@ -81,10 +79,7 @@ if not DEBUG:
     # Check if we're using Django's development server
     using_runserver = 'runserver' in sys.argv
     
-    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=None)
-    if SECURE_SSL_REDIRECT is None:
-        # Don't enforce HTTPS redirect when using runserver (development server)
-        SECURE_SSL_REDIRECT = not using_runserver
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', cast=bool, default=not using_runserver)
 
     SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=None)
     if SECURE_HSTS_SECONDS is None:
@@ -101,13 +96,8 @@ if not DEBUG:
         SECURE_HSTS_INCLUDE_SUBDOMAINS = False
         SECURE_HSTS_PRELOAD = False
     else:
-        SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=None)
-        if SECURE_HSTS_INCLUDE_SUBDOMAINS is None:
-            SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-
-        SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=None)
-        if SECURE_HSTS_PRELOAD is None:
-            SECURE_HSTS_PRELOAD = True
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = config('SECURE_HSTS_INCLUDE_SUBDOMAINS', cast=bool, default=True)
+        SECURE_HSTS_PRELOAD = config('SECURE_HSTS_PRELOAD', cast=bool, default=True)
 
     # Allow secure cookies to be disabled for local HTTP development
     # In production with HTTPS, these should be True
@@ -427,9 +417,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # File storage
 # Use S3 in production if configured, otherwise use local storage
-USE_S3 = config('USE_S3', cast=bool, default=None)
-if USE_S3 is None:
-    USE_S3 = False
+USE_S3 = config('USE_S3', cast=bool, default=False)
 
 if USE_S3:
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
@@ -508,13 +496,8 @@ else:
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default=None) or ''
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default=None) or ''
 
-EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool, default=None)
-if EMAIL_USE_TLS is None:
-    EMAIL_USE_TLS = True
-
-EMAIL_USE_SSL = config('EMAIL_USE_SSL', cast=bool, default=None)
-if EMAIL_USE_SSL is None:
-    EMAIL_USE_SSL = False
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', cast=bool, default=True)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', cast=bool, default=False)
 
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default=None) or 'no-reply@incel-esign.local'
 FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default=None)
