@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.urls import reverse
 
 
+@pytest.mark.django_db
 @patch("notifications.tasks.send_email_confirmation_task.delay")
 def test_registration_triggers_confirmation_email(mock_delay, client):
     url = reverse("auth-register")

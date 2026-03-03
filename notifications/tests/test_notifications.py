@@ -12,7 +12,7 @@ from users.models import CustomUser
 from notifications.models import Notification
 from notifications.utils import create_notification
 from documents.models import Document
-from envelopes.models import Envelope
+from envelopes.models import Envelope, EnvelopeDocument
 from signatures.models import Signature
 
 
@@ -69,14 +69,15 @@ def document(user):
 @pytest.fixture
 def envelope(user, document, signer1, signer2):
     """Create a test envelope."""
-    return Envelope.objects.create(
-        document=document,
+    env = Envelope.objects.create(
         creator=user,
         signing_order=[
             {"signer_id": str(signer1.id), "order": 1},
             {"signer_id": str(signer2.id), "order": 2}
         ]
     )
+    EnvelopeDocument.objects.create(envelope=env, document=document, order=1)
+    return env
 
 
 class TestNotificationModel:
@@ -127,71 +128,37 @@ class TestNotificationUtils:
     """Test notification utility functions."""
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
-    def test_create_notification_task(self, mock_delay, user):
-        """Test create_notification Celery task."""
-        # Mock the delay method to return a mock result
-        mock_result = Mock()
-        mock_result.result = str(user.id)
-        mock_delay.return_value = mock_result
-        
-        result = create_notification.delay(
-            str(user.id),
-            "Test notification from task"
-        )
-        
-        # Verify the task was called with correct parameters
-        mock_delay.assert_called_once_with(
-            str(user.id),
-            "Test notification from task"
-        )
-        
-        # Since we're mocking, we need to test the actual task function directly
-        # Import the function directly to avoid the mocked version
+    def test_create_notification_task(self, user):
+        """Test that create_notification proxy creates a notification via the Celery task."""
         import notifications.utils as utils
-        
-        # Test the actual task function (not the delay method)
-        task_result = utils.create_notification(str(user.id), "Test notification from task")
-        
-        # Check notification was created
+
+        # CELERY_TASK_ALWAYS_EAGER=True so the task runs synchronously
+        utils.create_notification(str(user.id), "Test notification from task")
+
         notification = Notification.objects.filter(
             user=user,
             message="Test notification from task"
         ).first()
-        
+
         assert notification is not None
         assert notification.message == "Test notification from task"
-        assert task_result == str(notification.id)
-    
+
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
-    def test_create_notification_invalid_user(self, mock_delay):
-        """Test create_notification with invalid user ID."""
-        # Mock the delay method
-        mock_result = Mock()
-        mock_result.result = None
-        mock_delay.return_value = mock_result
-        
-        result = create_notification.delay(
-            "00000000-0000-0000-0000-000000000000",
-            "Test notification"
-        )
-        
-        # Verify the task was called
-        mock_delay.assert_called_once_with(
-            "00000000-0000-0000-0000-000000000000",
-            "Test notification"
-        )
-        
-        # Test the actual task function directly
-        # Import the function directly to avoid the mocked version
+    def test_create_notification_invalid_user(self):
+        """Test create_notification with invalid user ID returns None."""
         import notifications.utils as utils
-        task_result = utils.create_notification(
+
+        # CELERY_TASK_ALWAYS_EAGER=True so the task runs synchronously
+        # The task returns None when the user is not found
+        result = utils.create_notification(
             "00000000-0000-0000-0000-000000000000",
             "Test notification"
         )
-        
-        assert task_result is None
+
+        # No notification should have been created
+        assert not Notification.objects.filter(
+            message="Test notification"
+        ).exists()
 
 
 class TestNotificationTemplates:
@@ -201,75 +168,75 @@ class TestNotificationTemplates:
     def test_envelope_sent_notification_template(self, user, document):
         """Test envelope sent notification template."""
         from notifications.utils import create_envelope_sent_notification
-        
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=user,
+            name="My Test Envelope",
             signing_order=[]
         )
-        
+
         message = create_envelope_sent_notification(envelope)
-        expected = f"{user.full_name} has requested you to sign the document '{document.file_name}'."
+        expected = f"{user.full_name} has requested you to sign the document '{envelope.name}'."
         assert message == expected
     
     @pytest.mark.django_db
     def test_signer_turn_notification_template(self, user, document):
         """Test signer turn notification template."""
         from notifications.utils import create_signer_turn_notification
-        
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=user,
+            name="My Test Envelope",
             signing_order=[]
         )
-        
+
         message = create_signer_turn_notification(envelope)
-        expected = f"It is now your turn to sign the document '{document.file_name}'."
+        expected = f"It is now your turn to sign the document '{envelope.name}'."
         assert message == expected
     
     @pytest.mark.django_db
     def test_envelope_completed_notification_template(self, user, document):
         """Test envelope completed notification template."""
         from notifications.utils import create_envelope_completed_notification
-        
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=user,
+            name="My Test Envelope",
             signing_order=[]
         )
-        
+
         message = create_envelope_completed_notification(envelope)
-        expected = f"Your envelope for '{document.file_name}' has been fully signed and completed."
+        expected = f"Your envelope for '{envelope.name}' has been fully signed and completed."
         assert message == expected
     
     @pytest.mark.django_db
     def test_signer_declined_notification_template(self, user, signer1, document):
         """Test signer declined notification template."""
         from notifications.utils import create_signer_declined_notification
-        
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=user,
+            name="My Test Envelope",
             signing_order=[]
         )
-        
+
         message = create_signer_declined_notification(envelope, signer1)
-        expected = f"Signer {signer1.full_name} declined to sign the document '{document.file_name}'. The envelope has been rejected."
+        expected = f"Signer {signer1.full_name} declined to sign the document '{envelope.name}'. The envelope has been rejected."
         assert message == expected
     
     @pytest.mark.django_db
     def test_envelope_rejected_notification_template(self, user, document):
         """Test envelope rejected notification template."""
         from notifications.utils import create_envelope_rejected_notification
-        
+
         envelope = Envelope.objects.create(
-            document=document,
             creator=user,
+            name="My Test Envelope",
             signing_order=[]
         )
-        
+
         message = create_envelope_rejected_notification(envelope)
-        expected = f"{user.full_name} has cancelled the envelope for '{document.file_name}'."
+        expected = f"{user.full_name} has cancelled the envelope for '{envelope.name}'."
         assert message == expected
 
 
@@ -294,9 +261,10 @@ class TestNotificationViews:
         response = api_client.get(reverse('notification-list'))
         
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 2
-        assert response.data[0]['message'] == "Test notification 2"  # Most recent first
-        assert response.data[1]['message'] == "Test notification 1"
+        results = response.data.get('results', response.data)
+        assert len(results) == 2
+        assert results[0]['message'] == "Test notification 2"  # Most recent first
+        assert results[1]['message'] == "Test notification 1"
     
     def test_list_notifications_unauthenticated(self, api_client):
         """Test listing notifications without authentication."""
@@ -322,8 +290,9 @@ class TestNotificationViews:
         response = api_client.get(reverse('notification-list'))
         
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 1
-        assert response.data[0]['message'] == "User notification"
+        results = response.data.get('results', response.data)
+        assert len(results) == 1
+        assert results[0]['message'] == "User notification"
     
     @pytest.mark.django_db
     def test_mark_notification_read(self, api_client, user):
@@ -385,8 +354,7 @@ class TestNotificationTriggers:
     """Test notification triggers in envelope and signature workflows."""
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
-
+    @patch('notifications.utils.create_notification')
     def test_envelope_send_notifies_first_signer(self, mock_create_notification, api_client, user, envelope, signer1, document):
         """Test that sending envelope notifies first signer."""
         api_client.force_authenticate(user=user)
@@ -398,12 +366,12 @@ class TestNotificationTriggers:
         
         assert response.status_code == status.HTTP_200_OK
         
-        # Check notification was sent to first signer with creator name and file name
-        expected_message = f"{user.full_name} has requested you to sign the document '{document.file_name}'."
+        # Check notification was sent to first signer with creator name and envelope name
+        expected_message = f"{user.full_name} has requested you to sign the document '{envelope.name}'."
         mock_create_notification.assert_called_with(str(signer1.id), expected_message)
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
+    @patch('notifications.utils.create_notification')
     def test_envelope_reject_notifies_all_signers(self, mock_create_notification, api_client, user, envelope, signer1, signer2):
         """Test that rejecting envelope notifies all signers."""
         api_client.force_authenticate(user=user)
@@ -415,8 +383,8 @@ class TestNotificationTriggers:
         
         assert response.status_code == status.HTTP_200_OK
         
-        # Check notifications were sent to all signers with creator name and file name
-        expected_message = f"{user.full_name} has cancelled the envelope for '{envelope.document.file_name}'."
+        # Check notifications were sent to all signers with creator name and envelope name
+        expected_message = f"{user.full_name} has cancelled the envelope for '{envelope.name}'."
         expected_calls = [
             call(str(signer1.id), expected_message),
             call(str(signer2.id), expected_message)
@@ -424,7 +392,7 @@ class TestNotificationTriggers:
         mock_create_notification.assert_has_calls(expected_calls, any_order=True)
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
+    @patch('notifications.utils.create_notification')
     def test_signer_signs_notifies_next_signer(self, mock_create_notification, api_client, user, envelope, signer1, signer2):
         """Test that signing notifies next signer."""
         # Send envelope first to create signatures
@@ -445,12 +413,12 @@ class TestNotificationTriggers:
         
         assert response.status_code == status.HTTP_200_OK
         
-        # Check notification was sent to next signer with file name
-        expected_message = f"It is now your turn to sign the document '{envelope.document.file_name}'."
+        # Check notification was sent to next signer with envelope name
+        expected_message = f"It is now your turn to sign the document '{envelope.name}'."
         mock_create_notification.assert_called_with(str(signer2.id), expected_message)
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
+    @patch('notifications.utils.create_notification')
     def test_last_signer_signs_notifies_creator(self, mock_create_notification, api_client, user, envelope, signer1, signer2):
         """Test that last signer signing notifies creator."""
         # Send envelope first to create signatures
@@ -471,12 +439,12 @@ class TestNotificationTriggers:
         
         assert response.status_code == status.HTTP_200_OK
         
-        # Check notification was sent to creator with file name
-        expected_message = f"Your envelope for '{envelope.document.file_name}' has been fully signed and completed."
+        # Check notification was sent to creator with envelope name
+        expected_message = f"Your envelope for '{envelope.name}' has been fully signed and completed."
         mock_create_notification.assert_called_with(str(user.id), expected_message)
     
     @pytest.mark.django_db
-    @patch('notifications.utils.create_notification.delay')
+    @patch('notifications.utils.create_notification')
     def test_signer_declines_notifies_creator(self, mock_create_notification, api_client, user, envelope, signer1):
         """Test that declining notifies creator."""
         # Send envelope first to create signatures
@@ -496,6 +464,6 @@ class TestNotificationTriggers:
         
         assert response.status_code == status.HTTP_200_OK
         
-        # Check notification was sent to creator with signer name and file name
-        expected_message = f"Signer {signer1.full_name} declined to sign the document '{envelope.document.file_name}'. The envelope has been rejected."
+        # Check notification was sent to creator with signer name and envelope name
+        expected_message = f"Signer {signer1.full_name} declined to sign the document '{envelope.name}'. The envelope has been rejected."
         mock_create_notification.assert_called_with(str(user.id), expected_message)

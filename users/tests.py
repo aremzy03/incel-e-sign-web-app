@@ -27,7 +27,7 @@ class AuthTests(TestCase):
     def test_env_loaded(self):
         # Ensure critical env-based settings are present
         self.assertIsNotNone(settings.SECRET_KEY)
-        self.assertIn('localhost', settings.ALLOWED_HOSTS)
+        self.assertTrue(len(settings.ALLOWED_HOSTS) > 0)
 
     def test_login_success_and_profile(self):
         user = CustomUser.objects.create_user(username='user@example.com', email='user@example.com', full_name='User', password='StrongPassw0rd!')

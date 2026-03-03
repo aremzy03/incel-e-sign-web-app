@@ -6,6 +6,8 @@ were only being overridden after all recipients signed, instead of
 after each individual signature.
 """
 
+import shutil
+from unittest.mock import patch
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -27,16 +29,19 @@ class DocumentOverrideAfterEachSignatureTest(APITestCase):
         """Set up test data."""
         # Create test users
         self.creator = User.objects.create_user(
+            username='creator',
             email='creator@test.com',
             password='testpass123',
             full_name='Test Creator'
         )
         self.signer1 = User.objects.create_user(
+            username='signer1',
             email='signer1@test.com',
             password='testpass123',
             full_name='Signer One'
         )
         self.signer2 = User.objects.create_user(
+            username='signer2',
             email='signer2@test.com',
             password='testpass123',
             full_name='Signer Two'
@@ -91,8 +96,17 @@ startxref
             b'\x01IEND\xaeB`\x82'
         ).decode('ascii')
     
+    def _mock_embed_signature(self, pdf_path, output_path, **kwargs):
+        """Mock embed_signature that copies input to output to simulate signing."""
+        shutil.copy(pdf_path, output_path)
+
     def test_document_override_after_each_signature(self):
         """Test that document URLs are updated after each signature."""
+        with patch('signatures.views.embed_signature', side_effect=self._mock_embed_signature):
+            self._run_test_document_override_after_each_signature()
+
+    def _run_test_document_override_after_each_signature(self):
+        """Internal test runner for document override after each signature."""
         # Step 1: Creator uploads document
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
         
@@ -118,7 +132,7 @@ startxref
         
         # Step 2: Creator creates envelope with sequential signing order
         envelope_data = {
-            'document_id': document_id,
+            'document_ids': [document_id],
             'signing_order': [
                 {'signer_id': str(self.signer1.id), 'order': 1},
                 {'signer_id': str(self.signer2.id), 'order': 2}

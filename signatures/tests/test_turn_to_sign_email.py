@@ -1,15 +1,19 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 from documents.models import Document
-from envelopes.models import Envelope
+from envelopes.models import Envelope, EnvelopeDocument
 from signatures.models import Signature
 
 
 @pytest.mark.django_db
 @patch("notifications.tasks.send_turn_to_sign_email_task.delay")
-def test_signing_triggers_next_signer_email(mock_delay, client):
+@patch("signatures.views.embed_signature")
+@patch("signatures.views.os.path.exists", return_value=True)
+def test_signing_triggers_next_signer_email(mock_exists, mock_embed, mock_delay):
     User = get_user_model()
     creator = User.objects.create_user(
         username="creator@example.com", email="creator@example.com", full_name="Creator", password="StrongPassw0rd!"
@@ -25,19 +29,27 @@ def test_signing_triggers_next_signer_email(mock_delay, client):
         owner=creator, file_url="/media/documents/test.pdf", file_name="test.pdf", file_size=1000, status="draft"
     )
     env = Envelope.objects.create(
-        document=doc,
         creator=creator,
+        name="Test Envelope",
         signing_order=[{"signer_id": str(signer1.id), "order": 1}, {"signer_id": str(signer2.id), "order": 2}],
         status="pending",
     )
+    EnvelopeDocument.objects.create(envelope=env, document=doc, order=1)
 
     Signature.objects.create(envelope=env, signer=signer1, status="pending")
     Signature.objects.create(envelope=env, signer=signer2, status="pending")
 
-    client.force_login(signer1)
-    url = reverse("signatures-sign", kwargs={"envelope_id": str(env.id)})
-    res = client.post(url, {"signature_image": "data:image/png;base64,a"}, content_type="application/json")
+    # Use APIClient with JWT authentication
+    api_client = APIClient()
+    refresh = RefreshToken.for_user(signer1)
+    api_client.credentials(HTTP_AUTHORIZATION=f'Bearer {str(refresh.access_token)}')
 
-    assert res.status_code in (200, 400)  # depending on PDF availability; we only check email hook
+    # Valid small base64 PNG image
+    import base64
+    tiny_png = base64.b64encode(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100).decode()
+    url = reverse("signatures:sign_document", kwargs={"envelope_id": str(env.id)})
+    res = api_client.post(url, {"signature_image": f"data:image/png;base64,{tiny_png}"}, format="json")
+
+    assert res.status_code == 200, f"Expected 200 but got {res.status_code}: {res.data}"
     assert mock_delay.called
 

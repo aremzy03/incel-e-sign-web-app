@@ -4,7 +4,7 @@ Tests for Celery task functionality in the E-Sign application.
 
 import pytest
 from django.test import override_settings
-from core.tasks import test_task
+from core.tasks import test_task as celery_test_task
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
@@ -18,7 +18,7 @@ def test_celery_task_execution():
     - Celery configuration is working properly
     """
     # Execute the task
-    result = test_task.delay()
+    result = celery_test_task.delay()
     
     # Assert the result is what we expect
     assert result.result == "Task executed"

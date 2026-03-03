@@ -17,7 +17,7 @@ from PIL import Image
 import io
 
 from signatures.models import UserSignature, Signature
-from envelopes.models import Envelope
+from envelopes.models import Envelope, EnvelopeDocument
 from documents.models import Document
 
 User = get_user_model()
@@ -297,7 +297,8 @@ class UserSignatureAPITest(APITestCase):
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 2)
     
     def test_list_user_signatures_other_user(self):
         """Test that users can only see their own signatures."""
@@ -316,7 +317,8 @@ class UserSignatureAPITest(APITestCase):
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 0)
+        results = response.data.get('results', response.data)
+        self.assertEqual(len(results), 0)
     
     def test_update_user_signature(self):
         """Test updating a user signature."""
@@ -423,11 +425,11 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         # Create test envelope
         self.envelope = Envelope.objects.create(
-            document=self.document,
             creator=self.user,
-            status='sent',
+            status='pending',
             signing_order=[{'signer_id': str(self.user.id), 'order': 1}]
         )
+        EnvelopeDocument.objects.create(envelope=self.envelope, document=self.document, order=1)
         
         # Create test signature record
         self.signature = Signature.objects.create(
@@ -537,7 +539,9 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         response = self.client.post(url, data)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('UserSignature not found', response.data['message'])
+        # Error may be in message (view-level) or data.signature_id (serializer-level)
+        error_text = str(response.data.get('message', '')) + str(response.data.get('data', ''))
+        self.assertIn('UserSignature not found', error_text)
     
     def test_sign_document_signature_id_other_user(self):
         """Test signing document with another user's signature_id."""
@@ -571,7 +575,8 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         response = self.client.post(url, data)
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('UserSignature not found', response.data['message'])
+        error_text = str(response.data.get('message', '')) + str(response.data.get('data', ''))
+        self.assertIn('UserSignature not found', error_text)
     
     def test_sign_document_both_signature_image_and_id(self):
         """Test signing document with both signature_image and signature_id."""

@@ -11,6 +11,7 @@ import os
 from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.conf import settings
 from rest_framework.test import APITestCase
@@ -151,8 +152,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 call_args = mock_embed.call_args
                 
                 # Check that position coordinates from EnvelopeDocument were used for document1
+                # Note: SIGNATURE_X_OFFSET of 5.0 is added to x in the view
                 self.assertEqual(call_args.kwargs['page'], 1)
-                self.assertEqual(call_args.kwargs['x'], 150)
+                self.assertEqual(call_args.kwargs['x'], 155.0)
                 self.assertEqual(call_args.kwargs['y'], 450)
                 self.assertEqual(call_args.kwargs['width'], 200)
                 self.assertEqual(call_args.kwargs['height'], 50)
@@ -212,8 +214,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 call_args = mock_embed.call_args
                 
                 # Check that default coordinates were used (from SignDocumentSerializer's to_internal_value)
+                # Note: SIGNATURE_X_OFFSET of 5.0 is added to x in the view
                 self.assertEqual(call_args.kwargs['page'], 1)
-                self.assertEqual(call_args.kwargs['x'], 100)
+                self.assertEqual(call_args.kwargs['x'], 105.0)
                 self.assertEqual(call_args.kwargs['y'], 100)
                 self.assertEqual(call_args.kwargs['width'], 120)
                 self.assertEqual(call_args.kwargs['height'], 40)
@@ -273,8 +276,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 call_args = mock_embed.call_args
                 
                 # Check that request coordinates were used
+                # Note: SIGNATURE_X_OFFSET of 5.0 is added to x in the view
                 self.assertEqual(call_args.kwargs['page'], 2)
-                self.assertEqual(call_args.kwargs['x'], 300)
+                self.assertEqual(call_args.kwargs['x'], 305.0)
                 self.assertEqual(call_args.kwargs['y'], 500)
                 self.assertEqual(call_args.kwargs['width'], 160)
                 self.assertEqual(call_args.kwargs['height'], 60)
@@ -340,9 +344,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 response = self.client.post(url, data, format='json')
                 self.assertEqual(response.status_code, status.HTTP_200_OK)
                 
-                # Verify first signer's position was used
+                # Verify first signer's position was used (with SIGNATURE_X_OFFSET of 5.0)
                 first_call_args = mock_embed.call_args
-                self.assertEqual(first_call_args.kwargs['x'], 100)
+                self.assertEqual(first_call_args.kwargs['x'], 105.0)
                 self.assertEqual(first_call_args.kwargs['y'], 700)
                 
                 # Reset mock for second call
@@ -354,9 +358,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 response = self.client.post(url, data, format='json')
                 self.assertEqual(response.status_code, status.HTTP_200_OK)
                 
-                # Verify second signer's position was used
+                # Verify second signer's position was used (with SIGNATURE_X_OFFSET of 5.0)
                 second_call_args = mock_embed.call_args
-                self.assertEqual(second_call_args.kwargs['x'], 300)
+                self.assertEqual(second_call_args.kwargs['x'], 305.0)
                 self.assertEqual(second_call_args.kwargs['y'], 700)
                 
                 # Verify both signatures are signed
@@ -409,14 +413,20 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
             status="pending"
         )
         
-        # Create a user signature for signer1
+        # Create a user signature for signer1 with a real file-like object
+        real_image = SimpleUploadedFile('signature.png', b'fake_image_data', content_type='image/png')
         user_signature = UserSignature.objects.create(
             user=self.signer1,
-            # Assuming image field is required, provide a dummy image file
-            image=MagicMock(spec=True, name='signature.png', open=MagicMock(), read=MagicMock(return_value=b'fake_image_data'), close=MagicMock()),
+            image=real_image,
             is_default=True
         )
-        
+        # After creation, mock the image attribute for use by the view
+        user_signature.image = MagicMock()
+        user_signature.image.name = 'signature.png'
+        user_signature.image.open = MagicMock()
+        user_signature.image.read = MagicMock(return_value=b'fake_image_data')
+        user_signature.image.close = MagicMock()
+
         # Mock the PDF embedding function and UserSignature.objects.get
         with patch('signatures.views.embed_signature') as mock_embed:
             with patch('signatures.views.os.path.exists') as mock_exists:
@@ -440,8 +450,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                     mock_embed.assert_called_once()
                     call_args = mock_embed.call_args
                     
+                    # Note: SIGNATURE_X_OFFSET of 5.0 is added to x in the view
                     self.assertEqual(call_args.kwargs['page'], 2)
-                    self.assertEqual(call_args.kwargs['x'], 250)
+                    self.assertEqual(call_args.kwargs['x'], 255.0)
                     self.assertEqual(call_args.kwargs['y'], 350)
                     self.assertEqual(call_args.kwargs['width'], 180)
                     self.assertEqual(call_args.kwargs['height'], 45)
@@ -480,30 +491,26 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
             status="pending"
         )
         
-        # Create a default user signature for signer1
+        # Create a default user signature for signer1 with a real file-like object
+        real_image_default = SimpleUploadedFile('signature.png', b'fake_image_data', content_type='image/png')
         user_signature = UserSignature.objects.create(
             user=self.signer1,
-            # Assuming image field is required, provide a dummy image file
-            image=MagicMock(spec=True, name='signature.png', open=MagicMock(), read=MagicMock(return_value=b'fake_image_data'), close=MagicMock()),
+            image=real_image_default,
             is_default=True
         )
-        
+
         # Mock the PDF embedding function and UserSignature.objects.get
         with patch('signatures.views.embed_signature') as mock_embed:
             with patch('signatures.views.os.path.exists') as mock_exists:
                 with patch('signatures.views.UserSignature.objects.get') as mock_get_signature:
                     # Mock the UserSignature object and its image methods for default retrieval
-                    mock_signature = MagicMock(spec=True, name='signature.png') # Set name here
+                    mock_signature = MagicMock()
+                    mock_signature.image.name = 'signature.png'
                     mock_signature.image.open = MagicMock()
                     mock_signature.image.read = MagicMock(return_value=base64.b64decode(self.signature_image))
                     mock_signature.image.close = MagicMock()
-                    # For default signature retrieval, filter with is_default=True
-                    mock_get_signature.side_effect = [
-                        # First call: for signature_id (should not happen in this test)
-                        UserSignature.DoesNotExist, 
-                        # Second call: for default signature (should return mock_signature)
-                        mock_signature
-                    ]
+                    # For default signature retrieval (no signature_id in request)
+                    mock_get_signature.return_value = mock_signature
                     
                     mock_exists.return_value = True
                     
@@ -523,8 +530,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                     mock_embed.assert_called_once()
                     call_args = mock_embed.call_args
                     
+                    # Note: SIGNATURE_X_OFFSET of 5.0 is added to x in the view
                     self.assertEqual(call_args.kwargs['page'], 1)
-                    self.assertEqual(call_args.kwargs['x'], 400)
+                    self.assertEqual(call_args.kwargs['x'], 405.0)
                     self.assertEqual(call_args.kwargs['y'], 200)
                     self.assertEqual(call_args.kwargs['width'], 160)
                     self.assertEqual(call_args.kwargs['height'], 50)

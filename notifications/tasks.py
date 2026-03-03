@@ -32,7 +32,7 @@ def create_notification(user_id: str, message: str) -> str | None:
 
 
 @shared_task
-def send_invite_email_task(email: str, inviter_name: str, registration_url: str) -> None:
+def send_invite_email_task(email: str, inviter_name: str) -> None:
     subject = "You're invited to Incel E‑Sign"
     context = {
         'email_title': subject,
