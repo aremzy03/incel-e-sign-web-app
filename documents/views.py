@@ -5,28 +5,91 @@ This module contains API views for document upload and management
 functionality in the e-signature workflow.
 """
 
+import json
 import logging
-from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from rest_framework.parsers import MultiPartParser, FormParser
-from django.http import FileResponse, Http404
 import os
-from urllib.parse import unquote
+import uuid
+from urllib.parse import unquote, urlparse
+
+import boto3
+import requests
 from django.conf import settings
-from .models import Document
-from envelopes.models import Envelope
-from .serializers import DocumentUploadSerializer, DocumentSerializer, MergeDocumentsSerializer
 from django.db import models
-from envelopes.models import EnvelopeDocument
+from django.http import FileResponse, Http404, StreamingHttpResponse
+from django.shortcuts import get_object_or_404
+from rest_framework import status
+from rest_framework.generics import DestroyAPIView, ListAPIView, RetrieveAPIView
+from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import Document
+from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
+from envelopes.models import Envelope, EnvelopeDocument
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
 from pypdf import PdfReader, PdfWriter
-import uuid
 
 logger = logging.getLogger(__name__)
+
+# Debug session constants for instrumentation
+DEBUG_LOG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    ".cursor",
+    "debug-60435d.log",
+)
+DEBUG_SESSION_ID = "60435d"
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    """
+    Lightweight NDJSON logger for debug mode.
+    Writes a single JSON line to the shared debug log file.
+    """
+    try:
+        payload = {
+            "sessionId": DEBUG_SESSION_ID,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(__import__("time").time() * 1000),
+        }
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(DEBUG_LOG_PATH), exist_ok=True)
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, default=str) + "\n")
+    except Exception:
+        # Never let debugging logs break the app
+        pass
+
+
+def get_accessible_document_for_user(user, pk):
+    """
+    Resolve a Document the given user is allowed to access or raise Http404.
+    """
+    # Direct ownership
+    document = Document.objects.filter(id=pk, owner=user).first()
+    if document:
+        return document
+
+    # Envelope creator access
+    has_creator_access = EnvelopeDocument.objects.filter(
+        document__id=pk,
+        envelope__creator=user
+    ).exists()
+    if has_creator_access:
+        return get_object_or_404(Document, id=pk)
+
+    # Signer access: scan envelopes containing this document
+    user_id_str = str(user.id)
+    for env_doc in EnvelopeDocument.objects.filter(document__id=pk).select_related('envelope'):
+        for signer_entry in env_doc.envelope.signing_order:
+            if signer_entry.get('signer_id') == user_id_str:
+                return get_object_or_404(Document, id=pk)
+
+    raise Http404
 
 
 class DocumentUploadView(APIView):
@@ -318,38 +381,11 @@ class DocumentDownloadView(APIView):
     
     def get(self, request, pk):
         """
-        Download a document file.
-        
-        Args:
-            request: HTTP request
-            pk: Document UUID
-            
-        Returns:
-            FileResponse: PDF file download or 404 error
+        Download a document file as an attachment.
         """
         try:
-            # Get the document, ensuring user has access via ownership or envelope participation
             user = request.user
-            # Quick check for ownership
-            document = Document.objects.filter(id=pk, owner=user).first()
-            if not document:
-                # Check if the document exists and the user has access via an envelope
-                # Check envelope creator access
-                has_creator_access = EnvelopeDocument.objects.filter(document__id=pk, envelope__creator=user).exists()
-                if has_creator_access:
-                    document = get_object_or_404(Document, id=pk)
-                else:
-                    # Check signer access by scanning EnvelopeDocuments for this document
-                    has_signer_access = False
-                    for env_doc in EnvelopeDocument.objects.filter(document__id=pk):
-                        for signer_entry in env_doc.envelope.signing_order:
-                            if signer_entry.get('signer_id') == str(user.id):
-                                has_signer_access = True
-                                break
-                        if has_signer_access:
-                            document = get_object_or_404(Document, id=pk)
-                        else:
-                            raise Http404
+            document = get_accessible_document_for_user(user, pk)
             
             # Get the full file path - prioritize signed version if available
             # Use the same logic as signing: signed_file_url takes precedence
@@ -432,6 +468,209 @@ class DocumentDownloadView(APIView):
             )
 
 
+class DocumentPreviewView(APIView):
+    """
+    API view for inline preview of documents.
+    
+    This endpoint always proxies the file bytes through the backend
+    (including for S3/remote URLs) to avoid CORS issues on the client.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        """
+        Stream a document for inline preview (no attachment disposition).
+        """
+        try:
+            user = request.user
+            # #region agent log
+            _debug_log(
+                run_id="pre-fix-1",
+                hypothesis_id="H1",
+                location="documents/views.py:DocumentPreviewView.get",
+                message="preview_request",
+                data={"user_id": str(getattr(user, "id", None)), "document_id": str(pk)},
+            )
+            # #endregion agent log
+            document = get_accessible_document_for_user(user, pk)
+
+            source_url = document.signed_file_url or document.file_url
+            # #region agent log
+            _debug_log(
+                run_id="pre-fix-1",
+                hypothesis_id="H2",
+                location="documents/views.py:DocumentPreviewView.get",
+                message="resolved_source_url",
+                data={"document_id": str(document.id), "source_url": source_url},
+            )
+            # #endregion agent log
+
+            # Remote storage (e.g. S3) – stream via boto3 using bucket/key instead of HTTP GET on a signed URL
+            if source_url.startswith('http'):
+                try:
+                    parsed = urlparse(source_url)
+                    encoded_key = parsed.path.lstrip('/')
+                    key = unquote(encoded_key)
+                    # #region agent log
+                    _debug_log(
+                        run_id="pre-fix-1",
+                        hypothesis_id="H3",
+                        location="documents/views.py:DocumentPreviewView.get",
+                        message="s3_fetch_attempt",
+                        data={
+                            "parsed_netloc": parsed.netloc,
+                            "parsed_path": parsed.path,
+                            "encoded_key": encoded_key,
+                            "derived_key": key,
+                            "bucket": settings.AWS_STORAGE_BUCKET_NAME,
+                            "region": settings.AWS_S3_REGION_NAME,
+                        },
+                    )
+                    # #endregion agent log
+
+                    s3_client = boto3.client(
+                        's3',
+                        region_name=settings.AWS_S3_REGION_NAME,
+                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    )
+
+                    obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
+                    # #region agent log
+                    _debug_log(
+                        run_id="pre-fix-1",
+                        hypothesis_id="H4",
+                        location="documents/views.py:DocumentPreviewView.get",
+                        message="s3_fetch_success",
+                        data={
+                            "content_type": obj.get("ContentType"),
+                            "content_length": obj.get("ContentLength"),
+                        },
+                    )
+                    # #endregion agent log
+                except Exception as e:
+                    # #region agent log
+                    _debug_log(
+                        run_id="pre-fix-1",
+                        hypothesis_id="H5",
+                        location="documents/views.py:DocumentPreviewView.get",
+                        message="s3_fetch_exception",
+                        data={
+                            "error_type": type(e).__name__,
+                            "error_str": str(e),
+                        },
+                    )
+                    # #endregion agent log
+                    # Distinguish not-found from other errors when possible
+                    if hasattr(boto3, "client") and getattr(getattr(e, "response", {}), "get", None):
+                        try:
+                            code = e.response.get("Error", {}).get("Code")  # type: ignore[attr-defined]
+                        except Exception:
+                            code = None
+                        if code in ("NoSuchKey", "404"):
+                            return Response(
+                                {
+                                    'status': 'error',
+                                    'message': 'Document not available from remote storage'
+                                },
+                                status=status.HTTP_404_NOT_FOUND
+                            )
+                    return Response(
+                        {
+                            'status': 'error',
+                            'message': f'Unable to fetch document from remote storage: {e}'
+                        },
+                        status=status.HTTP_502_BAD_GATEWAY
+                    )
+
+                body = obj['Body']
+
+                def iter_stream():
+                    for chunk in body.iter_chunks(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+
+                content_type = obj.get('ContentType') or 'application/pdf'
+                content_length = obj.get('ContentLength')
+
+                response = StreamingHttpResponse(iter_stream(), content_type=content_type)
+                if content_length is not None:
+                    response['Content-Length'] = str(content_length)
+                response['Content-Disposition'] = f'inline; filename="{document.file_name}"'
+
+                from audit.utils import log_action
+                log_action(
+                    request.user,
+                    "PREVIEW_DOC",
+                    document,
+                    f"User {request.user.full_name or request.user.username} previewed document '{document.file_name}'.",
+                    request=request
+                )
+
+                return response
+
+            # Local / MEDIA-backed files – resolve absolute path
+            abs_path = get_media_absolute_path_from_url(source_url)
+
+            # If we ended up with a non-absolute path, treat it as relative to MEDIA_ROOT
+            if not os.path.isabs(abs_path):
+                abs_path = os.path.join(str(settings.MEDIA_ROOT), abs_path)
+
+            if not os.path.exists(abs_path):
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Document file not found on server'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            file_handle = open(abs_path, 'rb')
+            response = FileResponse(
+                file_handle,
+                content_type='application/pdf',
+                as_attachment=False,
+            )
+            response['Content-Disposition'] = f'inline; filename="{document.file_name}"'
+
+            from audit.utils import log_action
+            log_action(
+                request.user,
+                "PREVIEW_DOC",
+                document,
+                f"User {request.user.full_name or request.user.username} previewed document '{document.file_name}'.",
+                request=request
+            )
+
+            return response
+
+        except Document.DoesNotExist:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Document not found or access denied'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except FileNotFoundError:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': 'Document file not found on server'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {
+                    'status': 'error',
+                    'message': f'Error streaming document for preview: {str(e)}'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class MergeDocumentsView(APIView):
     """
     API view to merge multiple existing documents owned by the user into one PDF.
@@ -463,12 +702,22 @@ class MergeDocumentsView(APIView):
             # Resolve file path (prefer signed if exists)
             source_url = doc.signed_file_url or doc.file_url
             abs_path = get_media_absolute_path_from_url(source_url)
-            if not os.path.isabs(abs_path) or not os.path.exists(abs_path):
+
+            # For local filesystem paths, ensure the file exists.
+            if os.path.isabs(abs_path):
+                if not os.path.exists(abs_path):
+                    return Response({
+                        'status': 'error',
+                        'message': f'Source file missing on server for document {doc_id}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                docs.append((doc, abs_path))
+            else:
+                # For non-local sources (e.g. S3 URLs), merging is not currently
+                # supported without first downloading to a temporary location.
                 return Response({
                     'status': 'error',
-                    'message': f'Source file missing on server for document {doc_id}'
+                    'message': f'Merging documents stored on remote storage is not supported for document {doc_id}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            docs.append((doc, abs_path))
 
         # Perform merge preserving order
         writer = PdfWriter()

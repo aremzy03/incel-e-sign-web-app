@@ -121,21 +121,19 @@ class DocumentUploadSerializer(serializers.Serializer):
             # Generate unique PDF filename for storage (with UUID prefix for uniqueness on disk)
             unique_pdf_filename = f"{owner.id}_{os.path.basename(base_name)}.pdf"
             storage_rel_path = f"documents/{unique_pdf_filename}"
-            
-            # Save PDF into default storage
+
+            # Save PDF into default storage and build a URL using the active storage backend
             saved_path = default_storage.save(storage_rel_path, ContentFile(pdf_bytes))
-            file_url = f"{settings.MEDIA_URL}{saved_path}"
+            file_url = default_storage.url(saved_path)
             # Store clean filename without UUID prefix for display
             file_name_for_record = f"{base_name}.pdf"
             file_size_for_record = len(pdf_bytes)
         else:
             # Handle PDF directly: store as-is
             unique_filename = f"{owner.id}_{original_name}"
-            file_path = default_storage.save(
-                f"documents/{unique_filename}",
-                file
-            )
-            file_url = f"{settings.MEDIA_URL}{file_path}"
+            storage_rel_path = f"documents/{unique_filename}"
+            saved_path = default_storage.save(storage_rel_path, file)
+            file_url = default_storage.url(saved_path)
             file_name_for_record = original_name
             file_size_for_record = file.size
         

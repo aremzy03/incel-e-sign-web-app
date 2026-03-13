@@ -420,15 +420,27 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 USE_S3 = config('USE_S3', cast=bool, default=False)
 
 if USE_S3:
+    # Django 5+ uses STORAGES for backend configuration; keep DEFAULT_FILE_STORAGE
+    # for backwards compatibility and third-party apps that still read it.
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+        },
+    }
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
-    
+
     # AWS S3 configuration
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
     AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN', default=None)
+    # Prefix all stored objects under this path inside the bucket
+    AWS_LOCATION = "incel-esign-app"
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
@@ -437,6 +449,14 @@ if USE_S3:
     AWS_QUERYSTRING_AUTH = True
 else:
     # Development: use local file system storage (default)
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
     # AWS variables still available for optional use
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)

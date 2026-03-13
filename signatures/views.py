@@ -360,7 +360,7 @@ class SignDocumentView(APIView):
                     new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
                     # Update document with newly signed file URL
                     document.signed_file_url = new_signed_url
-                    document.file_url = new_signed_url # Also update file_url to reflect latest signed version
+                    document.file_url = new_signed_url  # Also update file_url to reflect latest signed version
                 except Exception as e:
                     # On failure, proceed without blocking signing
                     import logging
@@ -451,18 +451,18 @@ class SignDocumentView(APIView):
                     except ValueError:
                         if os.path.isabs(source_url):
                             source_path = source_url
-                    if source_path:
-                        locked_path = lock_pdf_with_password(
-                            pdf_path=source_path,
-                            password=final_password,
-                        )
-                        if locked_path:
-                            try:
-                                relative_locked = os.path.relpath(locked_path, media_root)
-                                locked_url = f"{settings.MEDIA_URL}{relative_locked}"
-                            except ValueError:
-                                # If the locked file is not within MEDIA_ROOT, fall back to absolute path.
-                                locked_url = locked_path
+                if source_path:
+                    locked_path = lock_pdf_with_password(
+                        pdf_path=source_path,
+                        password=final_password,
+                    )
+                    if locked_path:
+                        try:
+                            relative_locked = os.path.relpath(locked_path, media_root)
+                            locked_url = f"{settings.MEDIA_URL}{relative_locked}"
+                        except ValueError:
+                            # If the locked file is not within MEDIA_ROOT, fall back to absolute path.
+                            locked_url = locked_path
                         else:
                             LOGGER.error(
                                 "Failed to lock PDF for document %s in envelope %s",

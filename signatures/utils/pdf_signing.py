@@ -196,9 +196,21 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
 def get_media_absolute_path_from_url(file_url: str) -> str:
     """
     Convert a MEDIA_URL-based URL (e.g. /media/documents/file.pdf) to an absolute file system path under MEDIA_ROOT.
+
+    For S3-backed storage (USE_S3=True), this helper should only be used for
+    URLs that still point to local temporary files. Remote HTTP(S) URLs are
+    returned as-is so that callers can decide how to handle them (e.g.,
+    download to a temp file before processing).
     """
     if not file_url:
         raise ValueError("file_url is empty")
+
+    # If this is an absolute HTTP(S) URL (e.g. S3 object URL), return as-is.
+    # Callers that truly need a local path should handle downloading to a
+    # temporary location first.
+    if file_url.startswith("http://") or file_url.startswith("https://"):
+        return file_url
+
     media_url = settings.MEDIA_URL
     if not file_url.startswith(media_url):
         # If already absolute path or other storage, return as-is
