@@ -205,11 +205,8 @@ def get_media_absolute_path_from_url(file_url: str) -> str:
     if not file_url:
         raise ValueError("file_url is empty")
 
-    # If this is an absolute HTTP(S) URL (e.g. S3 object URL), return as-is.
-    # Callers that truly need a local path should handle downloading to a
-    # temporary location first.
     if file_url.startswith("http://") or file_url.startswith("https://"):
-        return file_url
+        raise ValueError("Remote URL cannot be resolved to a local media path")
 
     media_url = settings.MEDIA_URL
     if not file_url.startswith(media_url):

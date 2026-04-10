@@ -21,6 +21,7 @@ import logging
 import os
 import secrets
 import string
+from documents.storage import get_permanent_s3_storage
 
 SIGNATURE_X_OFFSET = 5.0
 
@@ -210,29 +211,23 @@ class SignDocumentView(APIView):
 
             # Always start from the latest available file: previously signed version if present
             source_url = document.signed_file_url or document.file_url
-            input_pdf_path = get_media_absolute_path_from_url(source_url)
-            output_dir = os.path.join(str(settings.MEDIA_ROOT), 'signed_docs')
+            try:
+                input_pdf_path = get_media_absolute_path_from_url(source_url)
+            except ValueError:
+                return Response({
+                    "status": "error",
+                    "message": "Document is not available in temporary local storage for signing."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            output_dir = os.path.join(str(settings.MEDIA_ROOT), settings.TEMP_SIGNED_SUBDIR)
             os.makedirs(output_dir, exist_ok=True)
             output_pdf_path = os.path.join(output_dir, f"{document.id}_signed_{envelope.id}.pdf")
-
-            # Ensure we have a local input PDF; download if it's a remote URL
-            if not os.path.exists(input_pdf_path):
-                try:
-                    if isinstance(source_url, str) and (source_url.startswith('http://') or source_url.startswith('https://')):
-                        import requests
-                        tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp')
-                        os.makedirs(tmp_dir, exist_ok=True)
-                        tmp_input = os.path.join(tmp_dir, f"{document.id}_current.pdf")
-                        with requests.get(source_url, stream=True, timeout=15) as r:
-                            r.raise_for_status()
-                            with open(tmp_input, 'wb') as f:
-                                for chunk in r.iter_content(chunk_size=8192):
-                                    if chunk:
-                                        f.write(chunk)
-                        input_pdf_path = tmp_input
-                except Exception:
-                    # If download fails, we will skip embedding below
-                    pass
+            if os.path.abspath(output_pdf_path) == os.path.abspath(input_pdf_path):
+                # Avoid in-place write when signing an already-signed version.
+                output_pdf_path = os.path.join(
+                    output_dir,
+                    f"{document.id}_signed_{envelope.id}_{request.user.id}.pdf",
+                )
 
             # Try to embed signature; if it fails, continue workflow without blocking
             if os.path.exists(input_pdf_path):
@@ -249,6 +244,11 @@ class SignDocumentView(APIView):
                                 current_output_path = output_pdf_path
                             else:
                                 current_output_path = f"{output_pdf_path}.tmp{idx}"
+                                temp_files_to_cleanup.append(current_output_path)
+
+                            # Never write in-place (some PDF libs error when input == output)
+                            if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
+                                current_output_path = f"{output_pdf_path}.tmp_inplace{idx}"
                                 temp_files_to_cleanup.append(current_output_path)
                             
                             if position_data and isinstance(position_data, dict):
@@ -290,7 +290,7 @@ class SignDocumentView(APIView):
                             signer_fields = []
 
                         # Stamp text-like fields sequentially
-                        for f in signer_fields:
+                        for idx, f in enumerate(signer_fields):
                             field_value = f.prefill_value if f.prefill_value is not None else f.value
                             if not field_value:
                                 continue
@@ -322,6 +322,9 @@ class SignDocumentView(APIView):
 
                                 # Determine next IO paths
                                 current_output_path = output_pdf_path
+                                if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
+                                    current_output_path = f"{output_pdf_path}.texttmp{idx}"
+                                    temp_files_to_cleanup.append(current_output_path)
                                 embed_text(
                                     pdf_path=current_input_path,
                                     output_path=current_output_path,
@@ -333,6 +336,15 @@ class SignDocumentView(APIView):
                                     font_size=float(f.font_size or 12),
                                 )
                                 current_input_path = current_output_path
+
+                        # Ensure final output ends up at output_pdf_path
+                        if os.path.abspath(current_input_path) != os.path.abspath(output_pdf_path):
+                            try:
+                                os.replace(current_input_path, output_pdf_path)
+                            except Exception:
+                                # If we can't replace, keep whatever path we wrote.
+                                output_pdf_path = current_input_path
+                                # Let URL generation below point to this location if within MEDIA_ROOT.
 
                         # Clean up temporary files
                         for temp_file in temp_files_to_cleanup:
@@ -449,8 +461,7 @@ class SignDocumentView(APIView):
                     try:
                         source_path = get_media_absolute_path_from_url(source_url)
                     except ValueError:
-                        if os.path.isabs(source_url):
-                            source_path = source_url
+                        source_path = None
                 if source_path:
                     locked_path = lock_pdf_with_password(
                         pdf_path=source_path,
@@ -458,14 +469,14 @@ class SignDocumentView(APIView):
                     )
                     if locked_path:
                         try:
-                            relative_locked = os.path.relpath(locked_path, media_root)
-                            locked_url = f"{settings.MEDIA_URL}{relative_locked}"
-                        except ValueError:
-                            # If the locked file is not within MEDIA_ROOT, fall back to absolute path.
-                            locked_url = locked_path
-                        else:
-                            LOGGER.error(
-                                "Failed to lock PDF for document %s in envelope %s",
+                            s3_storage = get_permanent_s3_storage()
+                            s3_key = f"completed/{envelope.id}/{document.id}.pdf"
+                            with open(locked_path, "rb") as f:
+                                saved_key = s3_storage.save(s3_key, f)
+                            locked_url = s3_storage.url(saved_key)
+                        except Exception:
+                            LOGGER.exception(
+                                "Failed to upload locked PDF to S3 for document %s in envelope %s",
                                 document.id,
                                 envelope.id,
                             )

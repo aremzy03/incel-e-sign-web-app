@@ -7,9 +7,10 @@ functionality in the e-signature workflow.
 
 import os
 from rest_framework import serializers
-from django.core.files.storage import default_storage
 from django.conf import settings
+from django.core.files.base import ContentFile
 from .models import Document
+from .storage import get_temp_local_storage
 
 
 class MergeDocumentsSerializer(serializers.Serializer):
@@ -82,6 +83,7 @@ class DocumentUploadSerializer(serializers.Serializer):
             Document: The created Document instance
         """
         file = self.validated_data['file']
+        temp_storage = get_temp_local_storage()
         
         # Determine handling by extension
         original_name = file.name
@@ -90,7 +92,6 @@ class DocumentUploadSerializer(serializers.Serializer):
         
         if ext in ('.doc', '.docx'):
             # Save the uploaded Word file to a temporary location on disk
-            from django.core.files.base import ContentFile
             from .utils import convert_word_to_pdf
             
             tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp_uploads')
@@ -120,20 +121,20 @@ class DocumentUploadSerializer(serializers.Serializer):
             
             # Generate unique PDF filename for storage (with UUID prefix for uniqueness on disk)
             unique_pdf_filename = f"{owner.id}_{os.path.basename(base_name)}.pdf"
-            storage_rel_path = f"documents/{unique_pdf_filename}"
+            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_pdf_filename}"
 
-            # Save PDF into default storage and build a URL using the active storage backend
-            saved_path = default_storage.save(storage_rel_path, ContentFile(pdf_bytes))
-            file_url = default_storage.url(saved_path)
+            # Save PDF locally and build a MEDIA_URL-based URL
+            saved_path = temp_storage.save(storage_rel_path, ContentFile(pdf_bytes))
+            file_url = temp_storage.url(saved_path)
             # Store clean filename without UUID prefix for display
             file_name_for_record = f"{base_name}.pdf"
             file_size_for_record = len(pdf_bytes)
         else:
             # Handle PDF directly: store as-is
             unique_filename = f"{owner.id}_{original_name}"
-            storage_rel_path = f"documents/{unique_filename}"
-            saved_path = default_storage.save(storage_rel_path, file)
-            file_url = default_storage.url(saved_path)
+            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_filename}"
+            saved_path = temp_storage.save(storage_rel_path, file)
+            file_url = temp_storage.url(saved_path)
             file_name_for_record = original_name
             file_size_for_record = file.size
         

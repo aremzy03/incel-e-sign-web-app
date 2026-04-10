@@ -410,6 +410,10 @@ else:
 
 MEDIA_ROOT = media_root_path
 
+# Temporary local storage subdirectories (used regardless of USE_S3).
+TEMP_UPLOAD_SUBDIR = config('TEMP_UPLOAD_SUBDIR', default='temp_uploads')
+TEMP_SIGNED_SUBDIR = config('TEMP_SIGNED_SUBDIR', default='signed_docs')
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

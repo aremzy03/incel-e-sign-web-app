@@ -215,8 +215,10 @@ startxref
             reverse('documents:document_download', kwargs={'pk': document_id})
         )
         
-        self.assertEqual(download_response.status_code, 200)
-        self.assertEqual(download_response['Content-Type'], 'application/pdf')
+        # Download may stream local bytes (200) or redirect to S3 (302) after completion.
+        self.assertIn(download_response.status_code, [200, 302])
+        if download_response.status_code == 200:
+            self.assertEqual(download_response['Content-Type'], 'application/pdf')
         
         # Step 7: Test document serializer returns current_file_url
         detail_response = self.client.get(

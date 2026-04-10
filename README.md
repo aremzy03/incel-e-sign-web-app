@@ -167,6 +167,10 @@ STATIC_ROOT=/path/to/staticfiles
 MEDIA_URL=/media/
 MEDIA_ROOT=/path/to/media
 
+# Temporary local storage (used during signing even when USE_S3=True)
+TEMP_UPLOAD_SUBDIR=temp_uploads
+TEMP_SIGNED_SUBDIR=signed_docs
+
 # AWS S3 Configuration (optional, for production)
 USE_S3=True  # Set to True to enable S3 storage
 AWS_ACCESS_KEY_ID=your-access-key
@@ -2875,8 +2879,12 @@ Installed packages:
 - PyPDF2
 
 Storage setup:
-- Development: local file storage (default)
-- Production: configure AWS S3 using `django-storages` (commented placeholders in `esign/settings.py`)
+- **In-progress signing (performance mode)**: uploads and intermediate signed artifacts are stored on the server under `MEDIA_ROOT` for fast read/write.
+- **After envelope completion**: the final locked PDF is uploaded to S3 and `Document.file_url` / `Document.signed_file_url` are updated to the S3 URL.
+
+Temporary directories (under `MEDIA_ROOT`):
+- `TEMP_UPLOAD_SUBDIR` (default: `temp_uploads`)
+- `TEMP_SIGNED_SUBDIR` (default: `signed_docs`)
 
 Environment variables (see `.env.example`):
 - AWS_ACCESS_KEY_ID
@@ -2884,11 +2892,35 @@ Environment variables (see `.env.example`):
 - AWS_STORAGE_BUCKET_NAME
 - AWS_S3_REGION_NAME
 
+#### Cleanup of temporary PDFs
+
+Temporary local PDFs are retained for **24 hours** and should be cleaned up by a scheduler.
+
+Management command:
+
+```bash
+python manage.py cleanup_temp_pdfs
+python manage.py cleanup_temp_pdfs --hours 24
+python manage.py cleanup_temp_pdfs --dry-run
+```
+
+Example cron (daily at 03:15):
+
+```bash
+15 3 * * * /path/to/venv/bin/python /path/to/app/manage.py cleanup_temp_pdfs --hours 24
+```
+
 ### Testing & Validation
 
 **Run All Tests:**
 ```bash
 pytest
+```
+
+**If your shell env has non-boolean `DEBUG` (common in release shells), run with explicit env overrides:**
+
+```bash
+DEBUG=True SECRET_KEY=testsecret ALLOWED_HOSTS=localhost .venv/bin/pytest -q
 ```
 
 **Test Coverage Summary:**
