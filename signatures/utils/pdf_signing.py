@@ -2,6 +2,7 @@ import io
 import os
 import base64
 from typing import Tuple
+from urllib.parse import unquote
 
 from django.conf import settings
 
@@ -212,7 +213,8 @@ def get_media_absolute_path_from_url(file_url: str) -> str:
     if not file_url.startswith(media_url):
         # If already absolute path or other storage, return as-is
         return file_url
-    relative_path = file_url[len(media_url):]
+    # URL-encode segments in file_url (e.g. %20) must match on-disk names (spaces).
+    relative_path = unquote(file_url[len(media_url) :])
     return os.path.join(str(settings.MEDIA_ROOT), relative_path)
 
 

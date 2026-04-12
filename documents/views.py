@@ -5,7 +5,6 @@ This module contains API views for document upload and management
 functionality in the e-signature workflow.
 """
 
-import json
 import logging
 import os
 import uuid
@@ -32,38 +31,6 @@ from pypdf import PdfReader, PdfWriter
 
 logger = logging.getLogger(__name__)
 
-# Debug session constants for instrumentation
-DEBUG_LOG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    ".cursor",
-    "debug-60435d.log",
-)
-DEBUG_SESSION_ID = "60435d"
-
-
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    """
-    Lightweight NDJSON logger for debug mode.
-    Writes a single JSON line to the shared debug log file.
-    """
-    try:
-        payload = {
-            "sessionId": DEBUG_SESSION_ID,
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(DEBUG_LOG_PATH), exist_ok=True)
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, default=str) + "\n")
-    except Exception:
-        # Never let debugging logs break the app
-        pass
-
 
 def get_accessible_document_for_user(user, pk):
     """
@@ -86,7 +53,8 @@ def get_accessible_document_for_user(user, pk):
     user_id_str = str(user.id)
     for env_doc in EnvelopeDocument.objects.filter(document__id=pk).select_related('envelope'):
         for signer_entry in env_doc.envelope.signing_order:
-            if signer_entry.get('signer_id') == user_id_str:
+            # Must match DocumentDetailView: signer_id may be UUID from JSONField/code paths
+            if str(signer_entry.get('signer_id')) == user_id_str:
                 return get_object_or_404(Document, id=pk)
 
     raise Http404
@@ -483,28 +451,9 @@ class DocumentPreviewView(APIView):
         Stream a document for inline preview (no attachment disposition).
         """
         try:
-            user = request.user
-            # #region agent log
-            _debug_log(
-                run_id="pre-fix-1",
-                hypothesis_id="H1",
-                location="documents/views.py:DocumentPreviewView.get",
-                message="preview_request",
-                data={"user_id": str(getattr(user, "id", None)), "document_id": str(pk)},
-            )
-            # #endregion agent log
-            document = get_accessible_document_for_user(user, pk)
+            document = get_accessible_document_for_user(request.user, pk)
 
             source_url = document.signed_file_url or document.file_url
-            # #region agent log
-            _debug_log(
-                run_id="pre-fix-1",
-                hypothesis_id="H2",
-                location="documents/views.py:DocumentPreviewView.get",
-                message="resolved_source_url",
-                data={"document_id": str(document.id), "source_url": source_url},
-            )
-            # #endregion agent log
 
             # Remote storage (e.g. S3) – stream via boto3 using bucket/key instead of HTTP GET on a signed URL
             if source_url.startswith('http'):
@@ -512,22 +461,6 @@ class DocumentPreviewView(APIView):
                     parsed = urlparse(source_url)
                     encoded_key = parsed.path.lstrip('/')
                     key = unquote(encoded_key)
-                    # #region agent log
-                    _debug_log(
-                        run_id="pre-fix-1",
-                        hypothesis_id="H3",
-                        location="documents/views.py:DocumentPreviewView.get",
-                        message="s3_fetch_attempt",
-                        data={
-                            "parsed_netloc": parsed.netloc,
-                            "parsed_path": parsed.path,
-                            "encoded_key": encoded_key,
-                            "derived_key": key,
-                            "bucket": settings.AWS_STORAGE_BUCKET_NAME,
-                            "region": settings.AWS_S3_REGION_NAME,
-                        },
-                    )
-                    # #endregion agent log
 
                     s3_client = boto3.client(
                         's3',
@@ -537,31 +470,7 @@ class DocumentPreviewView(APIView):
                     )
 
                     obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
-                    # #region agent log
-                    _debug_log(
-                        run_id="pre-fix-1",
-                        hypothesis_id="H4",
-                        location="documents/views.py:DocumentPreviewView.get",
-                        message="s3_fetch_success",
-                        data={
-                            "content_type": obj.get("ContentType"),
-                            "content_length": obj.get("ContentLength"),
-                        },
-                    )
-                    # #endregion agent log
                 except Exception as e:
-                    # #region agent log
-                    _debug_log(
-                        run_id="pre-fix-1",
-                        hypothesis_id="H5",
-                        location="documents/views.py:DocumentPreviewView.get",
-                        message="s3_fetch_exception",
-                        data={
-                            "error_type": type(e).__name__,
-                            "error_str": str(e),
-                        },
-                    )
-                    # #endregion agent log
                     # Distinguish not-found from other errors when possible
                     if hasattr(boto3, "client") and getattr(getattr(e, "response", {}), "get", None):
                         try:
