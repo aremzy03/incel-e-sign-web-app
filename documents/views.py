@@ -364,9 +364,91 @@ class DocumentDownloadView(APIView):
                 # Decode URL-encoded filename (e.g., %20 -> space)
                 file_path = os.path.join(settings.MEDIA_ROOT, unquote(source_url[7:]))  # Remove '/media/' prefix and decode URL
             elif source_url.startswith('http'):
-                # For S3 or other remote storage, redirect to the URL
-                from django.http import HttpResponseRedirect
-                return HttpResponseRedirect(source_url)
+                # For S3 or other remote storage, proxy bytes through the backend.
+                # This avoids CORS issues and prevents brittle browser-side signed URL handling.
+                try:
+                    parsed = urlparse(source_url)
+                    encoded_path = parsed.path.lstrip('/')
+                    decoded_path = unquote(encoded_path)
+
+                    # Support both S3 URL styles:
+                    # - virtual-hosted: https://<bucket>.s3.amazonaws.com/<key>
+                    # - path-style:     https://s3.amazonaws.com/<bucket>/<key>
+                    key = decoded_path
+                    if key:
+                        first, rest = (key.split('/', 1) + [""])[:2]
+                        if first == settings.AWS_STORAGE_BUCKET_NAME and rest:
+                            key = rest
+
+                    if not key:
+                        return Response(
+                            {
+                                'status': 'error',
+                                'message': 'Unable to resolve remote storage key for document'
+                            },
+                            status=status.HTTP_502_BAD_GATEWAY
+                        )
+
+                    s3_client = boto3.client(
+                        's3',
+                        region_name=settings.AWS_S3_REGION_NAME,
+                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                    )
+
+                    obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
+                except Exception as e:
+                    # Best-effort mapping of not-found vs other upstream errors.
+                    code = None
+                    try:
+                        code = getattr(getattr(e, "response", None), "get", lambda *_: None)("Error", {}).get("Code")  # type: ignore[union-attr]
+                    except Exception:
+                        try:
+                            code = getattr(e, "response", {}).get("Error", {}).get("Code")
+                        except Exception:
+                            code = None
+                    if code in ("NoSuchKey", "404"):
+                        return Response(
+                            {
+                                'status': 'error',
+                                'message': 'Document not available from remote storage'
+                            },
+                            status=status.HTTP_404_NOT_FOUND
+                        )
+                    return Response(
+                        {
+                            'status': 'error',
+                            'message': f'Unable to fetch document from remote storage: {e}'
+                        },
+                        status=status.HTTP_502_BAD_GATEWAY
+                    )
+
+                body = obj['Body']
+
+                def iter_stream():
+                    for chunk in body.iter_chunks(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+
+                content_type = obj.get('ContentType') or 'application/pdf'
+                content_length = obj.get('ContentLength')
+
+                response = StreamingHttpResponse(iter_stream(), content_type=content_type)
+                if content_length is not None:
+                    response['Content-Length'] = str(content_length)
+                response['Content-Disposition'] = f'attachment; filename="{document.file_name}"'
+
+                # Log the download action
+                from audit.utils import log_action
+                log_action(
+                    request.user,
+                    "DOWNLOAD_DOC",
+                    document,
+                    f"User {request.user.full_name or request.user.username} downloaded document '{document.file_name}'.",
+                    request=request
+                )
+
+                return response
             else:
                 # For relative paths, try to construct the full path
                 if source_url.startswith('documents/'):
