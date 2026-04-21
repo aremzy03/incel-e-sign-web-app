@@ -86,6 +86,11 @@ class Envelope(models.Model):
         help_text="Password applied to lock signed PDFs once the envelope is completed."
     )
 
+    pdf_password_protection_enabled = models.BooleanField(
+        default=True,
+        help_text="If True, signed PDFs are password-protected when the envelope is completed."
+    )
+
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Envelope"

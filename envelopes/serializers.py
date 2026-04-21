@@ -92,7 +92,15 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Envelope
-        fields = ['document_ids', 'name', 'description', 'signing_order', 'documents_with_positions', 'fields']
+        fields = [
+            'document_ids',
+            'name',
+            'description',
+            'signing_order',
+            'pdf_password_protection_enabled',
+            'documents_with_positions',
+            'fields',
+        ]
 
     def validate_document_ids(self, value):
         """
@@ -257,6 +265,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         name = validated_data.pop('name', None)
         description = validated_data.pop('description', None)
         signing_order = validated_data.pop('signing_order', [])
+        pdf_password_protection_enabled = validated_data.pop('pdf_password_protection_enabled', True)
         documents_with_positions_data = validated_data.pop('documents_with_positions', [])
         fields_data = validated_data.pop('fields', [])
 
@@ -272,7 +281,8 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
                 name=name,
                 description=description,
                 status="draft",
-                signing_order=signing_order
+                signing_order=signing_order,
+                pdf_password_protection_enabled=pdf_password_protection_enabled,
             )
 
             # Add documents to the envelope via the intermediary model
@@ -358,6 +368,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     signatures = SignatureSerializer(many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
     pdf_lock_password = serializers.CharField(read_only=True, allow_null=True)
+    pdf_password_protection_enabled = serializers.BooleanField(read_only=True)
     
     class Meta:
         model = Envelope
@@ -365,6 +376,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
             'id', 'creator', 'creator_email', 'name', 'description', 'status', 
             'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
             'pdf_lock_password',
+            'pdf_password_protection_enabled',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -409,7 +421,14 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Envelope
-        fields = ['name', 'description', 'document_ids', 'signing_order', 'documents_with_positions']
+        fields = [
+            'name',
+            'description',
+            'document_ids',
+            'signing_order',
+            'pdf_password_protection_enabled',
+            'documents_with_positions',
+        ]
 
     def _current_document_ids(self):
         if 'document_ids' in self.initial_data:
@@ -458,6 +477,11 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
         if 'description' in validated_data:
             instance.description = validated_data.get('description')
         instance.signing_order = validated_data.get('signing_order', instance.signing_order)
+        if 'pdf_password_protection_enabled' in validated_data:
+            instance.pdf_password_protection_enabled = validated_data.get(
+                'pdf_password_protection_enabled',
+                instance.pdf_password_protection_enabled,
+            )
 
         # Update documents and their positions if provided
         if document_ids is not None:
@@ -505,17 +529,20 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     documents = EnvelopeDocumentSerializer(source='envelopedocument_set', many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
     pdf_lock_password = serializers.CharField(read_only=True, allow_null=True)
+    pdf_password_protection_enabled = serializers.BooleanField(read_only=True)
     
     class Meta:
         model = Envelope
         fields = [
             'id', 'creator', 'name', 'description', 'status', 'signing_order', 
             'signer_count', 'documents', 'signatures', 'pdf_lock_password',
+            'pdf_password_protection_enabled',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'creator', 'name', 'description', 'status', 'signing_order', 
             'signer_count', 'documents', 'signatures', 'pdf_lock_password',
+            'pdf_password_protection_enabled',
             'created_at', 'updated_at'
         ]
     

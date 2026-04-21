@@ -254,6 +254,46 @@ class SignatureTestCase(APITestCase):
         detail_response = self.client.get(detail_url)
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data['data']['pdf_lock_password'], self.envelope.pdf_lock_password)
+
+    def test_completion_can_skip_pdf_password_protection(self):
+        """If disabled, envelope completes without generating a PDF lock password."""
+        # Disable password protection for this envelope
+        self.envelope.pdf_password_protection_enabled = False
+        self.envelope.pdf_lock_password = None
+        self.envelope.save(update_fields=["pdf_password_protection_enabled", "pdf_lock_password", "updated_at"])
+
+        # First two signers sign
+        url = reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope.id})
+        payload = {
+            'signature_image': self.test_signature_image,
+            'page': 1,
+            'x': 100,
+            'y': 100,
+            'width': 120,
+            'height': 40,
+        }
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.client.post(url, payload, format='json')
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.client.post(url, payload, format='json')
+
+        # Final signer completes the envelope
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer3_token}')
+        response = self.client.post(url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.envelope.refresh_from_db()
+        self.assertEqual(self.envelope.status, 'completed')
+        self.assertFalse(self.envelope.pdf_password_protection_enabled)
+        self.assertIsNone(self.envelope.pdf_lock_password)
+
+        # Ensure envelope detail still works and reports null password
+        detail_url = reverse('envelopes:envelope_detail', kwargs={'pk': self.envelope.id})
+        detail_response = self.client.get(detail_url)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(detail_response.data['data']['pdf_lock_password'])
     
     @patch('signatures.views.embed_signature')
     def test_signature_x_offset_applied(self, mock_embed):

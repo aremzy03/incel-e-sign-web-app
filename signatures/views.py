@@ -418,7 +418,7 @@ class SignDocumentView(APIView):
         User = get_user_model()
         
         if remaining_pending == 0:
-            # All signers have signed - mark envelope as completed and apply PDF locking.
+            # All signers have signed - mark envelope as completed and (optionally) apply PDF locking.
             # Use database-level locking to prevent race conditions when generating password
             from django.db import transaction
             from envelopes.models import Envelope
@@ -428,7 +428,7 @@ class SignDocumentView(APIView):
                 locked_envelope = Envelope.objects.select_for_update().get(pk=envelope.id)
                 
                 generated_password = False
-                if not locked_envelope.pdf_lock_password:
+                if locked_envelope.pdf_password_protection_enabled and not locked_envelope.pdf_lock_password:
                     new_password = _generate_pdf_lock_password()
                     locked_envelope.pdf_lock_password = new_password
                     generated_password = True
@@ -438,17 +438,19 @@ class SignDocumentView(APIView):
                 envelope_update_fields = ["status", "updated_at"]
                 if generated_password:
                     envelope_update_fields.append("pdf_lock_password")
+                if "pdf_password_protection_enabled" not in envelope_update_fields:
+                    envelope_update_fields.append("pdf_password_protection_enabled")
                 
                 locked_envelope.save(update_fields=envelope_update_fields)
                 
-                # Store the password that was actually saved for use in PDF locking
-                final_password = locked_envelope.pdf_lock_password
+                # Store the password that was actually saved for use in PDF locking (if enabled)
+                final_password = locked_envelope.pdf_lock_password if locked_envelope.pdf_password_protection_enabled else None
             
             # Refresh envelope from database to get the final password
             envelope.refresh_from_db()
-            final_password = envelope.pdf_lock_password
+            final_password = envelope.pdf_lock_password if envelope.pdf_password_protection_enabled else None
 
-            # Update the status of all documents in this envelope to 'completed' and lock PDFs.
+            # Update the status of all documents in this envelope to 'completed' and optionally lock PDFs.
             media_root = str(settings.MEDIA_ROOT)
             for envelope_document in envelope.envelopedocument_set.select_related('document'):
                 document = envelope_document.document
@@ -456,27 +458,31 @@ class SignDocumentView(APIView):
 
                 locked_url = None
                 source_url = document.signed_file_url or document.file_url
-                if source_url and final_password:
+                if source_url:
                     source_path = None
                     try:
                         source_path = get_media_absolute_path_from_url(source_url)
                     except ValueError:
                         source_path = None
                 if source_path:
-                    locked_path = lock_pdf_with_password(
-                        pdf_path=source_path,
-                        password=final_password,
-                    )
-                    if locked_path:
+                    upload_path = source_path
+                    if envelope.pdf_password_protection_enabled and final_password:
+                        locked_path = lock_pdf_with_password(
+                            pdf_path=source_path,
+                            password=final_password,
+                        )
+                        if locked_path:
+                            upload_path = locked_path
+                    if upload_path:
                         try:
                             s3_storage = get_permanent_s3_storage()
                             s3_key = f"completed/{envelope.id}/{document.id}.pdf"
-                            with open(locked_path, "rb") as f:
+                            with open(upload_path, "rb") as f:
                                 saved_key = s3_storage.save(s3_key, f)
                             locked_url = s3_storage.url(saved_key)
                         except Exception:
                             LOGGER.exception(
-                                "Failed to upload locked PDF to S3 for document %s in envelope %s",
+                                "Failed to upload completed PDF to S3 for document %s in envelope %s",
                                 document.id,
                                 envelope.id,
                             )
