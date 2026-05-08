@@ -46,11 +46,31 @@ class MergeDocumentsApiTest(APITestCase):
         d1 = self._create_doc(self.user, "docA")
         d2 = self._create_doc(self.user, "docB")
         url = reverse('documents:documents-merge')
-        resp = self.client.post(url, {"document_ids": [str(d1.id), str(d2.id)], "name": "merged.pdf"}, format='json')
+        resp = self.client.post(url, {"document_ids": [str(d1.id), str(d2.id)], "name": "custom-name.pdf"}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
         data = resp.data['data']
         self.assertIn('id', data)
         self.assertIn('file_url', data)
+        self.assertEqual(data.get('name'), "custom-name.pdf")
+
+    def test_merge_placeholder_name_overridden(self):
+        d1 = self._create_doc(self.user, "Contract")
+        d2 = self._create_doc(self.user, "Annex")
+        url = reverse('documents:documents-merge')
+        resp = self.client.post(url, {"document_ids": [str(d1.id), str(d2.id)], "name": "merged.pdf"}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.data['data']
+        self.assertEqual(data.get('name'), "Merged - Contract (+1).pdf")
+
+    def test_merge_default_name_option_a(self):
+        d1 = self._create_doc(self.user, "Contract")
+        d2 = self._create_doc(self.user, "Annex")
+        d3 = self._create_doc(self.user, "Schedule")
+        url = reverse('documents:documents-merge')
+        resp = self.client.post(url, {"document_ids": [str(d1.id), str(d2.id), str(d3.id)]}, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        data = resp.data['data']
+        self.assertEqual(data.get('name'), "Merged - Contract (+2).pdf")
 
     def test_merge_requires_two(self):
         d1 = self._create_doc(self.user, "only")

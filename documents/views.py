@@ -31,6 +31,66 @@ from pypdf import PdfReader, PdfWriter
 
 logger = logging.getLogger(__name__)
 
+_FILENAME_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ .()[]")
+
+
+def _sanitize_filename_component(value: str, *, fallback: str = "Document", max_len: int = 120) -> str:
+    """
+    Produce a filesystem-safe, human-friendly filename component.
+
+    - strips control characters and reserved path characters
+    - collapses whitespace
+    - limits length to avoid OS/path edge cases
+    """
+    if not value:
+        return fallback
+
+    cleaned: list[str] = []
+    last_was_space = False
+    for ch in str(value):
+        if ch in ("\n", "\r", "\t"):
+            ch = " "
+        if ch not in _FILENAME_SAFE_CHARS:
+            ch = " "
+
+        if ch == " ":
+            if last_was_space:
+                continue
+            last_was_space = True
+        else:
+            last_was_space = False
+
+        cleaned.append(ch)
+
+    result = "".join(cleaned).strip(" .")
+    if not result:
+        result = fallback
+
+    if len(result) > max_len:
+        result = result[:max_len].rstrip(" .")
+        if not result:
+            result = fallback
+
+    return result
+
+
+def _default_merged_filename(first_doc_name: str, total_docs: int) -> str:
+    """
+    Option A naming: "Merged - <first_doc_base> (+<n-1>).pdf"
+    """
+    base, _ext = os.path.splitext(first_doc_name or "")
+    base = _sanitize_filename_component(base, fallback="Document", max_len=80)
+    suffix = f" (+{total_docs - 1})" if total_docs > 1 else ""
+    return f"Merged - {base}{suffix}.pdf"
+
+
+def _is_placeholder_merge_name(value: str) -> bool:
+    """
+    Detect common client-side placeholder names (so we can still apply Option A).
+    """
+    normalized = (value or "").strip().lower()
+    return normalized in {"merged", "merged.pdf", "merged document", "merged document.pdf"}
+
 
 def get_accessible_document_for_user(user, pk):
     """
@@ -679,7 +739,7 @@ class MergeDocumentsView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         document_ids = serializer.validated_data['document_ids']
-        desired_name = serializer.validated_data.get('name') or 'Merged Document'
+        desired_name = serializer.validated_data.get('name') or ""
 
         # Fetch and validate ownership/access
         docs = []
@@ -710,6 +770,16 @@ class MergeDocumentsView(APIView):
                     'message': f'Merging documents stored on remote storage is not supported for document {doc_id}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+        # Determine output name:
+        # - if user supplied a name, sanitize it and ensure ".pdf"
+        # - if the client sent a placeholder name (e.g. "merged.pdf"), treat it as blank
+        # - else generate a friendly default based on the first doc and count (Option A)
+        if desired_name.strip() and not _is_placeholder_merge_name(desired_name):
+            safe_base = _sanitize_filename_component(desired_name.strip(), fallback="Merged Document", max_len=120)
+            file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
+        else:
+            file_name = _default_merged_filename(docs[0][0].file_name, len(docs))
+
         # Perform merge preserving order
         writer = PdfWriter()
         try:
@@ -727,9 +797,6 @@ class MergeDocumentsView(APIView):
         merged_dir = os.path.join(str(settings.MEDIA_ROOT), 'merged_docs')
         os.makedirs(merged_dir, exist_ok=True)
         merged_id = uuid.uuid4()
-        safe_base = desired_name or 'Merged Document'
-        # Ensure .pdf extension
-        file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
         # Prepend uuid to ensure uniqueness on disk
         disk_name = f"{merged_id}_{file_name}"
         abs_out = os.path.join(merged_dir, disk_name)
