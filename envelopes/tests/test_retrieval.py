@@ -144,6 +144,12 @@ class EnvelopeRetrievalTestCase(APITestCase):
         """Get authentication headers for a user."""
         refresh = RefreshToken.for_user(user)
         return {'HTTP_AUTHORIZATION': f'Bearer {refresh.access_token}'}
+
+    def _envelope_list_results(self, response):
+        """Return envelope items from a paginated list response."""
+        data = response.data['data']
+        self.assertIn('results', data)
+        return data['results']
     
     def test_creator_can_list_envelopes(self):
         """Test that creator can list their envelopes."""
@@ -154,9 +160,10 @@ class EnvelopeRetrievalTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
-        self.assertEqual(len(response.data['data']), 1) # Should only see self.envelope
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1) # Should only see self.envelope
         
-        envelope_data = response.data['data'][0]
+        envelope_data = results[0]
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
@@ -174,9 +181,10 @@ class EnvelopeRetrievalTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
-        self.assertEqual(len(response.data['data']), 1) # Should only see self.envelope
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1) # Should only see self.envelope
         
-        envelope_data = response.data['data'][0]
+        envelope_data = results[0]
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
@@ -214,10 +222,11 @@ class EnvelopeRetrievalTestCase(APITestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
-        self.assertEqual(len(response.data['data']), 2) # Should see self.envelope (as signer) and another_envelope (as creator)
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 2) # Should see self.envelope (as signer) and another_envelope (as creator)
         
         # Verify both envelopes are present (order might vary, so check for IDs)
-        envelope_ids = [env['id'] for env in response.data['data']]
+        envelope_ids = [env['id'] for env in results]
         self.assertIn(str(self.envelope.id), envelope_ids)
         self.assertIn(str(another_envelope.id), envelope_ids)
     
@@ -231,10 +240,11 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
         # Should only see their own envelope
-        self.assertEqual(len(response.data['data']), 1)
-        self.assertEqual(response.data['data'][0]['id'], str(self.other_envelope.id))
-        self.assertEqual(response.data['data'][0]['name'], "Other User Envelope")
-        self.assertIsNone(response.data['data'][0]['description'])
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['id'], str(self.other_envelope.id))
+        self.assertEqual(results[0]['name'], "Other User Envelope")
+        self.assertIsNone(results[0]['description'])
     
     def test_unauthenticated_request_returns_401(self):
         """Test that unauthenticated requests return 401."""
@@ -382,11 +392,161 @@ class EnvelopeRetrievalTestCase(APITestCase):
         response = self.client.get(url, **headers)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['data']), 2)
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 2)
         
         # First envelope should be the newer one (more recent created_at)
-        self.assertEqual(response.data['data'][0]['id'], str(newer_envelope.id))
-        self.assertEqual(response.data['data'][1]['id'], str(self.envelope.id))
+        self.assertEqual(results[0]['id'], str(newer_envelope.id))
+        self.assertEqual(results[1]['id'], str(self.envelope.id))
+
+    def test_envelope_list_filter_by_status(self):
+        """Test optional status query parameter on envelope list."""
+        draft_envelope = Envelope.objects.create(
+            creator=self.creator,
+            name='Draft Envelope',
+            status='draft',
+            signing_order=[],
+        )
+        EnvelopeDocument.objects.create(
+            envelope=draft_envelope,
+            document=self.document1,
+            order=1,
+        )
+
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        pending_response = self.client.get(url, {'status': 'pending'}, **headers)
+        self.assertEqual(pending_response.status_code, status.HTTP_200_OK)
+        pending_results = self._envelope_list_results(pending_response)
+        self.assertEqual(len(pending_results), 1)
+        self.assertEqual(pending_results[0]['id'], str(self.envelope.id))
+        self.assertEqual(pending_results[0]['status'], 'pending')
+
+        draft_response = self.client.get(url, {'status': 'draft'}, **headers)
+        self.assertEqual(draft_response.status_code, status.HTTP_200_OK)
+        draft_results = self._envelope_list_results(draft_response)
+        self.assertEqual(len(draft_results), 1)
+        self.assertEqual(draft_results[0]['id'], str(draft_envelope.id))
+        self.assertEqual(draft_results[0]['status'], 'draft')
+
+    def test_envelope_list_search_by_name(self):
+        """Test optional search query parameter on envelope list."""
+        searchable_envelope = Envelope.objects.create(
+            creator=self.creator,
+            name='Q4 Vendor Agreement',
+            description='Standard terms',
+            status='draft',
+            signing_order=[],
+        )
+        EnvelopeDocument.objects.create(
+            envelope=searchable_envelope,
+            document=self.document1,
+            order=1,
+        )
+
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        response = self.client.get(url, {'search': 'vendor'}, **headers)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['id'], str(searchable_envelope.id))
+
+    def test_envelope_list_search_by_creator_email(self):
+        """Signers can find envelopes by creator email."""
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.signer1)
+
+        response = self.client.get(url, {'search': 'creator@test.com'}, **headers)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['id'], str(self.envelope.id))
+
+    def test_envelope_list_search_combined_with_status(self):
+        """Search and status filters can be used together."""
+        draft_match = Envelope.objects.create(
+            creator=self.creator,
+            name='Draft Retainer Agreement',
+            status='draft',
+            signing_order=[],
+        )
+        EnvelopeDocument.objects.create(
+            envelope=draft_match,
+            document=self.document1,
+            order=1,
+        )
+        Envelope.objects.create(
+            creator=self.creator,
+            name='Pending Retainer Agreement',
+            status='pending',
+            signing_order=[],
+        )
+
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        response = self.client.get(
+            url,
+            {'search': 'retainer', 'status': 'draft'},
+            **headers,
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._envelope_list_results(response)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['id'], str(draft_match.id))
+
+    def test_envelope_list_invalid_status_returns_400(self):
+        """Test invalid status query parameter returns structured error."""
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        response = self.client.get(url, {'status': 'sent'}, **headers)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['status'], 'error')
+        self.assertIn('Invalid status', response.data['message'])
+        self.assertIn('status', response.data['data'])
+
+    def test_envelope_list_pagination(self):
+        """Test pagination query parameters on envelope list."""
+        for index in range(25):
+            envelope = Envelope.objects.create(
+                creator=self.creator,
+                name=f"Bulk Envelope {index}",
+                status="draft",
+                signing_order=[],
+            )
+            EnvelopeDocument.objects.create(
+                envelope=envelope,
+                document=self.document1,
+                order=1,
+            )
+
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        page_one = self.client.get(url, {'page': 1, 'page_size': 10}, **headers)
+        self.assertEqual(page_one.status_code, status.HTTP_200_OK)
+        page_one_data = page_one.data['data']
+        self.assertEqual(page_one_data['count'], 26)  # 1 from setUp + 25 created here
+        self.assertIsNotNone(page_one_data['next'])
+        self.assertIsNone(page_one_data['previous'])
+        self.assertEqual(len(page_one_data['results']), 10)
+
+        page_two = self.client.get(url, {'page': 2, 'page_size': 10}, **headers)
+        self.assertEqual(page_two.status_code, status.HTTP_200_OK)
+        page_two_data = page_two.data['data']
+        self.assertIsNotNone(page_two_data['previous'])
+        self.assertEqual(len(page_two_data['results']), 10)
+
+        page_three = self.client.get(url, {'page': 3, 'page_size': 10}, **headers)
+        self.assertEqual(page_three.status_code, status.HTTP_200_OK)
+        page_three_data = page_three.data['data']
+        self.assertIsNone(page_three_data['next'])
+        self.assertEqual(len(page_three_data['results']), 6)
     
     def test_envelope_with_no_signatures(self):
         """Test envelope detail with no signatures."""

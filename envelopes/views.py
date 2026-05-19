@@ -7,6 +7,7 @@ in the e-signature workflow.
 
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -18,7 +19,15 @@ from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, Env
 from documents.serializers import DocumentSerializer
 from .serializers import EnvelopeDocumentSerializer
 from django.conf import settings # Import settings
+from core.query_filters import parse_search_query_param, parse_status_query_param
 from signatures.models import Signature
+
+
+class EnvelopeListPagination(PageNumberPagination):
+    """Page-number pagination for envelope list (uses global PAGE_SIZE defaults)."""
+
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 
 
 class EnvelopeCreateView(APIView):
@@ -300,6 +309,9 @@ class EnvelopeListView(ListAPIView):
     
     Endpoint: GET /envelopes/
     Requires authentication.
+    Supports pagination via `page` and `page_size` query parameters.
+    Optional query params: ``status`` (draft, pending, completed, rejected),
+    ``search`` (case-insensitive match on name, description, creator email).
     Returns:
         - Envelopes created by request.user
         - Envelopes where request.user is a signer
@@ -307,6 +319,7 @@ class EnvelopeListView(ListAPIView):
     
     permission_classes = [IsAuthenticated]
     serializer_class = EnvelopeDetailSerializer # Use EnvelopeDetailSerializer
+    pagination_class = EnvelopeListPagination
     
     def get_queryset(self):
         """
@@ -331,22 +344,67 @@ class EnvelopeListView(ListAPIView):
                     break
         
         # Convert the filtered list back to a queryset
-        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks)).order_by('-created_at')
-        queryset = queryset.select_related('creator').prefetch_related('signatures', 'envelopedocument_set__document')
-        
-        return queryset
+        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks))
+
+        status_value, _status_error = parse_status_query_param(
+            self.request,
+            Envelope.STATUS_CHOICES,
+        )
+        if status_value:
+            queryset = queryset.filter(status=status_value)
+
+        search_term = parse_search_query_param(self.request)
+        if search_term:
+            queryset = queryset.filter(
+                Q(name__icontains=search_term)
+                | Q(description__icontains=search_term)
+                | Q(creator__email__icontains=search_term)
+                | Q(creator__full_name__icontains=search_term)
+            )
+
+        queryset = queryset.select_related('creator').prefetch_related(
+            'signatures',
+            'envelopedocument_set__document',
+        )
+        return queryset.order_by('-created_at')
     
     def list(self, request, *args, **kwargs):
         """
-        Override list to return custom response format.
+        Override list to return custom response format with pagination metadata.
         """
+        status_value, status_error = parse_status_query_param(
+            request,
+            Envelope.STATUS_CHOICES,
+        )
+        if status_error:
+            return Response({
+                "status": "error",
+                "message": status_error,
+                "data": {"status": status_error},
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            paginated_response = self.get_paginated_response(serializer.data)
+            return Response({
+                "status": "success",
+                "message": "Envelopes retrieved successfully",
+                "data": paginated_response.data,
+            }, status=status.HTTP_200_OK)
+
         serializer = self.get_serializer(queryset, many=True)
-        
         return Response({
             "status": "success",
             "message": "Envelopes retrieved successfully",
-            "data": serializer.data
+            "data": {
+                "count": queryset.count(),
+                "next": None,
+                "previous": None,
+                "results": serializer.data,
+            },
         }, status=status.HTTP_200_OK)
 
 

@@ -17,12 +17,14 @@ from django.db import models
 from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.generics import DestroyAPIView, ListAPIView, RetrieveAPIView
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.query_filters import parse_search_query_param, parse_status_query_param
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
 from envelopes.models import Envelope, EnvelopeDocument
@@ -221,6 +223,8 @@ class DocumentListView(ListAPIView):
     API view for listing user's documents.
     
     Returns only documents owned by the authenticated user.
+    Optional query params: ``status`` (draft, sent, completed, rejected),
+    ``search`` (case-insensitive match on file_name).
     Requires authentication.
     """
     
@@ -234,7 +238,22 @@ class DocumentListView(ListAPIView):
         Returns:
             QuerySet: Documents owned by the current user
         """
-        return Document.objects.filter(owner=self.request.user).select_related('owner').order_by('-created_at')
+        queryset = Document.objects.filter(owner=self.request.user).select_related('owner')
+
+        status_value, status_error = parse_status_query_param(
+            self.request,
+            Document.STATUS_CHOICES,
+        )
+        if status_error:
+            raise ValidationError({'status': status_error})
+        if status_value:
+            queryset = queryset.filter(status=status_value)
+
+        search_term = parse_search_query_param(self.request)
+        if search_term:
+            queryset = queryset.filter(file_name__icontains=search_term)
+
+        return queryset.order_by('-created_at')
 
 
 class DocumentDetailView(RetrieveAPIView):
