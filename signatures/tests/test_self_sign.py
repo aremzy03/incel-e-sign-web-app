@@ -4,7 +4,6 @@ Tests for the one-call self-sign envelope endpoint.
 
 import base64
 import os
-from io import BytesIO
 from unittest.mock import patch
 
 from django.conf import settings
@@ -21,6 +20,34 @@ from notifications.models import Notification
 from signatures.models import Signature, UserSignature
 
 User = get_user_model()
+
+MINIMAL_PDF_BYTES = (
+    b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
+    b"2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
+    b"3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n>>\nendobj\n"
+    b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n"
+    b"trailer\n<<\n/Size 4\n/Root 1 0 R\n>>\nstartxref\n174\n%%EOF"
+)
+
+
+class _FakeS3Storage:
+    def save(self, key, file_obj):
+        file_obj.read()
+        return key
+
+    def url(self, key):
+        return f"https://fake-s3.local/{key}"
+
+
+def _embed_signature_side_effect(*args, **kwargs):
+    """Write a minimal valid PDF to the output path expected by the signing service."""
+    output_path = kwargs.get("output_path")
+    if output_path is None and len(args) >= 2:
+        output_path = args[1]
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as pdf_file:
+            pdf_file.write(MINIMAL_PDF_BYTES)
 
 
 class SelfSignTestCase(APITestCase):
@@ -63,7 +90,7 @@ class SelfSignTestCase(APITestCase):
         pdf_path = os.path.join(pdf_dir, f"{document.id}.pdf")
         if not os.path.exists(pdf_path):
             with open(pdf_path, 'wb') as pdf_file:
-                pdf_file.write(b'%PDF-1.4 test pdf content')
+                pdf_file.write(MINIMAL_PDF_BYTES)
 
         relative_path = os.path.relpath(pdf_path, str(settings.MEDIA_ROOT))
         document.file_url = f"{settings.MEDIA_URL}{relative_path}"
@@ -96,8 +123,9 @@ class SelfSignTestCase(APITestCase):
         payload.update(overrides)
         return payload
 
-    @patch('signatures.services.signing.embed_signature')
-    def test_self_sign_single_document_happy_path(self, mock_embed):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_self_sign_single_document_happy_path(self, mock_embed, _mock_s3):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -132,9 +160,11 @@ class SelfSignTestCase(APITestCase):
         self.assertTrue(envelope.is_self_sign)
         document.refresh_from_db()
         self.assertIsNotNone(document.signed_file_url)
+        self.assertTrue(document.signed_file_url.startswith('https://fake-s3.local/'))
 
-    @patch('signatures.services.signing.embed_signature')
-    def test_self_sign_multiple_documents(self, mock_embed):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_self_sign_multiple_documents(self, mock_embed, _mock_s3):
         document1 = self._create_document()
         document2 = self._create_document()
         self._prepare_local_document_pdf(document1)
@@ -188,8 +218,9 @@ class SelfSignTestCase(APITestCase):
         self.assertIsNotNone(document2.signed_file_url)
         self.assertEqual(mock_embed.call_count, 2)
 
-    @patch('signatures.services.signing.embed_signature')
-    def test_self_sign_uses_default_user_signature(self, mock_embed):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_self_sign_uses_default_user_signature(self, mock_embed, _mock_s3):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -247,8 +278,9 @@ class SelfSignTestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch('signatures.services.signing.embed_signature')
-    def test_self_sign_cannot_be_sent(self, mock_embed):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_self_sign_cannot_be_sent(self, mock_embed, _mock_s3):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -265,8 +297,9 @@ class SelfSignTestCase(APITestCase):
         self.assertEqual(send_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Self-signed envelopes cannot be sent', send_response.data['message'])
 
-    @patch('signatures.services.signing.embed_signature')
-    def test_list_filter_is_self_sign_true(self, mock_embed):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_list_filter_is_self_sign_true(self, mock_embed, _mock_s3):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -288,8 +321,9 @@ class SelfSignTestCase(APITestCase):
         self.assertEqual(len(returned_ids), 1)
 
     @patch('notifications.utils.create_notification')
-    @patch('signatures.services.signing.embed_signature')
-    def test_no_notifications_created(self, mock_embed, mock_create_notification):
+    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
+    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
+    def test_no_notifications_created(self, mock_embed, _mock_s3, mock_create_notification):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
         initial_count = Notification.objects.count()
