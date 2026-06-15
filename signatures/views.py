@@ -11,36 +11,17 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from .models import Signature, UserSignature
 from .serializers import SignatureSerializer, SignDocumentSerializer, DeclineSignatureSerializer, UserSignatureSerializer
-from .utils.pdf_signing import embed_signature, embed_text, get_media_absolute_path_from_url
-from envelopes.utils.pdf_security import lock_pdf_with_password
-from django.conf import settings
+from .services.signing import (
+    DocumentNotAvailableForSigningError,
+    SignatureImageError,
+    complete_envelope,
+    embed_signatures_for_signer,
+    mark_signature_signed,
+    resolve_signature_image,
+)
 import logging
-import os
-import secrets
-import string
-from documents.storage import get_permanent_s3_storage
-
-SIGNATURE_X_OFFSET = 5.0
-
-
-def _generate_pdf_lock_password(length: int = 16) -> str:
-    """
-    Generate a random password for locking PDFs.
-
-    Args:
-        length (int): Desired password length.
-
-    Returns:
-        str: Randomly generated password consisting of letters and digits.
-    """
-    if length < 8:
-        length = 8
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -67,18 +48,15 @@ class SignDocumentView(APIView):
         Returns:
             Response with signature details or error message
         """
-        # Get the envelope
         from envelopes.models import Envelope
         envelope = get_object_or_404(Envelope, pk=envelope_id)
         
-        # Check if envelope is in pending status
         if envelope.status != "pending":
             return Response({
                 "status": "error",
                 "message": f"Envelope must be in 'pending' status to sign. Current status: {envelope.status}"
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get the signature record for the current user
         try:
             signature = Signature.objects.get(
                 envelope=envelope,
@@ -90,21 +68,18 @@ class SignDocumentView(APIView):
                 "message": "You are not authorized to sign this document."
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Check if this signer is the current signer
         if not signature.is_current_signer():
             return Response({
                 "status": "error",
                 "message": "It's not your turn to sign yet. Please wait for your turn."
-            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
+            }, status=status.HTTP_403_FORBIDDEN)
         
-        # Check if already signed
         if signature.is_signed:
             return Response({
                 "status": "error",
                 "message": "You have already signed this document."
-            }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
+            }, status=status.HTTP_403_FORBIDDEN)
         
-        # Validate the signature data
         serializer = SignDocumentSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response({
@@ -113,287 +88,48 @@ class SignDocumentView(APIView):
                 "data": serializer.errors
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Get the signature image data
-        signature_image_data = None
         validated_data = serializer.validated_data
+
+        try:
+            signature_image_data = resolve_signature_image(request.user, validated_data)
+        except SignatureImageError as exc:
+            return Response({
+                "status": "error",
+                "message": str(exc)
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        if 'signature_image' in validated_data and validated_data['signature_image']:
-            # Use provided signature image
-            signature_image_data = validated_data['signature_image']
-        elif 'signature_id' in validated_data and validated_data['signature_id']:
-            # Use UserSignature image
-            try:
-                user_signature = UserSignature.objects.get(
-                    id=validated_data['signature_id'],
-                    user=request.user
-                )
-                # Convert image to base64 for storage
-                import base64
-                from django.core.files.base import ContentFile
-                
-                # Read the image file and convert to base64
-                user_signature.image.open()
-                image_data = user_signature.image.read()
-                user_signature.image.close()
-                
-                # Convert to base64 data URL
-                image_format = user_signature.image.name.split('.')[-1].lower()
-                if image_format == 'jpg':
-                    image_format = 'jpeg'
-                signature_image_data = f"data:image/{image_format};base64,{base64.b64encode(image_data).decode()}"
-                
-            except UserSignature.DoesNotExist:
-                return Response({
-                    "status": "error",
-                    "message": "UserSignature not found or does not belong to you."
-                }, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # Try to use user's default signature
-            try:
-                default_signature = UserSignature.objects.get(
-                    user=request.user,
-                    is_default=True
-                )
-                # Convert image to base64 for storage
-                import base64
-                
-                # Read the image file and convert to base64
-                default_signature.image.open()
-                image_data = default_signature.image.read()
-                default_signature.image.close()
-                
-                # Convert to base64 data URL
-                image_format = default_signature.image.name.split('.')[-1].lower()
-                if image_format == 'jpg':
-                    image_format = 'jpeg'
-                signature_image_data = f"data:image/{image_format};base64,{base64.b64encode(image_data).decode()}"
-                
-            except UserSignature.DoesNotExist:
-                return Response({
-                    "status": "error",
-                    "message": "No signature provided and no default signature found. Please provide signature_image, signature_id, or set a default signature."
-                }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Process each document in the envelope for signature embedding
-        # NOTE: Signature status is updated AFTER all documents are processed to prevent
-        # race conditions where multiple requests try to sign documents simultaneously
-        from envelopes.models import EnvelopeDocument
-        envelope_documents = EnvelopeDocument.objects.filter(envelope=envelope).order_by('order')
-        
-        # Check again if signature was already signed by another concurrent request
-        # Refresh from database to get latest status
         signature.refresh_from_db()
         if signature.is_signed:
-            # Another request already signed, return success
             signature_serializer = SignatureSerializer(signature)
             return Response({
                 "status": "success",
                 "message": "Document signed successfully",
                 "data": signature_serializer.data
             }, status=status.HTTP_200_OK)
-        
-        if not envelope_documents.exists():
+
+        fallback_placement = {
+            'page': validated_data.get('page', 1),
+            'x': validated_data.get('x', 100),
+            'y': validated_data.get('y', 100),
+            'width': validated_data.get('width', 120),
+            'height': validated_data.get('height', 40),
+        }
+
+        try:
+            embed_signatures_for_signer(
+                envelope,
+                request.user,
+                signature_image_data,
+                fallback_placement=fallback_placement,
+            )
+        except DocumentNotAvailableForSigningError as exc:
             return Response({
                 "status": "error",
-                "message": "No documents found in this envelope to sign."
+                "message": str(exc)
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        for env_doc in envelope_documents:
-            document = env_doc.document
-
-            # Collect ALL signature positions for this specific document and signer
-            signer_positions_for_doc = []
-            for pos_entry in env_doc.signer_document_positions:
-                if str(pos_entry.get('signer_id')) == str(request.user.id):
-                    position = pos_entry.get('position')
-                    if position:
-                        signer_positions_for_doc.append(position)
-
-            # Always start from the latest available file: previously signed version if present
-            source_url = document.signed_file_url or document.file_url
-            try:
-                input_pdf_path = get_media_absolute_path_from_url(source_url)
-            except ValueError:
-                return Response({
-                    "status": "error",
-                    "message": "Document is not available in temporary local storage for signing."
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            output_dir = os.path.join(str(settings.MEDIA_ROOT), settings.TEMP_SIGNED_SUBDIR)
-            os.makedirs(output_dir, exist_ok=True)
-            output_pdf_path = os.path.join(output_dir, f"{document.id}_signed_{envelope.id}.pdf")
-            if os.path.abspath(output_pdf_path) == os.path.abspath(input_pdf_path):
-                # Avoid in-place write when signing an already-signed version.
-                output_pdf_path = os.path.join(
-                    output_dir,
-                    f"{document.id}_signed_{envelope.id}_{request.user.id}.pdf",
-                )
-
-            # Try to embed signature; if it fails, continue workflow without blocking
-            if os.path.exists(input_pdf_path):
-                try:
-                    # Process all positions for this signer on this document
-                    if signer_positions_for_doc:
-                        # Apply signature at each position sequentially
-                        temp_files_to_cleanup = []
-                        current_input_path = input_pdf_path
-                        
-                        for idx, position_data in enumerate(signer_positions_for_doc):
-                            # Determine output path - final position uses final output, others use temp files
-                            if idx == len(signer_positions_for_doc) - 1:
-                                current_output_path = output_pdf_path
-                            else:
-                                current_output_path = f"{output_pdf_path}.tmp{idx}"
-                                temp_files_to_cleanup.append(current_output_path)
-
-                            # Never write in-place (some PDF libs error when input == output)
-                            if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
-                                current_output_path = f"{output_pdf_path}.tmp_inplace{idx}"
-                                temp_files_to_cleanup.append(current_output_path)
-                            
-                            if position_data and isinstance(position_data, dict):
-                                required_fields = ['page', 'x', 'y', 'width', 'height']
-                                if all(field in position_data for field in required_fields):
-                                    embed_signature(
-                                        pdf_path=current_input_path,
-                                        output_path=current_output_path,
-                                        signature_image=signature_image_data,
-                                        page=position_data['page'],
-                                        x=float(position_data['x']) + SIGNATURE_X_OFFSET,
-                                        y=position_data['y'],
-                                        width=position_data['width'],
-                                        height=position_data['height'],
-                                    )
-                                    
-                                    # Update input path for next iteration
-                                    current_input_path = current_output_path
-                                else:
-                                    # Position is incomplete, skip this position
-                                    import logging
-                                    logger = logging.getLogger(__name__)
-                                    logger.warning(f"Skipping incomplete position {idx} for document {document.id}: missing required fields")
-                            else:
-                                # Invalid position data, skip this position
-                                import logging
-                                logger = logging.getLogger(__name__)
-                                logger.warning(f"Skipping invalid position {idx} for document {document.id}: invalid position data")
-                        
-                        # After signatures, flatten any assigned fields values for this signer on this document
-                        try:
-                            from fields.models import Field as FieldModel
-                            signer_fields = FieldModel.objects.filter(
-                                envelope=envelope,
-                                document=document,
-                                assigned_signer=request.user
-                            )
-                        except Exception:
-                            signer_fields = []
-
-                        # Stamp text-like fields sequentially
-                        for idx, f in enumerate(signer_fields):
-                            field_value = f.prefill_value if f.prefill_value is not None else f.value
-                            if not field_value:
-                                continue
-                            if f.type in ['initials', 'text', 'designation', 'date']:
-                                # Format date if necessary
-                                text_to_draw = str(field_value)
-                                if f.type == 'date' and f.date_format:
-                                    # Assume value may be ISO; we won't reformat aggressively
-                                    try:
-                                        from datetime import datetime
-                                        parsed = None
-                                        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-                                            try:
-                                                parsed = datetime.strptime(text_to_draw, fmt)
-                                                break
-                                            except Exception:
-                                                continue
-                                        if parsed:
-                                            # Map common tokens
-                                            fmt_map = {
-                                                'YYYY-MM-DD': "%Y-%m-%d",
-                                                'DD/MM/YYYY': "%d/%m/%Y",
-                                                'MMM D, YYYY': "%b %-d, %Y",
-                                            }
-                                            out_fmt = fmt_map.get(f.date_format, "%Y-%m-%d")
-                                            text_to_draw = parsed.strftime(out_fmt)
-                                    except Exception:
-                                        pass
-
-                                # Determine next IO paths
-                                current_output_path = output_pdf_path
-                                if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
-                                    current_output_path = f"{output_pdf_path}.texttmp{idx}"
-                                    temp_files_to_cleanup.append(current_output_path)
-                                embed_text(
-                                    pdf_path=current_input_path,
-                                    output_path=current_output_path,
-                                    text=text_to_draw,
-                                    page=f.page,
-                                    x=float(f.x) + SIGNATURE_X_OFFSET,
-                                    y=f.y,
-                                    font_family=f.font_family or 'Helvetica',
-                                    font_size=float(f.font_size or 12),
-                                )
-                                current_input_path = current_output_path
-
-                        # Ensure final output ends up at output_pdf_path
-                        if os.path.abspath(current_input_path) != os.path.abspath(output_pdf_path):
-                            try:
-                                os.replace(current_input_path, output_pdf_path)
-                            except Exception:
-                                # If we can't replace, keep whatever path we wrote.
-                                output_pdf_path = current_input_path
-                                # Let URL generation below point to this location if within MEDIA_ROOT.
-
-                        # Clean up temporary files
-                        for temp_file in temp_files_to_cleanup:
-                            try:
-                                if os.path.exists(temp_file):
-                                    os.remove(temp_file)
-                            except Exception as e:
-                                import logging
-                                logger = logging.getLogger(__name__)
-                                logger.warning(f"Failed to cleanup temp file {temp_file}: {e}")
-                    else:
-                        # No positions defined in EnvelopeDocument, use request data or defaults
-                        embed_signature(
-                            pdf_path=input_pdf_path,
-                            output_path=output_pdf_path,
-                            signature_image=signature_image_data,
-                            page=validated_data.get('page', 1),
-                            x=float(validated_data.get('x', 100)) + SIGNATURE_X_OFFSET,
-                            y=validated_data.get('y', 100),
-                            width=validated_data.get('width', 120),
-                            height=validated_data.get('height', 40),
-                        )
-                    
-                    relative_output = os.path.relpath(output_pdf_path, str(settings.MEDIA_ROOT))
-                    new_signed_url = f"{settings.MEDIA_URL}{relative_output}"
-                    # Update document with newly signed file URL
-                    document.signed_file_url = new_signed_url
-                    document.file_url = new_signed_url  # Also update file_url to reflect latest signed version
-                except Exception as e:
-                    # On failure, proceed without blocking signing
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error embedding signature for document {document.id} in envelope {envelope.id}: {e}")
-                    document.signed_file_url = document.signed_file_url or None
-            else:
-                # Could not obtain local source; keep existing URLs
-                document.signed_file_url = document.signed_file_url or None
-            
-            document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
+        mark_signature_signed(signature, signature_image_data)
         
-        # Update the signature AFTER all documents are processed
-        # This prevents race conditions where multiple requests try to sign documents simultaneously
-        signature.status = "signed"
-        signature.signed_at = timezone.now()
-        # The signature_image is now stored in the Signature model, so we don't update it on the document
-        signature.signature_image = signature_image_data
-        signature.save()
-        
-        # Log the signature action
         from audit.utils import log_action
         log_action(
             request.user, 
@@ -403,118 +139,18 @@ class SignDocumentView(APIView):
             request=request
         )
         
-        # Check if this was the last signer
-        # Refresh from database to get accurate count after signature status update
         remaining_pending = Signature.objects.filter(
             envelope=envelope,
             status='pending'
         ).count()
         
-        # Send notifications
-        from notifications.utils import create_notification, create_envelope_completed_notification, create_signer_turn_notification
+        from notifications.utils import create_notification, create_signer_turn_notification
         from notifications.tasks import send_turn_to_sign_email_task
-        from django.contrib.auth import get_user_model
-        
-        User = get_user_model()
         
         if remaining_pending == 0:
-            # All signers have signed - mark envelope as completed and (optionally) apply PDF locking.
-            # Use database-level locking to prevent race conditions when generating password
-            from django.db import transaction
-            from envelopes.models import Envelope
-            
-            with transaction.atomic():
-                # Lock the envelope row to prevent concurrent password generation
-                locked_envelope = Envelope.objects.select_for_update().get(pk=envelope.id)
-                
-                generated_password = False
-                if locked_envelope.pdf_password_protection_enabled and not locked_envelope.pdf_lock_password:
-                    new_password = _generate_pdf_lock_password()
-                    locked_envelope.pdf_lock_password = new_password
-                    generated_password = True
-
-                locked_envelope.status = "completed"
-
-                envelope_update_fields = ["status", "updated_at"]
-                if generated_password:
-                    envelope_update_fields.append("pdf_lock_password")
-                if "pdf_password_protection_enabled" not in envelope_update_fields:
-                    envelope_update_fields.append("pdf_password_protection_enabled")
-                
-                locked_envelope.save(update_fields=envelope_update_fields)
-                
-                # Store the password that was actually saved for use in PDF locking (if enabled)
-                final_password = locked_envelope.pdf_lock_password if locked_envelope.pdf_password_protection_enabled else None
-            
-            # Refresh envelope from database to get the final password
-            envelope.refresh_from_db()
-            final_password = envelope.pdf_lock_password if envelope.pdf_password_protection_enabled else None
-
-            # Update the status of all documents in this envelope to 'completed' and optionally lock PDFs.
-            media_root = str(settings.MEDIA_ROOT)
-            for envelope_document in envelope.envelopedocument_set.select_related('document'):
-                document = envelope_document.document
-                document.status = "completed"
-
-                locked_url = None
-                source_url = document.signed_file_url or document.file_url
-                if source_url:
-                    source_path = None
-                    try:
-                        source_path = get_media_absolute_path_from_url(source_url)
-                    except ValueError:
-                        source_path = None
-                if source_path:
-                    upload_path = source_path
-                    if envelope.pdf_password_protection_enabled and final_password:
-                        locked_path = lock_pdf_with_password(
-                            pdf_path=source_path,
-                            password=final_password,
-                        )
-                        if locked_path:
-                            upload_path = locked_path
-                    if upload_path:
-                        try:
-                            s3_storage = get_permanent_s3_storage()
-                            s3_key = f"completed/{envelope.id}/{document.id}.pdf"
-                            with open(upload_path, "rb") as f:
-                                saved_key = s3_storage.save(s3_key, f)
-                            locked_url = s3_storage.url(saved_key)
-                        except Exception:
-                            LOGGER.exception(
-                                "Failed to upload completed PDF to S3 for document %s in envelope %s",
-                                document.id,
-                                envelope.id,
-                            )
-                    else:
-                        LOGGER.warning(
-                            "Unable to resolve path for document %s in envelope %s (url=%s)",
-                            document.id,
-                            envelope.id,
-                            source_url,
-                        )
-
-                document_update_fields = ["status", "updated_at"]
-                if locked_url:
-                    document.signed_file_url = locked_url
-                    document.file_url = locked_url
-                    document_update_fields.extend(["signed_file_url", "file_url"])
-                else:
-                    # Ensure we at least persist status changes.
-                    document.signed_file_url = document.signed_file_url or None
-
-                document.save(update_fields=document_update_fields)
-            
-            # Notify creator that envelope is completed
-            message = create_envelope_completed_notification(envelope)
-            # utils.create_notification proxies to Celery task; no need to call .delay here
-            create_notification(str(envelope.creator.id), message)
+            complete_envelope(envelope, notify_creator=True)
         else:
-            # Notify only the immediate next signer based on signing_order
             def get_order_for_signer_id(signer_id: str) -> int:
-                """Return the order for a given signer_id using envelope.signing_order.
-                Falls back to positional index if explicit 'order' is missing/invalid.
-                """
                 if not envelope.signing_order:
                     return 0
                 for idx, signer_entry in enumerate(envelope.signing_order, 1):
@@ -524,8 +160,6 @@ class SignDocumentView(APIView):
                 return 0
 
             current_order = signature.get_signing_order()
-
-            # Determine the next signer_id with the minimal order greater than current
             next_signer_id = None
             next_order = None
             if envelope.signing_order:
@@ -536,6 +170,7 @@ class SignDocumentView(APIView):
                         next_order = candidate_order
                         next_signer_id = candidate_id
 
+            next_signature = None
             if next_signer_id is not None:
                 next_signature = Signature.objects.filter(
                     envelope=envelope,
@@ -546,23 +181,17 @@ class SignDocumentView(APIView):
             if next_signature:
                 message = create_signer_turn_notification(envelope)
                 create_notification(str(next_signature.signer.id), message)
-                # Send turn-to-sign email to next signer
                 try:
                     recipient_email = getattr(next_signature.signer, 'email', None)
                     if recipient_email:
                         send_turn_to_sign_email_task.delay(
                             recipient_email,
-                            envelope.name, # Use envelope name
-                            str(envelope.id) # Pass envelope ID for URL generation
+                            envelope.name,
+                            str(envelope.id)
                         )
-                except Exception as e:
-                    # Log the error but don't block the main process
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Error sending turn-to-sign email: {e}")
-                    # TODO: Add proper error handling and monitoring
+                except Exception as exc:
+                    LOGGER.error("Error sending turn-to-sign email: %s", exc)
         
-        # Return signature details
         signature_serializer = SignatureSerializer(signature)
         
         return Response({
@@ -570,6 +199,94 @@ class SignDocumentView(APIView):
             "message": "Document signed successfully",
             "data": signature_serializer.data
         }, status=status.HTTP_200_OK)
+
+
+class SelfSignView(APIView):
+    """
+    API view for one-call self-sign envelope creation and completion.
+
+    Endpoint: POST /signatures/self-sign/
+    Requires authentication. No recipients or notifications.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from django.db import transaction
+        from envelopes.models import Envelope
+        from envelopes.serializers import EnvelopeDetailSerializer
+        from documents.models import Document
+        from audit.utils import log_action
+
+        from .serializers import SelfSignSerializer
+
+        serializer = SelfSignSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response({
+                "status": "error",
+                "message": "Validation failed",
+                "data": serializer.errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        sign_data = serializer.get_sign_data()
+
+        try:
+            with transaction.atomic():
+                envelope = serializer.save()
+                Signature.objects.create(
+                    envelope=envelope,
+                    signer=request.user,
+                    status='pending',
+                )
+                envelope.status = 'pending'
+                envelope.save(update_fields=['status', 'updated_at'])
+                Document.objects.filter(
+                    envelopedocument_set__envelope=envelope,
+                ).update(status='sent')
+
+            signature_image_data = resolve_signature_image(request.user, sign_data)
+            fallback_placement = {
+                'page': sign_data.get('page', 1),
+                'x': sign_data.get('x', 100),
+                'y': sign_data.get('y', 100),
+                'width': sign_data.get('width', 120),
+                'height': sign_data.get('height', 40),
+            }
+            embed_signatures_for_signer(
+                envelope,
+                request.user,
+                signature_image_data,
+                fallback_placement=fallback_placement,
+            )
+            signature = Signature.objects.get(envelope=envelope, signer=request.user)
+            mark_signature_signed(signature, signature_image_data)
+            complete_envelope(envelope, notify_creator=False)
+        except SignatureImageError as exc:
+            return Response({
+                "status": "error",
+                "message": str(exc),
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except DocumentNotAvailableForSigningError as exc:
+            return Response({
+                "status": "error",
+                "message": str(exc),
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        envelope = Envelope.objects.get(pk=envelope.pk)
+        log_action(
+            request.user,
+            "SELF_SIGN_DOC",
+            envelope,
+            f"User {request.user.full_name or request.user.username} self-signed envelope '{envelope.name}'.",
+            request=request,
+        )
+
+        detail_serializer = EnvelopeDetailSerializer(envelope)
+        return Response({
+            "status": "success",
+            "message": "Document self-signed successfully",
+            "data": detail_serializer.data,
+        }, status=status.HTTP_201_CREATED)
 
 
 class DeclineSignatureView(APIView):

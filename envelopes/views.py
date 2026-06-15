@@ -19,7 +19,7 @@ from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, Env
 from documents.serializers import DocumentSerializer
 from .serializers import EnvelopeDocumentSerializer
 from django.conf import settings # Import settings
-from core.query_filters import parse_search_query_param, parse_status_query_param
+from core.query_filters import parse_boolean_query_param, parse_search_query_param, parse_status_query_param
 from signatures.models import Signature
 
 
@@ -117,6 +117,12 @@ class EnvelopeSendView(APIView):
                 "status": "error",
                 "message": "You can only send envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if envelope.is_self_sign:
+            return Response({
+                "status": "error",
+                "message": "Self-signed envelopes cannot be sent to recipients."
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if envelope is in draft or rejected status
         if envelope.status not in ["draft", "rejected"]:
@@ -311,7 +317,8 @@ class EnvelopeListView(ListAPIView):
     Requires authentication.
     Supports pagination via `page` and `page_size` query parameters.
     Optional query params: ``status`` (draft, pending, completed, rejected),
-    ``search`` (case-insensitive match on name, description, creator email).
+    ``search`` (case-insensitive match on name, description, creator email),
+    ``is_self_sign`` (true|false).
     Returns:
         - Envelopes created by request.user
         - Envelopes where request.user is a signer
@@ -362,6 +369,15 @@ class EnvelopeListView(ListAPIView):
                 | Q(creator__full_name__icontains=search_term)
             )
 
+        is_self_sign_value, _is_self_sign_error = parse_boolean_query_param(
+            self.request,
+            'is_self_sign',
+        )
+        if is_self_sign_value is True:
+            queryset = queryset.filter(is_self_sign=True)
+        elif is_self_sign_value is False:
+            queryset = queryset.filter(is_self_sign=False)
+
         queryset = queryset.select_related('creator').prefetch_related(
             'signatures',
             'envelopedocument_set__document',
@@ -381,6 +397,17 @@ class EnvelopeListView(ListAPIView):
                 "status": "error",
                 "message": status_error,
                 "data": {"status": status_error},
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        is_self_sign_value, is_self_sign_error = parse_boolean_query_param(
+            request,
+            'is_self_sign',
+        )
+        if is_self_sign_error:
+            return Response({
+                "status": "error",
+                "message": is_self_sign_error,
+                "data": {"is_self_sign": is_self_sign_error},
             }, status=status.HTTP_400_BAD_REQUEST)
 
         queryset = self.get_queryset()
@@ -633,6 +660,12 @@ class EnvelopeEditView(APIView):
                 "status": "error",
                 "message": "You can only edit envelopes you created."
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if envelope.is_self_sign:
+            return Response({
+                "status": "error",
+                "message": "Self-signed envelopes cannot be edited."
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if envelope.status not in ["draft", "rejected"]:
             return Response({

@@ -91,6 +91,11 @@ class Envelope(models.Model):
         help_text="If True, signed PDFs are password-protected when the envelope is completed."
     )
 
+    is_self_sign = models.BooleanField(
+        default=False,
+        help_text="True when the creator signed their own document(s) without sending to recipients."
+    )
+
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Envelope"

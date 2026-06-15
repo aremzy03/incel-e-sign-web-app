@@ -295,7 +295,7 @@ class SignatureTestCase(APITestCase):
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertIsNone(detail_response.data['data']['pdf_lock_password'])
     
-    @patch('signatures.views.embed_signature')
+    @patch('signatures.services.signing.embed_signature')
     def test_signature_x_offset_applied(self, mock_embed):
         """Ensure signatures are offset along the X-axis when embedded."""
         env_doc = self.envelope.envelopedocument_set.first()
@@ -334,8 +334,8 @@ class SignatureTestCase(APITestCase):
         offset_x = mock_embed.call_args.kwargs['x']
         self.assertEqual(offset_x, 155.0)
 
-    @patch('signatures.views.embed_text')
-    @patch('signatures.views.embed_signature')
+    @patch('signatures.services.signing.embed_text')
+    @patch('signatures.services.signing.embed_signature')
     def test_field_x_offset_applied(self, mock_embed_signature, mock_embed_text):
         """Ensure non-signature fields are offset along the X-axis when flattened."""
         env_doc = self.envelope.envelopedocument_set.first()

@@ -128,8 +128,8 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function to capture the position arguments
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
                 mock_exists.return_value = True
                 
                 # Authenticate as signer1
@@ -191,8 +191,8 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function to capture the position arguments
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
                 mock_exists.return_value = True
                 
                 # Authenticate as signer1
@@ -248,8 +248,8 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
                 mock_exists.return_value = True
                 
                 # Authenticate as signer1
@@ -331,8 +331,8 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
                 mock_exists.return_value = True
                 
                 # First signer signs
@@ -428,10 +428,10 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         user_signature.image.close = MagicMock()
 
         # Mock the PDF embedding function and UserSignature.objects.get
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
                 mock_exists.return_value = True
-                with patch('signatures.views.UserSignature.objects.get', return_value=user_signature):
+                with patch('signatures.services.signing.UserSignature.objects.get', return_value=user_signature):
                     # Authenticate as signer1
                     self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                     
@@ -500,9 +500,9 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
 
         # Mock the PDF embedding function and UserSignature.objects.get
-        with patch('signatures.views.embed_signature') as mock_embed:
-            with patch('signatures.views.os.path.exists') as mock_exists:
-                with patch('signatures.views.UserSignature.objects.get') as mock_get_signature:
+        with patch('signatures.services.signing.embed_signature') as mock_embed:
+            with patch('signatures.services.signing.os.path.exists') as mock_exists:
+                with patch('signatures.services.signing.UserSignature.objects.get') as mock_get_signature:
                     # Mock the UserSignature object and its image methods for default retrieval
                     mock_signature = MagicMock()
                     mock_signature.image.name = 'signature.png'

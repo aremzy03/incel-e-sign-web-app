@@ -50,3 +50,30 @@ def parse_search_query_param(request, param_name='search'):
         return None
 
     return search_term
+
+
+def parse_boolean_query_param(request, param_name):
+    """
+    Parse an optional boolean query parameter.
+
+    Args:
+        request: DRF request with query_params.
+        param_name: Query string key.
+
+    Returns:
+        tuple: (bool_value, error_message)
+            - (None, None) when the parameter is omitted.
+            - (bool, None) when valid.
+            - (None, str) when invalid.
+    """
+    raw = request.query_params.get(param_name)
+    if raw is None or str(raw).strip() == '':
+        return None, None
+
+    normalized = str(raw).strip().lower()
+    if normalized in {'true', '1', 'yes'}:
+        return True, None
+    if normalized in {'false', '0', 'no'}:
+        return False, None
+
+    return None, f"Invalid {param_name} '{raw}'. Allowed values: true, false"

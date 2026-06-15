@@ -102,7 +102,7 @@ startxref
 
     def test_document_override_after_each_signature(self):
         """Test that document URLs are updated after each signature."""
-        with patch('signatures.views.embed_signature', side_effect=self._mock_embed_signature):
+        with patch('signatures.services.signing.embed_signature', side_effect=self._mock_embed_signature):
             self._run_test_document_override_after_each_signature()
 
     def _run_test_document_override_after_each_signature(self):

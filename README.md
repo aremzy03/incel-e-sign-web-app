@@ -739,6 +739,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
     "name": "My Important Contract Bundle",
     "description": "Please review all terms carefully before signing",
     "status": "draft",
+    "is_self_sign": false,
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -937,7 +938,7 @@ Notes:
 | `POST` | `/api/envelopes/{id}/send/` | Send envelope to signers | ✅ |
 | `POST` | `/api/envelopes/{id}/reject/` | Reject envelope | ✅ |
 | `PATCH` | `/api/envelopes/{id}/edit/` | Edit draft or rejected envelope (creator only) | ✅ |
-| `GET` | `/api/envelopes/` | List envelopes (creator + signer) | ✅ |
+| `GET` | `/api/envelopes/` | List envelopes (creator + signer); optional `?is_self_sign=true\|false` | ✅ |
 | `GET` | `/api/envelopes/{id}/` | Retrieve envelope details | ✅ |
 | `GET` | `/api/envelopes/{id}/documents/` | Retrieve all documents of an envelope | ✅ |
 | `DELETE` | `/api/envelopes/{id}/delete/` | Delete envelope (creator only) | ✅ |
@@ -946,6 +947,7 @@ Notes:
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
+| `POST` | `/api/signatures/self-sign/` | Self-sign document(s) in one call (no recipients) | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
 
@@ -1864,6 +1866,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
     "name": "My Important Contract Bundle",
     "description": "Please review all terms carefully before signing",
     "status": "draft",
+    "is_self_sign": false,
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -2173,6 +2176,13 @@ curl -X GET http://localhost:8000/api/envelopes/ \
 - Method: GET
 - Authentication: Required (JWT Bearer token)
 - Body: None required
+- Optional query params:
+  - `status` — filter by envelope status (`draft`, `pending`, `completed`, `rejected`)
+  - `search` — case-insensitive match on name, description, or creator email/name
+  - `is_self_sign` — `true` returns only self-signed envelopes; `false` excludes them
+
+**Notes:**
+- Self-signed envelopes (`is_self_sign: true`) cannot be sent or edited via the multi-party envelope endpoints.
 
 **Access Control:**
 - Returns envelopes created by the authenticated user.
@@ -2191,6 +2201,7 @@ curl -X GET http://localhost:8000/api/envelopes/ \
       "creator_email": "creator@example.com",
       "name": "My Important Contract Bundle",
     "status": "pending",
+    "is_self_sign": false,
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
       {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -2266,6 +2277,7 @@ curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665544
     "creator_email": "creator@example.com",
     "name": "My Important Contract Bundle",
       "status": "pending",
+      "is_self_sign": false,
       "signing_order": [
         {"signer_id": "550e8400-e29b-41d4-a716-446655440001", "order": 1},
         {"signer_id": "550e8400-e29b-41d4-a716-446655440002", "order": 2}
@@ -2412,8 +2424,88 @@ curl -X DELETE http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
+| `POST` | `/api/signatures/self-sign/` | Self-sign document(s) in one call (no recipients) | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/sign/` | Current signer signs all documents in the envelope | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/decline/` | Current signer declines (rejects entire envelope) | ✅ |
+
+**Workflow comparison:**
+- **Multi-party:** upload → create envelope → send → sequential sign
+- **Self-sign:** upload → `POST /api/signatures/self-sign/` → completed (no send step, no recipient notifications)
+
+#### Self-Sign Document(s)
+
+**Endpoint:** `POST /api/signatures/self-sign/`
+
+Upload document(s) first via `POST /api/documents/upload/`, then call this endpoint to place signature(s), optionally embed input field values, and receive a completed envelope in one request. No recipients, send step, or notification emails.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/api/signatures/self-sign/ \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_ids": ["550e8400-e29b-41d4-a716-446655440000"],
+    "name": "Self-signed agreement",
+    "documents_with_positions": [
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000",
+        "signer_document_positions": [
+          { "position": { "page": 1, "x": 100, "y": 500, "width": 120, "height": 40 } }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "document_id": "550e8400-e29b-41d4-a716-446655440000",
+        "page": 1, "x": 100, "y": 600, "width": 200, "height": 24,
+        "type": "text", "required": true, "value": "Jane Doe"
+      }
+    ],
+    "signature_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "pdf_password_protection_enabled": true
+  }'
+```
+
+**Request Details:**
+- Method: POST
+- Authentication: Required (JWT Bearer token)
+- Body: Same envelope shape as create (`document_ids`, `name`, `description`, `documents_with_positions`, `fields`, `pdf_password_protection_enabled`) plus sign options (`signature_image`, `signature_id`, optional fallback `page`/`x`/`y`/`width`/`height`).
+- `signing_order` is **not accepted** — the server sets the current user as the sole signer.
+- `signer_id` in `documents_with_positions` is optional (defaults to the authenticated user).
+- Field items may include inline `value` (in addition to `prefill_value`); required fields must supply one of them.
+- Signature source: `signature_image`, `signature_id`, or the user's default `UserSignature`.
+
+**Response (Success - 201):**
+```json
+{
+  "status": "success",
+  "message": "Document self-signed successfully",
+  "data": {
+    "id": "550e8400-e29b-41d4-a716-446655440003",
+    "status": "completed",
+    "is_self_sign": true,
+    "signing_order": [
+      {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 1}
+    ],
+    "documents": [
+      {
+        "document_signed_file_url": "/media/temp_signed/550e8400-e29b-41d4-a716-446655440000_signed_....pdf"
+      }
+    ],
+    "pdf_lock_password": "generated-password-if-enabled"
+  }
+}
+```
+
+**Constraints:**
+- Documents must exist and belong to the authenticated user.
+- Documents must be available in local temporary storage for PDF signing (same requirement as multi-party sign).
+- Self-signed envelopes cannot be sent (`POST /api/envelopes/{id}/send/`) or edited (`PATCH /api/envelopes/{id}/edit/`).
+- No notifications or emails are sent for this flow.
+
+**Error Responses:**
+- `400 Bad Request`: Validation errors, missing field values, document not in local storage, or invalid signature source.
+- `401 Unauthorized`: Missing or invalid authentication.
 
 #### 1. Sign Document
 

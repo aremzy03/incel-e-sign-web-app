@@ -16,6 +16,7 @@ urlpatterns = [
     path('user/<uuid:id>/', views.UserSignatureDetailView.as_view(), name='user-signature-detail'),
     
     # Document signing
+    path('self-sign/', views.SelfSignView.as_view(), name='self_sign'),
     path('<uuid:envelope_id>/sign/', views.SignDocumentView.as_view(), name='sign_document'),
     path('<uuid:envelope_id>/decline/', views.DeclineSignatureView.as_view(), name='decline_signature'),
 ]

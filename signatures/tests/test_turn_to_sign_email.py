@@ -11,8 +11,8 @@ from signatures.models import Signature
 
 @pytest.mark.django_db
 @patch("notifications.tasks.send_turn_to_sign_email_task.delay")
-@patch("signatures.views.embed_signature")
-@patch("signatures.views.os.path.exists", return_value=True)
+@patch("signatures.services.signing.embed_signature")
+@patch("signatures.services.signing.os.path.exists", return_value=True)
 def test_signing_triggers_next_signer_email(mock_exists, mock_embed, mock_delay):
     User = get_user_model()
     creator = User.objects.create_user(

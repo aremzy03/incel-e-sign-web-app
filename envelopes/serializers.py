@@ -373,8 +373,8 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Envelope
         fields = [
-            'id', 'creator', 'creator_email', 'name', 'description', 'status', 
-            'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
+            'id', 'creator', 'creator_email', 'name', 'description', 'status',
+            'is_self_sign', 'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
             'pdf_lock_password',
             'pdf_password_protection_enabled',
             'created_at', 'updated_at'

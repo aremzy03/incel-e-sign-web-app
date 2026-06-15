@@ -75,7 +75,7 @@ def test_on_final_sign_completion_uploads_locked_pdf_to_s3_and_updates_urls(sett
     }
 
     fake_storage = _FakeS3Storage()
-    with patch("signatures.views.get_permanent_s3_storage", return_value=fake_storage):
+    with patch("signatures.services.signing.get_permanent_s3_storage", return_value=fake_storage):
         sign_resp = client.post(reverse("signatures:sign_document", kwargs={"envelope_id": envelope_id}), sign_data, format="json")
         assert sign_resp.status_code == 200, sign_resp.data
 

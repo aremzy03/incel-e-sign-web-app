@@ -12,6 +12,10 @@ from PIL import Image
 from io import BytesIO
 import logging
 
+from django.db import transaction
+from documents.models import Document
+from envelopes.models import Envelope, EnvelopeDocument
+from fields.models import Field as FieldModel
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +182,301 @@ class SignDocumentSerializer(serializers.Serializer):
         obj.setdefault('width', 120.0)
         obj.setdefault('height', 40.0)
         return obj
+
+
+class SelfSignPositionSerializer(serializers.Serializer):
+    page = serializers.IntegerField(min_value=1, required=True)
+    x = serializers.FloatField(min_value=0.0, required=True)
+    y = serializers.FloatField(min_value=0.0, required=True)
+    width = serializers.FloatField(min_value=0.0, required=True)
+    height = serializers.FloatField(min_value=0.0, required=True)
+
+
+class SelfSignSignerDocumentPositionSerializer(serializers.Serializer):
+    signer_id = serializers.UUIDField(required=False, allow_null=True)
+    position = SelfSignPositionSerializer()
+
+
+class SelfSignDocumentWithPositionsSerializer(serializers.Serializer):
+    document_id = serializers.UUIDField(required=True)
+    signer_document_positions = serializers.ListField(
+        child=SelfSignSignerDocumentPositionSerializer(),
+        required=False,
+        allow_empty=True,
+    )
+
+
+class SelfSignSerializer(serializers.Serializer):
+    """
+    Serializer for one-call self-sign envelope creation and signing.
+
+    Composes envelope creation validation with sign payload validation.
+    """
+
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        help_text="List of UUIDs of the documents to include in the envelope.",
+    )
+    name = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=True,
+        help_text="Optional user-defined name for the envelope.",
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Optional description or notes for this envelope.",
+    )
+    documents_with_positions = serializers.ListField(
+        child=SelfSignDocumentWithPositionsSerializer(),
+        required=False,
+        allow_empty=True,
+        help_text="Optional document-specific signature positions.",
+    )
+    fields = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_empty=True,
+        help_text="Optional non-signature fields with inline values.",
+    )
+    pdf_password_protection_enabled = serializers.BooleanField(required=False, default=True)
+    signature_image = SignDocumentSerializer().fields['signature_image']
+    signature_id = SignDocumentSerializer().fields['signature_id']
+    page = SignDocumentSerializer().fields['page']
+    x = SignDocumentSerializer().fields['x']
+    y = SignDocumentSerializer().fields['y']
+    width = SignDocumentSerializer().fields['width']
+    height = SignDocumentSerializer().fields['height']
+
+    def validate(self, attrs):
+        from envelopes.serializers import EnvelopeCreateSerializer
+
+        if 'signing_order' in self.initial_data:
+            raise serializers.ValidationError({
+                'signing_order': 'signing_order is not accepted for self-sign envelopes.',
+            })
+
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'user'):
+            raise serializers.ValidationError('User authentication required.')
+        user = request.user
+
+        documents_with_positions = attrs.get('documents_with_positions') or []
+        normalized_documents_with_positions = []
+        for entry in documents_with_positions:
+            normalized_entry = {
+                'document_id': entry['document_id'],
+                'signer_document_positions': [],
+            }
+            for signer_pos in entry.get('signer_document_positions', []):
+                signer_id = signer_pos.get('signer_id')
+                if signer_id is not None and str(signer_id) != str(user.id):
+                    raise serializers.ValidationError({
+                        'documents_with_positions': (
+                            f"Signer ID {signer_id} is not allowed in self-sign envelopes."
+                        ),
+                    })
+                normalized_entry['signer_document_positions'].append({
+                    'signer_id': user.id,
+                    'position': signer_pos['position'],
+                })
+            normalized_documents_with_positions.append(normalized_entry)
+        attrs['documents_with_positions'] = normalized_documents_with_positions
+
+        fields_data = attrs.get('fields') or []
+        normalized_fields = []
+        for item in fields_data:
+            normalized_item = dict(item)
+            assigned_signer = normalized_item.get('assigned_signer')
+            if assigned_signer is not None and str(assigned_signer) != str(user.id):
+                raise serializers.ValidationError({
+                    'fields': (
+                        f"assigned_signer {assigned_signer} is not allowed in self-sign envelopes."
+                    ),
+                })
+            normalized_item['assigned_signer'] = user.id
+            normalized_fields.append(normalized_item)
+        attrs['fields'] = normalized_fields
+
+        signing_order = [{'signer_id': str(user.id), 'order': 1}]
+        envelope_payload = {
+            'document_ids': [str(doc_id) for doc_id in attrs['document_ids']],
+            'name': attrs.get('name', ''),
+            'description': attrs.get('description'),
+            'signing_order': signing_order,
+            'pdf_password_protection_enabled': attrs.get('pdf_password_protection_enabled', True),
+            'documents_with_positions': normalized_documents_with_positions,
+            'fields': [],
+        }
+        create_serializer = EnvelopeCreateSerializer(
+            data=envelope_payload,
+            context=self.context,
+        )
+        create_serializer.is_valid(raise_exception=True)
+
+        self._validate_self_sign_fields(normalized_fields, envelope_payload['document_ids'])
+        attrs['fields'] = normalized_fields
+
+        sign_payload = {
+            'signature_id': attrs.get('signature_id'),
+            'page': attrs.get('page', 1),
+            'x': attrs.get('x', 100),
+            'y': attrs.get('y', 100),
+            'width': attrs.get('width', 120),
+            'height': attrs.get('height', 40),
+        }
+        if attrs.get('signature_image'):
+            sign_payload['signature_image'] = attrs['signature_image']
+        sign_serializer = SignDocumentSerializer(data=sign_payload, context=self.context)
+        sign_serializer.is_valid(raise_exception=True)
+
+        self._create_serializer = create_serializer
+        self._sign_data = sign_serializer.validated_data
+        return attrs
+
+    def _validate_self_sign_fields(self, fields_data, document_ids):
+        allowed_types = {"initials", "date", "text", "designation"}
+        document_ids_in_envelope = set(str(doc_id) for doc_id in document_ids)
+
+        for i, item in enumerate(fields_data):
+            if not isinstance(item, dict):
+                raise serializers.ValidationError(f"fields[{i}] must be an object")
+
+            required_keys = ["document_id", "page", "x", "y", "width", "height", "type", "required"]
+            missing = [k for k in required_keys if k not in item]
+            if missing:
+                raise serializers.ValidationError(f"fields[{i}] missing keys: {missing}")
+
+            doc_id = str(item.get('document_id'))
+            if doc_id not in document_ids_in_envelope:
+                raise serializers.ValidationError(
+                    f"fields[{i}].document_id {doc_id} not in document_ids"
+                )
+
+            typ = str(item.get('type'))
+            if typ not in allowed_types:
+                raise serializers.ValidationError(
+                    f"fields[{i}].type must be one of {sorted(list(allowed_types))}"
+                )
+
+            try:
+                page = int(item.get('page'))
+                x = float(item.get('x'))
+                y = float(item.get('y'))
+                width = float(item.get('width'))
+                height = float(item.get('height'))
+            except (TypeError, ValueError) as exc:
+                raise serializers.ValidationError(
+                    f"fields[{i}] numeric fields must be numbers"
+                ) from exc
+            if page < 1 or x < 0 or y < 0 or width < 0 or height < 0:
+                raise serializers.ValidationError(
+                    f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0"
+                )
+
+            if typ in {"text", "designation"}:
+                max_length = item.get('max_length')
+                if max_length is not None and int(max_length) <= 0:
+                    raise serializers.ValidationError(
+                        f"fields[{i}].max_length must be positive when provided"
+                    )
+
+            if bool(item.get('required')):
+                value = item.get('value')
+                prefill_value = item.get('prefill_value')
+                if value in (None, '') and prefill_value in (None, ''):
+                    raise serializers.ValidationError(
+                        f"fields[{i}] requires value or prefill_value when required=true"
+                    )
+
+    def get_sign_data(self):
+        return getattr(self, '_sign_data', {})
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user
+        create_serializer = getattr(self, '_create_serializer')
+        envelope_data = create_serializer.validated_data
+
+        document_ids = envelope_data['document_ids']
+        documents_with_positions_data = envelope_data.get('documents_with_positions', [])
+        fields_data = validated_data.get('fields', [])
+
+        with transaction.atomic():
+            envelope = Envelope.objects.create(
+                creator=user,
+                name=envelope_data.get('name') or None,
+                description=envelope_data.get('description'),
+                status="draft",
+                signing_order=[{'signer_id': str(user.id), 'order': 1}],
+                pdf_password_protection_enabled=envelope_data.get(
+                    'pdf_password_protection_enabled',
+                    True,
+                ),
+                is_self_sign=True,
+            )
+
+            for i, doc_id in enumerate(document_ids, 1):
+                document = Document.objects.get(id=doc_id)
+                doc_pos_for_envelope_doc = next(
+                    (
+                        item for item in documents_with_positions_data
+                        if str(item['document_id']) == str(doc_id)
+                    ),
+                    None,
+                )
+                signer_doc_positions_for_this_doc = []
+                if doc_pos_for_envelope_doc:
+                    for entry in doc_pos_for_envelope_doc.get('signer_document_positions', []):
+                        mutable_entry = entry.copy()
+                        if 'signer_id' in mutable_entry:
+                            mutable_entry['signer_id'] = str(mutable_entry['signer_id'])
+                        signer_doc_positions_for_this_doc.append(mutable_entry)
+
+                EnvelopeDocument.objects.create(
+                    envelope=envelope,
+                    document=document,
+                    order=i,
+                    signer_document_positions=signer_doc_positions_for_this_doc,
+                )
+
+            if fields_data:
+                documents_by_id = {
+                    str(doc.id): doc for doc in Document.objects.filter(id__in=document_ids)
+                }
+                for item in fields_data:
+                    doc_id = str(item['document_id'])
+                    field_value = item.get('value')
+                    prefill_value = item.get('prefill_value')
+                    if field_value not in (None, '') and prefill_value in (None, ''):
+                        prefill_value = None
+                    elif prefill_value not in (None, '') and field_value in (None, ''):
+                        field_value = None
+
+                    FieldModel.objects.create(
+                        envelope=envelope,
+                        document=documents_by_id[doc_id],
+                        page=int(item['page']),
+                        x=float(item['x']),
+                        y=float(item['y']),
+                        width=float(item['width']),
+                        height=float(item['height']),
+                        type=str(item['type']),
+                        assigned_signer=user,
+                        required=bool(item['required']),
+                        prefill_value=prefill_value,
+                        value=field_value,
+                        placeholder=item.get('placeholder'),
+                        font_family=item.get('font_family'),
+                        font_size=item.get('font_size'),
+                        date_format=item.get('date_format'),
+                        max_length=item.get('max_length'),
+                    )
+
+        return envelope
 
 
 class DeclineSignatureSerializer(serializers.Serializer):
