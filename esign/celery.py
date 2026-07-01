@@ -14,6 +14,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "esign.settings")
 # Explicitly include known task modules to guarantee registration
 celery_app = Celery("esign", include=[
     "notifications.tasks",
+    "signatures.tasks",
 ])
 
 # Read config from Django settings, using the `CELERY_` namespace

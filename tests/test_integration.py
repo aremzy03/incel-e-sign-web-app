@@ -219,11 +219,7 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         )
         
         # Print response data for debugging
-        if sign1_response.status_code != status.HTTP_200_OK:
-            print(f"Sign response status: {sign1_response.status_code}")
-            print(f"Sign response data: {sign1_response.data}")
-        
-        self.assertEqual(sign1_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(sign1_response.status_code, status.HTTP_202_ACCEPTED)
         
         # Verify envelope still 'pending' (not completed yet)
         envelope.refresh_from_db()
@@ -241,10 +237,10 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         ).first()
         self.assertIsNotNone(signer2_notification)
         
-        # Verify audit log for SIGN_DOC action
+        # Verify audit logs for async signing (queued + succeeded)
         sign1_audit_log = AuditLog.objects.filter(
             actor=self.signer1,
-            action='SIGN_DOC'
+            action='SIGNING_JOB_SUCCEEDED',
         ).first()
         self.assertIsNotNone(sign1_audit_log)
         
@@ -257,7 +253,7 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
             format='json'
         )
         
-        self.assertEqual(sign2_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(sign2_response.status_code, status.HTTP_202_ACCEPTED)
         
         # Verify envelope status changed to 'completed'
         envelope.refresh_from_db()
@@ -275,10 +271,10 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         ).first()
         self.assertIsNotNone(creator_notification)
         
-        # Verify audit log for SIGN_DOC action
+        # Verify audit log for async signing completion
         sign2_audit_log = AuditLog.objects.filter(
             actor=self.signer2,
-            action='SIGN_DOC'
+            action='SIGNING_JOB_SUCCEEDED',
         ).first()
         self.assertIsNotNone(sign2_audit_log)
         
@@ -288,15 +284,15 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
             target_object_id=envelope_id
         ).count()
         
-        # Count SIGN_DOC audit logs performed by the signers
+        # Count signing-job audit logs performed by the signers
         sign_audit_logs = AuditLog.objects.filter(
-            action='SIGN_DOC',
-            actor__in=[self.signer1, self.signer2]
+            action__in=['SIGNING_JOB_QUEUED', 'SIGNING_JOB_SUCCEEDED'],
+            actor__in=[self.signer1, self.signer2],
         ).count()
         
         total_audit_logs = envelope_audit_logs + sign_audit_logs
         
-        # Expected audit logs: CREATE_ENVELOPE, SEND_ENVELOPE, SIGN_DOC (signer1), SIGN_DOC (signer2)
+        # Expected: CREATE_ENVELOPE, SEND_ENVELOPE, plus queued/succeeded per signer
         self.assertGreaterEqual(total_audit_logs, 4)
 
 

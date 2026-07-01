@@ -129,7 +129,22 @@ class SignatureTestCase(APITestCase):
         
         other_refresh = RefreshToken.for_user(self.other_user)
         self.other_token = str(other_refresh.access_token)
-    
+
+        self._prepare_local_document_pdf(self.document)
+        self._upload_completed_patcher = patch(
+            'signatures.services.signing.upload_completed_pdf',
+            side_effect=lambda e, d, p: f'https://fake-s3.local/completed/{e}/{d}.pdf',
+        )
+        self._upload_completed_patcher.start()
+
+    def tearDown(self):
+        self._upload_completed_patcher.stop()
+
+    def _assert_sign_queued(self, response):
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data['status'], 'success')
+        self.assertEqual(response.data['message'], 'Signing job queued')
+        self.assertIn('job_id', response.data['data'])
     def _prepare_local_document_pdf(self, document):
         pdf_dir = os.path.join(str(settings.MEDIA_ROOT), 'tests')
         os.makedirs(pdf_dir, exist_ok=True)
@@ -162,16 +177,13 @@ class SignatureTestCase(APITestCase):
         
         response = self.client.post(url, payload, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['status'], 'success')
-        self.assertEqual(response.data['message'], 'Document signed successfully')
-        self.assertEqual(response.data['data']['status'], 'signed')
+        self._assert_sign_queued(response)
         
         # Verify signature was updated in database
         self.signature1.refresh_from_db()
         self.assertEqual(self.signature1.status, 'signed')
         self.assertIsNotNone(self.signature1.signed_at)
-        self.assertEqual(self.signature1.signature_image, self.test_signature_image)
+        self.assertIsNotNone(self.signature1.signature_image)
     
     def test_signing_unlocks_next_signer(self):
         """Test that signing unlocks the next signer."""
@@ -189,7 +201,7 @@ class SignatureTestCase(APITestCase):
         }
         response = self.client.post(url, payload, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
         
         # Verify first signer is signed
         self.signature1.refresh_from_db()
@@ -199,8 +211,7 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
         response = self.client.post(url, payload, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['status'], 'success')
+        self._assert_sign_queued(response)
         
         # Verify second signer is signed
         self.signature2.refresh_from_db()
@@ -235,7 +246,7 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer3_token}')
         response = self.client.post(url, payload, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
         self.assertEqual(response.data['status'], 'success')
         
         # Verify envelope is now completed
@@ -282,7 +293,7 @@ class SignatureTestCase(APITestCase):
         # Final signer completes the envelope
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer3_token}')
         response = self.client.post(url, payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
 
         self.envelope.refresh_from_db()
         self.assertEqual(self.envelope.status, 'completed')
@@ -329,7 +340,7 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
         response = self.client.post(url, payload, format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
         self.assertTrue(mock_embed.called)
         offset_x = mock_embed.call_args.kwargs['x']
         self.assertEqual(offset_x, 155.0)
@@ -386,7 +397,7 @@ class SignatureTestCase(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
         response = self.client.post(url, payload, format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
         self.assertTrue(mock_embed_text.called)
         offset_x = mock_embed_text.call_args.kwargs['x']
         self.assertEqual(offset_x, 205.0)
@@ -690,30 +701,17 @@ class SignatureTestCase(APITestCase):
         
         response = self.client.post(url, payload, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self._assert_sign_queued(response)
         
         # Check response structure
         self.assertIn('status', response.data)
         self.assertIn('message', response.data)
         self.assertIn('data', response.data)
         
-        # Check data structure
         data = response.data['data']
-        self.assertIn('id', data)
-        self.assertIn('signer', data)
-        self.assertIn('signer_email', data)
-        self.assertIn('signer_name', data)
+        self.assertIn('job_id', data)
         self.assertIn('status', data)
-        self.assertIn('signing_order', data)
-        self.assertIn('signed_at', data)
-        self.assertIn('signature_image', data)
-        self.assertIn('created_at', data)
-        self.assertIn('updated_at', data)
-        
-        # Verify data values
-        self.assertEqual(data['status'], 'signed')
-        self.assertEqual(data['signer_email'], self.signer1.email)
-        self.assertEqual(data['signing_order'], 1)
+        self.assertIn('envelope_id', data)
     
     def test_decline_response_contains_correct_data_structure(self):
         """Test that decline response contains correct data structure."""

@@ -30,6 +30,9 @@ jobs:
           DEBUG: 'True'
           ALLOWED_HOSTS: localhost,127.0.0.1
           DATABASE_URL: sqlite:///test_db.sqlite3
+          USE_S3: 'False'
+          SIGNING_CUTOVER_AT: '2020-01-01T00:00:00+00:00'
+          GUNICORN_TIMEOUT: '120'
           # Prevent rembg from calling sys.exit(1) when it cannot download its model
           U2NET_HOME: /tmp/u2net_cache
         run: |

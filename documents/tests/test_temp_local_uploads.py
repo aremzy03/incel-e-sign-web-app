@@ -37,7 +37,7 @@ def test_document_upload_stores_locally_under_temp_uploads(settings, tmp_path):
     doc = Document.objects.get(id=doc_id)
 
     assert doc.file_url.startswith("/media/"), doc.file_url
-    assert "/temp_uploads/" in doc.file_url, doc.file_url
+    assert "/staging/" in doc.file_url, doc.file_url
     assert doc.signed_file_url in (None, ""), doc.signed_file_url
 
     rel_path = doc.file_url[len("/media/") :]

@@ -413,6 +413,22 @@ MEDIA_ROOT = media_root_path
 # Temporary local storage subdirectories (used regardless of USE_S3).
 TEMP_UPLOAD_SUBDIR = config('TEMP_UPLOAD_SUBDIR', default='temp_uploads')
 TEMP_SIGNED_SUBDIR = config('TEMP_SIGNED_SUBDIR', default='signed_docs')
+STAGING_KEY_PREFIX = config('STAGING_KEY_PREFIX', default='staging')
+MAX_MERGE_DOCUMENTS = config('MAX_MERGE_DOCUMENTS', default=10, cast=int)
+
+# Signing architecture cutover (ISO 8601, timezone-aware). Envelopes created before this
+# datetime cannot be signed if still pending after deploy.
+_signing_cutover_raw = config('SIGNING_CUTOVER_AT', default='')
+SIGNING_CUTOVER_AT = None
+if _signing_cutover_raw:
+    from django.utils.dateparse import parse_datetime
+    from django.utils import timezone as dj_timezone
+
+    _parsed_cutover = parse_datetime(_signing_cutover_raw)
+    if _parsed_cutover is not None:
+        if dj_timezone.is_naive(_parsed_cutover):
+            _parsed_cutover = dj_timezone.make_aware(_parsed_cutover, dj_timezone.get_current_timezone())
+        SIGNING_CUTOVER_AT = _parsed_cutover
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -497,7 +513,12 @@ CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localho
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_IMPORTS = ('notifications.tasks',)
+CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks',)
+
+CELERY_TASK_ROUTES = {
+    'signatures.tasks.*': {'queue': 'signing'},
+    'notifications.tasks.*': {'queue': 'notifications'},
+}
 
 # Celery task settings
 CELERY_TASK_ACKS_LATE = True

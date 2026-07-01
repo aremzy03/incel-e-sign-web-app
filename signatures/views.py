@@ -11,15 +11,23 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from .models import Signature, UserSignature
-from .serializers import SignatureSerializer, SignDocumentSerializer, DeclineSignatureSerializer, UserSignatureSerializer
+from .models import Signature, UserSignature, SigningJob
+from .serializers import (
+    SignatureSerializer,
+    SignDocumentSerializer,
+    DeclineSignatureSerializer,
+    UserSignatureSerializer,
+    SigningJobSerializer,
+)
 from .services.signing import (
-    DocumentNotAvailableForSigningError,
     SignatureImageError,
-    complete_envelope,
-    embed_signatures_for_signer,
-    mark_signature_signed,
     resolve_signature_image,
+)
+from .services.cutover import FROZEN_ENVELOPE_MESSAGE, is_envelope_frozen
+from .services.job_service import (
+    create_and_enqueue_signing_job,
+    get_active_signing_job,
+    signing_job_response_data,
 )
 import logging
 
@@ -50,6 +58,12 @@ class SignDocumentView(APIView):
         """
         from envelopes.models import Envelope
         envelope = get_object_or_404(Envelope, pk=envelope_id)
+
+        if is_envelope_frozen(envelope):
+            return Response({
+                "status": "error",
+                "message": FROZEN_ENVELOPE_MESSAGE,
+            }, status=status.HTTP_409_CONFLICT)
         
         if envelope.status != "pending":
             return Response({
@@ -98,7 +112,6 @@ class SignDocumentView(APIView):
                 "message": str(exc)
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        signature.refresh_from_db()
         if signature.is_signed:
             signature_serializer = SignatureSerializer(signature)
             return Response({
@@ -106,6 +119,17 @@ class SignDocumentView(APIView):
                 "message": "Document signed successfully",
                 "data": signature_serializer.data
             }, status=status.HTTP_200_OK)
+
+        active_job = get_active_signing_job(envelope, request.user)
+        if active_job or signature.is_processing:
+            job = active_job or SigningJob.objects.filter(
+                envelope=envelope, signer=request.user
+            ).order_by("-created_at").first()
+            return Response({
+                "status": "success",
+                "message": "Signing job queued",
+                "data": signing_job_response_data(job),
+            }, status=status.HTTP_202_ACCEPTED)
 
         fallback_placement = {
             'page': validated_data.get('page', 1),
@@ -115,90 +139,95 @@ class SignDocumentView(APIView):
             'height': validated_data.get('height', 40),
         }
 
-        try:
-            embed_signatures_for_signer(
-                envelope,
-                request.user,
-                signature_image_data,
+        from django.db import transaction
+
+        with transaction.atomic():
+            signature = Signature.objects.select_for_update().get(pk=signature.pk)
+            if signature.is_signed:
+                signature_serializer = SignatureSerializer(signature)
+                return Response({
+                    "status": "success",
+                    "message": "Document signed successfully",
+                    "data": signature_serializer.data
+                }, status=status.HTTP_200_OK)
+
+            job = create_and_enqueue_signing_job(
+                envelope=envelope,
+                signer=request.user,
+                signature=signature,
+                signature_image_data=signature_image_data,
                 fallback_placement=fallback_placement,
+                request=request,
             )
-        except DocumentNotAvailableForSigningError as exc:
-            return Response({
-                "status": "error",
-                "message": str(exc)
-            }, status=status.HTTP_400_BAD_REQUEST)
 
-        mark_signature_signed(signature, signature_image_data)
-        
-        from audit.utils import log_action
-        log_action(
-            request.user, 
-            "SIGN_DOC", 
-            signature, 
-            f"User {request.user.full_name or request.user.username} signed envelope '{signature.envelope.name}' with {signature.envelope.envelopedocument_set.count()} documents.", 
-            request=request
-        )
-        
-        remaining_pending = Signature.objects.filter(
-            envelope=envelope,
-            status='pending'
-        ).count()
-        
-        from notifications.utils import create_notification, create_signer_turn_notification
-        from notifications.tasks import send_turn_to_sign_email_task
-        
-        if remaining_pending == 0:
-            complete_envelope(envelope, notify_creator=True)
-        else:
-            def get_order_for_signer_id(signer_id: str) -> int:
-                if not envelope.signing_order:
-                    return 0
-                for idx, signer_entry in enumerate(envelope.signing_order, 1):
-                    if str(signer_entry.get('signer_id')) == str(signer_id):
-                        explicit = signer_entry.get('order')
-                        return explicit if isinstance(explicit, int) and explicit >= 1 else idx
-                return 0
-
-            current_order = signature.get_signing_order()
-            next_signer_id = None
-            next_order = None
-            if envelope.signing_order:
-                for signer_entry in envelope.signing_order:
-                    candidate_id = signer_entry.get('signer_id')
-                    candidate_order = get_order_for_signer_id(candidate_id)
-                    if candidate_order > current_order and (next_order is None or candidate_order < next_order):
-                        next_order = candidate_order
-                        next_signer_id = candidate_id
-
-            next_signature = None
-            if next_signer_id is not None:
-                next_signature = Signature.objects.filter(
-                    envelope=envelope,
-                    signer__id=next_signer_id,
-                    status='pending'
-                ).first()
-
-            if next_signature:
-                message = create_signer_turn_notification(envelope)
-                create_notification(str(next_signature.signer.id), message)
-                try:
-                    recipient_email = getattr(next_signature.signer, 'email', None)
-                    if recipient_email:
-                        send_turn_to_sign_email_task.delay(
-                            recipient_email,
-                            envelope.name,
-                            str(envelope.id)
-                        )
-                except Exception as exc:
-                    LOGGER.error("Error sending turn-to-sign email: %s", exc)
-        
-        signature_serializer = SignatureSerializer(signature)
-        
         return Response({
             "status": "success",
-            "message": "Document signed successfully",
-            "data": signature_serializer.data
-        }, status=status.HTTP_200_OK)
+            "message": "Signing job queued",
+            "data": signing_job_response_data(job),
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+class SigningJobDetailView(APIView):
+    """GET /api/signatures/jobs/{id}/ — poll async signing job status."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id):
+        job = get_object_or_404(SigningJob.objects.select_related("envelope", "signer", "signature"), pk=id)
+        user = request.user
+        if job.signer_id != user.id and job.envelope.creator_id != user.id and not user.is_staff:
+            return Response({
+                "status": "error",
+                "message": "You are not authorized to view this signing job.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = SigningJobSerializer(job)
+        return Response({
+            "status": "success",
+            "data": serializer.data,
+        })
+
+
+class SigningJobRetryView(APIView):
+    """POST /api/signatures/jobs/{id}/retry/ — retry a failed signing job."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        job = get_object_or_404(SigningJob.objects.select_related("envelope", "signer", "signature"), pk=id)
+        if job.signer_id != request.user.id:
+            return Response({
+                "status": "error",
+                "message": "You are not authorized to retry this signing job.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if job.status != "failed":
+            return Response({
+                "status": "error",
+                "message": f"Only failed jobs can be retried. Current status: {job.status}",
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.db import transaction
+
+        with transaction.atomic():
+            job = SigningJob.objects.select_for_update().get(pk=job.pk)
+            if job.signature_id:
+                Signature.objects.filter(pk=job.signature_id).update(status="processing")
+            job.status = "queued"
+            job.error_message = ""
+            job.completed_at = None
+            job.attempt_count += 1
+            job.save(update_fields=["status", "error_message", "completed_at", "attempt_count", "updated_at"])
+
+        from signatures.tasks import enqueue_signing_job
+
+        enqueue_signing_job(job)
+
+        return Response({
+            "status": "success",
+            "message": "Signing job queued",
+            "data": signing_job_response_data(job),
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 class SelfSignView(APIView):
@@ -213,8 +242,6 @@ class SelfSignView(APIView):
 
     def post(self, request):
         from django.db import transaction
-        from envelopes.models import Envelope
-        from envelopes.serializers import EnvelopeDetailSerializer
         from documents.models import Document
         from audit.utils import log_action
 
@@ -233,7 +260,7 @@ class SelfSignView(APIView):
         try:
             with transaction.atomic():
                 envelope = serializer.save()
-                Signature.objects.create(
+                signature = Signature.objects.create(
                     envelope=envelope,
                     signer=request.user,
                     status='pending',
@@ -252,41 +279,35 @@ class SelfSignView(APIView):
                 'width': sign_data.get('width', 120),
                 'height': sign_data.get('height', 40),
             }
-            embed_signatures_for_signer(
-                envelope,
-                request.user,
-                signature_image_data,
+
+            job = create_and_enqueue_signing_job(
+                envelope=envelope,
+                signer=request.user,
+                signature=signature,
+                signature_image_data=signature_image_data,
                 fallback_placement=fallback_placement,
+                is_self_sign=True,
+                request=request,
             )
-            signature = Signature.objects.get(envelope=envelope, signer=request.user)
-            mark_signature_signed(signature, signature_image_data)
-            complete_envelope(envelope, notify_creator=False)
         except SignatureImageError as exc:
             return Response({
                 "status": "error",
                 "message": str(exc),
             }, status=status.HTTP_400_BAD_REQUEST)
-        except DocumentNotAvailableForSigningError as exc:
-            return Response({
-                "status": "error",
-                "message": str(exc),
-            }, status=status.HTTP_400_BAD_REQUEST)
 
-        envelope = Envelope.objects.get(pk=envelope.pk)
         log_action(
             request.user,
             "SELF_SIGN_DOC",
             envelope,
-            f"User {request.user.full_name or request.user.username} self-signed envelope '{envelope.name}'.",
+            f"User {request.user.full_name or request.user.username} self-sign job queued for envelope '{envelope.name}'.",
             request=request,
         )
 
-        detail_serializer = EnvelopeDetailSerializer(envelope)
         return Response({
             "status": "success",
-            "message": "Document self-signed successfully",
-            "data": detail_serializer.data,
-        }, status=status.HTTP_201_CREATED)
+            "message": "Signing job queued",
+            "data": signing_job_response_data(job),
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 class DeclineSignatureView(APIView):

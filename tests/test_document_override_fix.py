@@ -173,7 +173,7 @@ startxref
             format='json'
         )
         
-        self.assertEqual(sign1_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(sign1_response.status_code, status.HTTP_202_ACCEPTED)
         
         # CRITICAL TEST: Check that document is overridden after first signature
         document.refresh_from_db()
@@ -198,7 +198,7 @@ startxref
             format='json'
         )
         
-        self.assertEqual(sign2_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(sign2_response.status_code, status.HTTP_202_ACCEPTED)
         
         # Check that document is overridden again after second signature
         document.refresh_from_db()

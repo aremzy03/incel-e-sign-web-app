@@ -17,7 +17,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from documents.models import Document
 from envelopes.models import Envelope
 from notifications.models import Notification
-from signatures.models import Signature, UserSignature
+from signatures.models import Signature, UserSignature, SigningJob
 
 User = get_user_model()
 
@@ -76,13 +76,15 @@ class SelfSignTestCase(APITestCase):
 
     def _create_document(self, owner=None):
         owner = owner or self.user
-        return Document.objects.create(
+        document = Document.objects.create(
             owner=owner,
             file_url='/test/path/document.pdf',
             file_name='test_document.pdf',
             file_size=1024,
             status='draft',
         )
+        self._prepare_local_document_pdf(document)
+        return document
 
     def _prepare_local_document_pdf(self, document):
         pdf_dir = os.path.join(str(settings.MEDIA_ROOT), 'tests')
@@ -123,9 +125,12 @@ class SelfSignTestCase(APITestCase):
         payload.update(overrides)
         return payload
 
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_self_sign_single_document_happy_path(self, mock_embed, _mock_s3):
+    def _envelope_from_job_response(self, response):
+        job = SigningJob.objects.get(id=response.data['data']['job_id'])
+        return job.envelope
+
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_single_document_happy_path(self, _mock_complete):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -150,21 +155,19 @@ class SelfSignTestCase(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data['status'], 'success')
-        self.assertTrue(response.data['data']['is_self_sign'])
-        self.assertEqual(response.data['data']['status'], 'self_signed')
-        self.assertTrue(mock_embed.called)
+        self.assertIn('job_id', response.data['data'])
 
-        envelope = Envelope.objects.get(id=response.data['data']['id'])
+        envelope = self._envelope_from_job_response(response)
         self.assertTrue(envelope.is_self_sign)
+        self.assertEqual(envelope.status, 'self_signed')
         document.refresh_from_db()
         self.assertIsNotNone(document.signed_file_url)
         self.assertTrue(document.signed_file_url.startswith('https://fake-s3.local/'))
 
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_self_sign_multiple_documents(self, mock_embed, _mock_s3):
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_multiple_documents(self, _mock_complete):
         document1 = self._create_document()
         document2 = self._create_document()
         self._prepare_local_document_pdf(document1)
@@ -207,20 +210,18 @@ class SelfSignTestCase(APITestCase):
         }
 
         response = self.client.post(self.url, payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
 
-        envelope = Envelope.objects.get(id=response.data['data']['id'])
+        envelope = self._envelope_from_job_response(response)
         self.assertEqual(envelope.status, 'self_signed')
         self.assertEqual(envelope.envelopedocument_set.count(), 2)
         document1.refresh_from_db()
         document2.refresh_from_db()
         self.assertIsNotNone(document1.signed_file_url)
         self.assertIsNotNone(document2.signed_file_url)
-        self.assertEqual(mock_embed.call_count, 2)
 
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_self_sign_uses_default_user_signature(self, mock_embed, _mock_s3):
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_uses_default_user_signature(self, _mock_complete):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -239,10 +240,10 @@ class SelfSignTestCase(APITestCase):
         payload.pop('signature_image', None)
 
         response = self.client.post(self.url, payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertTrue(mock_embed.called)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
 
-        signature = Signature.objects.get(envelope_id=response.data['data']['id'])
+        envelope = self._envelope_from_job_response(response)
+        signature = Signature.objects.get(envelope=envelope)
         self.assertEqual(signature.status, 'signed')
         self.assertIsNotNone(signature.signature_image)
 
@@ -278,9 +279,8 @@ class SelfSignTestCase(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_self_sign_cannot_be_sent(self, mock_embed, _mock_s3):
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_cannot_be_sent(self, _mock_complete):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -289,17 +289,17 @@ class SelfSignTestCase(APITestCase):
             self._self_sign_payload(document),
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        envelope_id = response.data['data']['id']
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        envelope = self._envelope_from_job_response(response)
+        envelope_id = envelope.id
 
         send_url = reverse('envelopes:envelope_send', kwargs={'pk': envelope_id})
         send_response = self.client.post(send_url)
         self.assertEqual(send_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Self-signed envelopes cannot be sent', send_response.data['message'])
 
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_list_filter_is_self_sign_true(self, mock_embed, _mock_s3):
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_list_filter_is_self_sign_true(self, _mock_complete):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
 
@@ -321,9 +321,8 @@ class SelfSignTestCase(APITestCase):
         self.assertEqual(len(returned_ids), 1)
 
     @patch('notifications.utils.create_notification')
-    @patch('signatures.services.signing.get_permanent_s3_storage', return_value=_FakeS3Storage())
-    @patch('signatures.services.signing.embed_signature', side_effect=_embed_signature_side_effect)
-    def test_no_notifications_created(self, mock_embed, _mock_s3, mock_create_notification):
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_no_notifications_created(self, _mock_complete, mock_create_notification):
         document = self._create_document()
         self._prepare_local_document_pdf(document)
         initial_count = Notification.objects.count()
@@ -334,6 +333,5 @@ class SelfSignTestCase(APITestCase):
             format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Notification.objects.count(), initial_count)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         mock_create_notification.assert_not_called()

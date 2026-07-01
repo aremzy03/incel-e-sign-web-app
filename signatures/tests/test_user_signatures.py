@@ -7,8 +7,11 @@ serializers, views, and related functionality.
 
 import uuid
 import base64
+import os
+from unittest.mock import patch
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -444,6 +447,23 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         self.test_image.save(image_file, format='PNG')
         image_file.seek(0)
         self.image_data = image_file.getvalue()
+
+        pdf_dir = os.path.join(str(settings.MEDIA_ROOT), 'tests')
+        os.makedirs(pdf_dir, exist_ok=True)
+        pdf_path = os.path.join(pdf_dir, f'{self.document.id}.pdf')
+        with open(pdf_path, 'wb') as f:
+            f.write(b'%PDF-1.4\n%EOF')
+        self.document.file_url = f"{settings.MEDIA_URL}{os.path.relpath(pdf_path, str(settings.MEDIA_ROOT))}"
+        self.document.save(update_fields=['file_url'])
+
+        self._upload_completed_patcher = patch(
+            'signatures.services.signing.upload_completed_pdf',
+            side_effect=lambda e, d, p: f'https://fake-s3.local/completed/{e}/{d}.pdf',
+        )
+        self._upload_completed_patcher.start()
+
+    def tearDown(self):
+        self._upload_completed_patcher.stop()
     
     def test_sign_document_with_signature_id(self):
         """Test signing document with signature_id."""
@@ -470,7 +490,7 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         response = self.client.post(url, data)
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data['status'], 'success')
         
         # Verify signature was updated
@@ -504,7 +524,7 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         
         response = self.client.post(url, data)
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data['status'], 'success')
         
         # Verify signature was updated

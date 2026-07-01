@@ -19,3 +19,11 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = "memory://"
 CELERY_RESULT_BACKEND = "cache+memory://"
+
+# All test envelopes use the async signing pipeline
+from datetime import datetime, timezone as dt_timezone
+
+SIGNING_CUTOVER_AT = datetime(2020, 1, 1, tzinfo=dt_timezone.utc)
+
+# Tests always use local filesystem storage, not live S3.
+USE_S3 = False

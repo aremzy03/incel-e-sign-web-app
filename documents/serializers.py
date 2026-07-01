@@ -10,7 +10,7 @@ from rest_framework import serializers
 from django.conf import settings
 from django.core.files.base import ContentFile
 from .models import Document
-from .storage import get_temp_local_storage
+from .services.pdf_files import upload_staging_pdf, temp_pdf_file
 
 
 class MergeDocumentsSerializer(serializers.Serializer):
@@ -29,6 +29,11 @@ class MergeDocumentsSerializer(serializers.Serializer):
         # Require at least 2 documents to merge
         if len(value) < 2:
             raise serializers.ValidationError("At least two documents are required to merge.")
+        max_docs = getattr(settings, "MAX_MERGE_DOCUMENTS", 10)
+        if len(value) > max_docs:
+            raise serializers.ValidationError(
+                f"Cannot merge more than {max_docs} documents at once."
+            )
         return value
 
 class DocumentUploadSerializer(serializers.Serializer):
@@ -83,7 +88,6 @@ class DocumentUploadSerializer(serializers.Serializer):
             Document: The created Document instance
         """
         file = self.validated_data['file']
-        temp_storage = get_temp_local_storage()
         
         # Determine handling by extension
         original_name = file.name
@@ -119,32 +123,27 @@ class DocumentUploadSerializer(serializers.Serializer):
             with open(output_pdf_abs, 'rb') as fpdf:
                 pdf_bytes = fpdf.read()
             
-            # Generate unique PDF filename for storage (with UUID prefix for uniqueness on disk)
-            unique_pdf_filename = f"{owner.id}_{os.path.basename(base_name)}.pdf"
-            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_pdf_filename}"
-
-            # Save PDF locally and build a MEDIA_URL-based URL
-            saved_path = temp_storage.save(storage_rel_path, ContentFile(pdf_bytes))
-            file_url = temp_storage.url(saved_path)
-            # Store clean filename without UUID prefix for display
             file_name_for_record = f"{base_name}.pdf"
             file_size_for_record = len(pdf_bytes)
         else:
-            # Handle PDF directly: store as-is
-            unique_filename = f"{owner.id}_{original_name}"
-            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_filename}"
-            saved_path = temp_storage.save(storage_rel_path, file)
-            file_url = temp_storage.url(saved_path)
+            pdf_bytes = b"".join(chunk for chunk in file.chunks())
             file_name_for_record = original_name
-            file_size_for_record = file.size
-        
+            file_size_for_record = len(pdf_bytes)
+
         document = Document.objects.create(
             owner=owner,
-            file_url=file_url,
+            file_url="",
             file_name=file_name_for_record,
             file_size=file_size_for_record,
-            status='draft'
+            status='draft',
         )
+
+        with temp_pdf_file() as temp_path:
+            temp_path.write_bytes(pdf_bytes)
+            file_url = upload_staging_pdf(document.id, temp_path)
+
+        document.file_url = file_url
+        document.save(update_fields=["file_url", "updated_at"])
         return document
 
 

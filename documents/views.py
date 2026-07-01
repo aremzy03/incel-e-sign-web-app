@@ -27,8 +27,9 @@ from rest_framework.views import APIView
 from core.query_filters import parse_search_query_param, parse_status_query_param
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
-from envelopes.models import Envelope, EnvelopeDocument
+from .services.pdf_files import download_pdf_to_temp, temp_pdf_file, upload_staging_pdf
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
+from envelopes.models import Envelope, EnvelopeDocument
 from pypdf import PdfReader, PdfWriter
 
 logger = logging.getLogger(__name__)
@@ -760,101 +761,97 @@ class MergeDocumentsView(APIView):
         document_ids = serializer.validated_data['document_ids']
         desired_name = serializer.validated_data.get('name') or ""
 
-        # Fetch and validate ownership/access
+        MERGEABLE_STATUSES = ('draft', 'completed')
         docs = []
-        for doc_id in document_ids:
-            doc = Document.objects.filter(id=doc_id, owner=request.user).first()
-            if not doc:
-                return Response({
-                    'status': 'error',
-                    'message': f'Access denied or document not found: {doc_id}'
-                }, status=status.HTTP_403_FORBIDDEN)
-            # Resolve file path (prefer signed if exists)
-            source_url = doc.signed_file_url or doc.file_url
-            abs_path = get_media_absolute_path_from_url(source_url)
-
-            # For local filesystem paths, ensure the file exists.
-            if os.path.isabs(abs_path):
-                if not os.path.exists(abs_path):
+        temp_paths_to_cleanup = []
+        try:
+            for doc_id in document_ids:
+                doc = Document.objects.filter(id=doc_id, owner=request.user).first()
+                if not doc:
                     return Response({
                         'status': 'error',
-                        'message': f'Source file missing on server for document {doc_id}'
+                        'message': f'Access denied or document not found: {doc_id}'
+                    }, status=status.HTTP_403_FORBIDDEN)
+
+                if doc.status not in MERGEABLE_STATUSES:
+                    return Response({
+                        'status': 'error',
+                        'message': (
+                            f'Document {doc_id} cannot be merged (status={doc.status}). '
+                            'Only draft or completed documents are allowed.'
+                        )
                     }, status=status.HTTP_400_BAD_REQUEST)
-                docs.append((doc, abs_path))
+
+                if EnvelopeDocument.objects.filter(
+                    document=doc,
+                    envelope__status='pending',
+                ).exists():
+                    return Response({
+                        'status': 'error',
+                        'message': (
+                            f'Document {doc_id} is part of a pending envelope and cannot be merged.'
+                        )
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                source_url = doc.signed_file_url or doc.file_url
+                try:
+                    local_path = download_pdf_to_temp(source_url)
+                    temp_paths_to_cleanup.append(str(local_path))
+                    docs.append((doc, str(local_path)))
+                except FileNotFoundError:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Source file missing for document {doc_id}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                except Exception as exc:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Failed to download source for document {doc_id}: {exc}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            if desired_name.strip() and not _is_placeholder_merge_name(desired_name):
+                safe_base = _sanitize_filename_component(desired_name.strip(), fallback="Merged Document", max_len=120)
+                file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
             else:
-                # For non-local sources (e.g. S3 URLs), merging is not currently
-                # supported without first downloading to a temporary location.
+                file_name = _default_merged_filename(docs[0][0].file_name, len(docs))
+
+            writer = PdfWriter()
+            try:
+                for _, abs_path in docs:
+                    reader = PdfReader(abs_path)
+                    for page in reader.pages:
+                        writer.add_page(page)
+            except Exception as e:
                 return Response({
                     'status': 'error',
-                    'message': f'Merging documents stored on remote storage is not supported for document {doc_id}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'message': f'Failed to read/merge PDFs: {e}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Determine output name:
-        # - if user supplied a name, sanitize it and ensure ".pdf"
-        # - if the client sent a placeholder name (e.g. "merged.pdf"), treat it as blank
-        # - else generate a friendly default based on the first doc and count (Option A)
-        if desired_name.strip() and not _is_placeholder_merge_name(desired_name):
-            safe_base = _sanitize_filename_component(desired_name.strip(), fallback="Merged Document", max_len=120)
-            file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
-        else:
-            file_name = _default_merged_filename(docs[0][0].file_name, len(docs))
-
-        # Perform merge preserving order
-        writer = PdfWriter()
-        try:
-            for _, abs_path in docs:
-                reader = PdfReader(abs_path)
-                for page in reader.pages:
-                    writer.add_page(page)
-        except Exception as e:
-            return Response({
-                'status': 'error',
-                'message': f'Failed to read/merge PDFs: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Write merged PDF to MEDIA_ROOT/merged_docs
-        merged_dir = os.path.join(str(settings.MEDIA_ROOT), 'merged_docs')
-        os.makedirs(merged_dir, exist_ok=True)
-        merged_id = uuid.uuid4()
-        # Prepend uuid to ensure uniqueness on disk
-        disk_name = f"{merged_id}_{file_name}"
-        abs_out = os.path.join(merged_dir, disk_name)
-        try:
-            with open(abs_out, 'wb') as fout:
-                writer.write(fout)
-        except Exception as e:
-            return Response({
-                'status': 'error',
-                'message': f'Failed to write merged PDF: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Build file_url relative to MEDIA_URL
-        rel_path = os.path.relpath(abs_out, str(settings.MEDIA_ROOT))
-        file_url = f"{settings.MEDIA_URL}{rel_path}"
-
-        # Create Document record
-        try:
-            file_size = os.path.getsize(abs_out)
             new_doc = Document.objects.create(
                 owner=request.user,
-                file_url=file_url,
+                file_url="",
                 file_name=file_name,
-                file_size=file_size,
-                status='draft'
+                file_size=0,
+                status='draft',
             )
-        except Exception as e:
-            # Cleanup file if DB create fails
-            try:
-                if os.path.exists(abs_out):
-                    os.remove(abs_out)
-            except Exception:
-                pass
-            return Response({
-                'status': 'error',
-                'message': f'Failed to create merged Document record: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Audit log
+            with temp_pdf_file() as merged_temp:
+                with open(merged_temp, 'wb') as fout:
+                    writer.write(fout)
+                file_size = merged_temp.stat().st_size
+                file_url = upload_staging_pdf(new_doc.id, merged_temp)
+
+            new_doc.file_url = file_url
+            new_doc.file_size = file_size
+            new_doc.save(update_fields=['file_url', 'file_size', 'updated_at'])
+        finally:
+            for path in temp_paths_to_cleanup:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+
         try:
             from audit.utils import log_action
             joined_ids = ", ".join([str(i) for i in document_ids])
