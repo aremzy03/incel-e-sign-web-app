@@ -15,7 +15,7 @@ The E-Sign Application is a full-featured electronic signature platform that ena
 - **🖊️ Reusable Signatures**: Upload and manage multiple signature images for reuse
 - **🧩 Form Fields**: Backend support for initials, date, text, and designation fields (assign to signers, prefill by sender, flattened into final PDF)
 - **🔒 Locked PDFs**: Completed envelopes automatically password-protect signed PDFs and surface the password to creators and recipients
-- **📊 Metrics Dashboard**: Quick overview of your personal signing activity (documents signed, pending signatures, active envelopes, completion rate)
+- **📊 Dashboard**: Overview of signing activity (metrics, envelope counts, action-required list, recent activity)
 - **🔐 JWT Authentication**: Secure token-based authentication with refresh token support
 - **⚡ Async Processing**: Background task processing with Celery and Redis
 
@@ -1672,8 +1672,9 @@ The Envelope model manages the signing workflow for documents, defining the orde
 - `description` (TextField): Optional description or notes for recipients about this envelope
 - `status` (CharField): Current status with choices:
   - `draft`: Envelope is being prepared
-  - `sent`: Envelope has been sent to signers
+  - `pending`: Envelope has been sent to signers
   - `completed`: All signers have completed signing
+  - `self_signed`: Creator signed their own document(s) without recipients
   - `rejected`: Envelope was rejected
 - `signing_order` (JSONField): Ordered list of signers with validation and optional signature position coordinates
 - `created_at` (DateTimeField): Timestamp when the envelope was created
@@ -2177,7 +2178,7 @@ curl -X GET http://localhost:8000/api/envelopes/ \
 - Authentication: Required (JWT Bearer token)
 - Body: None required
 - Optional query params:
-  - `status` — filter by envelope status (`draft`, `pending`, `completed`, `rejected`)
+  - `status` — filter by envelope status (`draft`, `pending`, `completed`, `self_signed`, `rejected`)
   - `search` — case-insensitive match on name, description, or creator email/name
   - `is_self_sign` — `true` returns only self-signed envelopes; `false` excludes them
 
@@ -2316,36 +2317,57 @@ curl -X GET http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665544
 }
 ```
 
-#### 6. Envelope Metrics
+#### 6. Envelope Dashboard
 
-**Endpoint:** `GET /envelopes/metrics/`
+**Endpoint:** `GET /envelopes/dashboard/`
 
-Retrieve a quick metrics overview for the authenticated user.
+**Deprecated alias:** `GET /envelopes/metrics/` (returns the same payload)
+
+Retrieve an aggregated dashboard for the authenticated user: legacy metrics, envelope counts, envelopes requiring the user's signature, and recent activity.
 
 **Request:**
 ```bash
-curl -X GET http://localhost:8000/api/envelopes/metrics/ \
+curl -X GET http://localhost:8000/api/envelopes/dashboard/ \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
+
+Optional query parameters:
+- `action_required_limit` (default `10`, max `100`)
+- `activity_limit` (default `5`, max `100`)
 
 **Response (Success - 200):**
 ```json
 {
   "status": "success",
-  "message": "Metrics retrieved successfully",
+  "message": "Dashboard retrieved successfully",
   "data": {
-    "documents_signed": 8,
-    "pending_signatures": 3,
-    "active_envelopes": 5,
-    "completion_rate": 57.14
+    "metrics": {
+      "documents_signed": 8,
+      "pending_signatures": 3,
+      "active_envelopes": 5,
+      "completion_rate": 57.14
+    },
+    "counts": {
+      "pending_my_signature": 2,
+      "pending_sent": 3,
+      "completed": 4,
+      "draft": 1
+    },
+    "action_required": [],
+    "recent_activity": []
   }
 }
 ```
 
 **Notes:**
-- `documents_signed` / `pending_signatures` reflect the user's signature records.
-- `active_envelopes` counts envelopes created by the user that are still draft or pending.
-- `completion_rate` is the percentage of the user's envelopes that have reached `completed`.
+- `metrics` preserves the former `/envelopes/metrics/` fields.
+- `metrics.documents_signed` / `metrics.pending_signatures` reflect the user's signature records.
+- `metrics.active_envelopes` counts envelopes created by the user that are still draft or pending.
+- `metrics.completion_rate` is the percentage of the user's envelopes that have reached `completed`.
+- `counts.pending_my_signature` counts envelopes where the user is the current signer.
+- `counts.pending_sent`, `counts.completed`, and `counts.draft` count envelopes created by the user in each status.
+- `action_required` lists envelopes with status `pending` where the authenticated user is the current signer. Self-signed envelopes are excluded.
+- `recent_activity` lists recent send, sign, and reject actions performed by the user.
 
 #### 5a. Retrieve Envelope Documents
 
@@ -2430,13 +2452,13 @@ curl -X DELETE http://localhost:8000/api/envelopes/550e8400-e29b-41d4-a716-44665
 
 **Workflow comparison:**
 - **Multi-party:** upload → create envelope → send → sequential sign
-- **Self-sign:** upload → `POST /api/signatures/self-sign/` → completed (no send step, no recipient notifications)
+- **Self-sign:** upload → `POST /api/signatures/self-sign/` → `self_signed` (no send step, no recipient notifications)
 
 #### Self-Sign Document(s)
 
 **Endpoint:** `POST /api/signatures/self-sign/`
 
-Upload document(s) first via `POST /api/documents/upload/`, then call this endpoint to place signature(s), optionally embed input field values, and receive a completed envelope in one request. No recipients, send step, or notification emails.
+Upload document(s) first via `POST /api/documents/upload/`, then call this endpoint to place signature(s), optionally embed input field values, and receive a self-signed envelope in one request. No recipients, send step, or notification emails.
 
 **Request:**
 ```bash
@@ -2482,7 +2504,7 @@ curl -X POST http://localhost:8000/api/signatures/self-sign/ \
   "message": "Document self-signed successfully",
   "data": {
     "id": "550e8400-e29b-41d4-a716-446655440003",
-    "status": "completed",
+    "status": "self_signed",
     "is_self_sign": true,
     "signing_order": [
       {"signer_id": "550e8400-e29b-41d4-a716-446655440004", "order": 1}

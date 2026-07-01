@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "dockerfileLines": [
+    "FROM ghcr.io/aremzy03/incel-e-sign-web-app:latest",
+    "ENV SERVICE_ROLE=worker",
+    "ENV RUN_MIGRATIONS_ON_START=false",
+    "CMD [\"worker\"]"
+  ]
+}

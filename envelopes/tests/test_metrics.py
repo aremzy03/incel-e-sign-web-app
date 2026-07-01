@@ -1,5 +1,5 @@
 """
-Tests for the envelope metrics endpoint.
+Tests for the deprecated envelope metrics endpoint alias.
 """
 
 from django.contrib.auth import get_user_model
@@ -14,8 +14,8 @@ from signatures.models import Signature
 User = get_user_model()
 
 
-class EnvelopeMetricsAPITestCase(APITestCase):
-    """Test cases for the envelope metrics endpoint."""
+class EnvelopeMetricsAliasAPITestCase(APITestCase):
+    """Test cases for the deprecated /metrics/ dashboard alias."""
 
     def setUp(self):
         self.user = User.objects.create_user(
@@ -29,7 +29,6 @@ class EnvelopeMetricsAPITestCase(APITestCase):
             password='testpass123'
         )
 
-        # Documents for envelope associations
         self.user_document = Document.objects.create(
             owner=self.user,
             file_url='/media/metrics_user_doc.pdf',
@@ -43,7 +42,6 @@ class EnvelopeMetricsAPITestCase(APITestCase):
             file_size=2048
         )
 
-        # Envelopes created by self.user
         self.draft_envelope = Envelope.objects.create(
             creator=self.user,
             name='Draft Envelope',
@@ -88,7 +86,6 @@ class EnvelopeMetricsAPITestCase(APITestCase):
             order=1
         )
 
-        # Signatures involving self.user as signer
         signer_envelope_signed = Envelope.objects.create(
             creator=self.other_user,
             name='Signer Completed',
@@ -123,23 +120,22 @@ class EnvelopeMetricsAPITestCase(APITestCase):
             status='pending'
         )
 
-    def test_metrics_endpoint_returns_expected_counts(self):
-        """Authenticated users receive metrics tailored to their activity."""
+    def test_metrics_alias_returns_legacy_metrics_block(self):
+        """Deprecated /metrics/ still exposes legacy metrics under data.metrics."""
         self.client.force_authenticate(user=self.user)
         url = reverse('envelopes:envelope_metrics')
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        data = response.data['data']
+        metrics = response.data['data']['metrics']
 
-        self.assertEqual(data['documents_signed'], 1)
-        self.assertEqual(data['pending_signatures'], 1)
-        self.assertEqual(data['active_envelopes'], 2)
-        self.assertEqual(data['completion_rate'], 25.0)
+        self.assertEqual(metrics['documents_signed'], 1)
+        self.assertEqual(metrics['pending_signatures'], 1)
+        self.assertEqual(metrics['active_envelopes'], 2)
+        self.assertEqual(metrics['completion_rate'], 25.0)
 
-    def test_metrics_endpoint_requires_authentication(self):
+    def test_metrics_alias_requires_authentication(self):
         """Unauthenticated requests should be rejected."""
         url = reverse('envelopes:envelope_metrics')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-

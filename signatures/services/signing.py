@@ -307,7 +307,9 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
             locked_envelope.pdf_lock_password = generate_pdf_lock_password()
             generated_password = True
 
-        locked_envelope.status = "completed"
+        locked_envelope.status = (
+            "self_signed" if locked_envelope.is_self_sign else "completed"
+        )
         envelope_update_fields = ["status", "updated_at", "pdf_password_protection_enabled"]
         if generated_password:
             envelope_update_fields.append("pdf_lock_password")

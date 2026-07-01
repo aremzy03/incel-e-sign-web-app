@@ -153,7 +153,7 @@ class SelfSignTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['status'], 'success')
         self.assertTrue(response.data['data']['is_self_sign'])
-        self.assertEqual(response.data['data']['status'], 'completed')
+        self.assertEqual(response.data['data']['status'], 'self_signed')
         self.assertTrue(mock_embed.called)
 
         envelope = Envelope.objects.get(id=response.data['data']['id'])
@@ -210,7 +210,7 @@ class SelfSignTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         envelope = Envelope.objects.get(id=response.data['data']['id'])
-        self.assertEqual(envelope.status, 'completed')
+        self.assertEqual(envelope.status, 'self_signed')
         self.assertEqual(envelope.envelopedocument_set.count(), 2)
         document1.refresh_from_db()
         document2.refresh_from_db()

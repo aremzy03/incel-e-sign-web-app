@@ -150,6 +150,23 @@ class EnvelopeRetrievalTestCase(APITestCase):
         data = response.data['data']
         self.assertIn('results', data)
         return data['results']
+
+    def _assert_envelope_list_item_shape(self, envelope_data):
+        """Assert a list item exposes only the lightweight list fields."""
+        required_fields = [
+            'id', 'creator', 'creator_name', 'name', 'status',
+            'is_self_sign', 'signing_order', 'signer_count',
+            'current_signer', 'created_at', 'updated_at',
+        ]
+        for field in required_fields:
+            self.assertIn(field, envelope_data)
+
+        excluded_fields = [
+            'description', 'documents', 'fields', 'signatures',
+            'creator_email', 'pdf_lock_password', 'pdf_password_protection_enabled',
+        ]
+        for field in excluded_fields:
+            self.assertNotIn(field, envelope_data)
     
     def test_creator_can_list_envelopes(self):
         """Test that creator can list their envelopes."""
@@ -164,13 +181,20 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(len(results), 1) # Should only see self.envelope
         
         envelope_data = results[0]
+        self._assert_envelope_list_item_shape(envelope_data)
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
-        self.assertEqual(envelope_data['description'], "Please review carefully")
-        self.assertEqual(len(envelope_data['signatures']), 2)
-        self.assertEqual(len(envelope_data['documents']), 1)
-        self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
+        self.assertEqual(envelope_data['creator_name'], "Test Creator")
+        self.assertEqual(envelope_data['signer_count'], 2)
+        self.assertEqual(len(envelope_data['signing_order']), 2)
+        self.assertEqual(envelope_data['signing_order'][0]['signer_id'], str(self.signer1.id))
+        self.assertEqual(envelope_data['signing_order'][0]['signer_name'], "Test Signer 1")
+        self.assertEqual(envelope_data['signing_order'][1]['signer_id'], str(self.signer2.id))
+        self.assertEqual(envelope_data['signing_order'][1]['signer_name'], "Test Signer 2")
+        self.assertEqual(envelope_data['current_signer']['id'], str(self.signer2.id))
+        self.assertEqual(envelope_data['current_signer']['name'], "Test Signer 2")
+        self.assertEqual(envelope_data['current_signer']['email'], "signer2@test.com")
     
     def test_signer_can_list_envelopes(self):
         """Test that signer can list envelopes they are assigned to."""
@@ -185,13 +209,18 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(len(results), 1) # Should only see self.envelope
         
         envelope_data = results[0]
+        self._assert_envelope_list_item_shape(envelope_data)
         self.assertEqual(envelope_data['id'], str(self.envelope.id))
         self.assertEqual(envelope_data['status'], 'pending') # Status should be pending
         self.assertEqual(envelope_data['name'], "Test Envelope for Signing")
-        self.assertEqual(envelope_data['description'], "Please review carefully")
-        self.assertEqual(len(envelope_data['signatures']), 2)
-        self.assertEqual(len(envelope_data['documents']), 1)
-        self.assertEqual(str(envelope_data['documents'][0]['document']), str(self.document1.id)) # Explicitly convert to string
+        self.assertEqual(envelope_data['creator_name'], "Test Creator")
+        self.assertEqual(envelope_data['signer_count'], 2)
+        self.assertEqual(len(envelope_data['signing_order']), 2)
+        self.assertEqual(envelope_data['signing_order'][0]['signer_id'], str(self.signer1.id))
+        self.assertEqual(envelope_data['signing_order'][0]['signer_name'], "Test Signer 1")
+        self.assertEqual(envelope_data['signing_order'][1]['signer_id'], str(self.signer2.id))
+        self.assertEqual(envelope_data['signing_order'][1]['signer_name'], "Test Signer 2")
+        self.assertEqual(envelope_data['current_signer']['id'], str(self.signer2.id))
     
     def test_user_can_list_multiple_envelopes(self):
         """Test that user can list multiple envelopes (as creator and signer)."""
@@ -244,7 +273,8 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['id'], str(self.other_envelope.id))
         self.assertEqual(results[0]['name'], "Other User Envelope")
-        self.assertIsNone(results[0]['description'])
+        self.assertEqual(results[0]['creator_name'], "Other User")
+        self.assertIsNone(results[0]['current_signer'])
     
     def test_unauthenticated_request_returns_401(self):
         """Test that unauthenticated requests return 401."""
@@ -345,11 +375,15 @@ class EnvelopeRetrievalTestCase(APITestCase):
         envelope_data = response.data['data']
         required_fields = [
             'id', 'creator', 'creator_email', 'name', 'description', 'status', 'signing_order',
-            'signer_count', 'documents', 'signatures', 'created_at', 'updated_at'
+            'signer_count', 'current_signer', 'documents', 'signatures', 'created_at', 'updated_at'
         ]
         
         for field in required_fields:
             self.assertIn(field, envelope_data)
+
+        self.assertEqual(envelope_data['current_signer']['id'], str(self.signer2.id))
+        self.assertEqual(envelope_data['current_signer']['name'], "Test Signer 2")
+        self.assertEqual(envelope_data['current_signer']['email'], "signer2@test.com")
         
         # Check that documents are present and have required fields
         documents_data = envelope_data['documents']
@@ -374,6 +408,53 @@ class EnvelopeRetrievalTestCase(APITestCase):
             for field in signature_required_fields:
                 self.assertIn(field, signature)
     
+    def test_envelope_list_includes_required_fields(self):
+        """Test that envelope list items include only lightweight list fields."""
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+
+        response = self.client.get(url, **headers)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._envelope_list_results(response)
+        self.assertGreaterEqual(len(results), 1)
+        self._assert_envelope_list_item_shape(results[0])
+
+    def test_envelope_list_current_signer_null_for_draft_and_completed(self):
+        """Draft and completed envelopes should not expose a current signer."""
+        draft_envelope = Envelope.objects.create(
+            creator=self.creator,
+            name='Draft Envelope',
+            status='draft',
+            signing_order=[],
+        )
+        EnvelopeDocument.objects.create(
+            envelope=draft_envelope,
+            document=self.document1,
+            order=1,
+        )
+
+        completed_envelope = Envelope.objects.create(
+            creator=self.creator,
+            name='Completed Envelope',
+            status='completed',
+            signing_order=[{'signer_id': str(self.signer1.id), 'order': 1}],
+        )
+        EnvelopeDocument.objects.create(
+            envelope=completed_envelope,
+            document=self.document2,
+            order=1,
+        )
+
+        url = '/api/envelopes/'
+        headers = self.get_auth_headers(self.creator)
+        response = self.client.get(url, **headers)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results_by_id = {item['id']: item for item in self._envelope_list_results(response)}
+        self.assertIsNone(results_by_id[str(draft_envelope.id)]['current_signer'])
+        self.assertIsNone(results_by_id[str(completed_envelope.id)]['current_signer'])
+
     def test_envelope_list_ordering(self):
         """Test that envelopes are ordered by created_at descending."""
         # Create another envelope

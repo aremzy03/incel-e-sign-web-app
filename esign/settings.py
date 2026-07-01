@@ -208,11 +208,11 @@ DATABASES = {
 # Database connection pooling configuration
 # CONN_MAX_AGE: Maximum age of database connections in seconds
 # 0 = disable persistent connections (SQLite default)
-# None = unlimited persistent connections (recommended for PostgreSQL)
+# Lower defaults reduce idle connections on shared PostgreSQL instances.
 if 'postgresql' in DATABASES['default'].get('ENGINE', ''):
     DB_CONN_MAX_AGE = config('DB_CONN_MAX_AGE', default=None)
     if DB_CONN_MAX_AGE is None:
-        DB_CONN_MAX_AGE = 600  # 10 minutes
+        DB_CONN_MAX_AGE = 60  # 1 minute; override via DB_CONN_MAX_AGE env
     else:
         DB_CONN_MAX_AGE = int(DB_CONN_MAX_AGE)
 
@@ -506,6 +506,7 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
+CELERY_WORKER_CONCURRENCY = config('CELERY_WORKER_CONCURRENCY', default=2, cast=int)
 
 # Email configuration
 EMAIL_BACKEND = config('EMAIL_BACKEND', default=None) or 'django.core.mail.backends.smtp.EmailBackend'

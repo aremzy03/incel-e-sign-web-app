@@ -355,6 +355,123 @@ class EnvelopeDocumentSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _user_display_name(user) -> str:
+    """Return full_name when set, otherwise username."""
+    return user.full_name or user.username
+
+
+def _enrich_signing_order(signing_order, user_by_id=None):
+    """
+    Return signing_order entries with signer_name resolved from user records.
+
+    Each entry includes signer_id, order, and signer_name (or null if unknown).
+    """
+    if not signing_order:
+        return []
+
+    if user_by_id is None:
+        signer_ids = [
+            entry.get('signer_id')
+            for entry in signing_order
+            if entry.get('signer_id')
+        ]
+        user_by_id = {
+            str(user.id): user
+            for user in User.objects.filter(id__in=signer_ids)
+        }
+
+    enriched_order = []
+    for entry in signing_order:
+        signer_id = str(entry.get('signer_id', ''))
+        signer = user_by_id.get(signer_id)
+        enriched_order.append({
+            'signer_id': signer_id,
+            'order': entry.get('order'),
+            'signer_name': _user_display_name(signer) if signer else None,
+        })
+    return enriched_order
+
+
+def _get_envelope_current_signer(envelope):
+    """
+    Return the signer who must act next for a pending envelope, or None.
+
+    The current signer is the pending signature with the lowest signing order.
+    """
+    if envelope.status != 'pending':
+        return None
+
+    pending_signatures = [s for s in envelope.signatures.all() if s.status == 'pending']
+    if not pending_signatures:
+        return None
+
+    current_signature = min(pending_signatures, key=lambda signature: signature.get_signing_order())
+    signer = current_signature.signer
+    return {
+        'id': str(signer.id),
+        'name': _user_display_name(signer),
+        'email': signer.email,
+    }
+
+
+class EnvelopeListListSerializer(serializers.ListSerializer):
+    """Batch-resolve signer names for signing_order across a paginated list."""
+
+    def to_representation(self, data):
+        iterable = data.all() if hasattr(data, 'all') else data
+        envelopes = list(iterable)
+
+        signer_ids = set()
+        for envelope in envelopes:
+            for entry in envelope.signing_order or []:
+                if entry.get('signer_id'):
+                    signer_ids.add(str(entry['signer_id']))
+
+        user_by_id = {
+            str(user.id): user
+            for user in User.objects.filter(id__in=signer_ids)
+        } if signer_ids else {}
+
+        self.child.context['signer_user_by_id'] = user_by_id
+        return super().to_representation(envelopes)
+
+
+class EnvelopeListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for paginated envelope list responses.
+
+    Returns only the fields needed to render envelope list cards in the UI.
+    """
+
+    creator_name = serializers.SerializerMethodField()
+    signing_order = serializers.SerializerMethodField()
+    signer_count = serializers.SerializerMethodField()
+    current_signer = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Envelope
+        fields = [
+            'id', 'creator', 'creator_name', 'name', 'status',
+            'is_self_sign', 'signing_order', 'signer_count',
+            'current_signer', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+        list_serializer_class = EnvelopeListListSerializer
+
+    def get_creator_name(self, obj):
+        return _user_display_name(obj.creator)
+
+    def get_signing_order(self, obj):
+        user_by_id = self.context.get('signer_user_by_id')
+        return _enrich_signing_order(obj.signing_order, user_by_id)
+
+    def get_signer_count(self, obj):
+        return len(obj.signing_order)
+
+    def get_current_signer(self, obj):
+        return _get_envelope_current_signer(obj)
+
+
 class EnvelopeDetailSerializer(serializers.ModelSerializer):
     """
     Serializer for envelope details (read-only).
@@ -367,6 +484,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     fields = FieldSerializer(many=True, read_only=True)
     signatures = SignatureSerializer(many=True, read_only=True)
     signer_count = serializers.SerializerMethodField()
+    current_signer = serializers.SerializerMethodField()
     pdf_lock_password = serializers.CharField(read_only=True, allow_null=True)
     pdf_password_protection_enabled = serializers.BooleanField(read_only=True)
     
@@ -374,7 +492,8 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
         model = Envelope
         fields = [
             'id', 'creator', 'creator_email', 'name', 'description', 'status',
-            'is_self_sign', 'signing_order', 'signer_count', 'documents', 'fields', 'signatures',
+            'is_self_sign', 'signing_order', 'signer_count', 'current_signer',
+            'documents', 'fields', 'signatures',
             'pdf_lock_password',
             'pdf_password_protection_enabled',
             'created_at', 'updated_at'
@@ -385,6 +504,9 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
     
     def get_signer_count(self, obj):
         return len(obj.signing_order)
+
+    def get_current_signer(self, obj):
+        return _get_envelope_current_signer(obj)
 
 
 class EnvelopeUpdateSerializer(serializers.ModelSerializer):
@@ -548,3 +670,31 @@ class EnvelopeSerializer(serializers.ModelSerializer):
     
     def get_signer_count(self, obj):
         return len(obj.signing_order)
+
+
+class DashboardActivitySerializer(serializers.Serializer):
+    """Serializer for a single dashboard activity entry derived from an audit log."""
+
+    id = serializers.UUIDField()
+    action = serializers.CharField()
+    envelope_id = serializers.UUIDField(allow_null=True)
+    envelope_name = serializers.CharField(allow_null=True)
+    message = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+    @staticmethod
+    def from_audit_log(log):
+        """Build a dashboard activity dict from an AuditLog instance."""
+        target = log.target_object
+        envelope = None
+        if target is not None:
+            envelope = getattr(target, 'envelope', target)
+
+        return {
+            'id': log.id,
+            'action': log.action,
+            'envelope_id': str(envelope.id) if envelope else None,
+            'envelope_name': envelope.name if envelope else None,
+            'message': log.message,
+            'created_at': log.created_at,
+        }

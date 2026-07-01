@@ -19,6 +19,7 @@ class Envelope(models.Model):
         ("draft", "Draft"),
         ("pending", "Pending"),
         ("completed", "Completed"),
+        ("self_signed", "Self Signed"),
         ("rejected", "Rejected"),
     ]
 
@@ -180,6 +181,11 @@ class Envelope(models.Model):
     def is_completed(self) -> bool:
         """Returns True if the envelope status is 'completed'."""
         return self.status == 'completed'
+
+    @property
+    def is_self_signed(self) -> bool:
+        """Returns True if the envelope status is 'self_signed'."""
+        return self.status == 'self_signed'
     
     @property
     def is_sent(self) -> bool:

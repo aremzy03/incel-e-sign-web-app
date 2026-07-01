@@ -5,7 +5,6 @@ This file provides production-ready settings for Gunicorn WSGI server.
 Use it by running: gunicorn -c gunicorn_config.py esign.wsgi:application
 """
 
-import multiprocessing
 import os
 
 # Server socket
@@ -13,8 +12,9 @@ bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
 backlog = 2048
 
 # Worker processes
-# Formula: (2 x CPU cores) + 1
-workers = multiprocessing.cpu_count() * 2 + 1
+# Default to 3 on shared PostgreSQL (CapRover). Override via GUNICORN_WORKERS.
+# Avoid cpu_count() * 2 + 1 — it opens too many DB connections per container.
+workers = int(os.environ.get("GUNICORN_WORKERS", "3"))
 worker_class = "sync"
 worker_connections = 1000
 timeout = 30

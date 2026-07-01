@@ -44,8 +44,9 @@ case "${ROLE}" in
     ;;
   worker)
     run_migrations_if_needed
-    echo "Starting Celery worker..."
-    exec celery -A esign worker -l info
+    CELERY_CONCURRENCY="${CELERY_WORKER_CONCURRENCY:-2}"
+    echo "Starting Celery worker (concurrency=${CELERY_CONCURRENCY})..."
+    exec celery -A esign worker -l info --concurrency="${CELERY_CONCURRENCY}"
     ;;
   *)
     # If an explicit command is provided, just exec it

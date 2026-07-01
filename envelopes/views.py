@@ -15,10 +15,23 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.http import Http404 # Import Http404
 from .models import Envelope
-from .serializers import EnvelopeCreateSerializer, EnvelopeDetailSerializer, EnvelopeSerializer, EnvelopeUpdateSerializer
+from .serializers import (
+    EnvelopeCreateSerializer,
+    EnvelopeDetailSerializer,
+    EnvelopeListSerializer,
+    EnvelopeSerializer,
+    EnvelopeUpdateSerializer,
+    DashboardActivitySerializer,
+)
+from .utils import (
+    get_envelopes_accessible_by_user,
+    get_envelopes_where_user_is_current_signer,
+    prefetch_envelope_detail,
+    prefetch_envelope_list,
+)
+from audit.models import AuditLog
 from documents.serializers import DocumentSerializer
 from .serializers import EnvelopeDocumentSerializer
-from django.conf import settings # Import settings
 from core.query_filters import parse_boolean_query_param, parse_search_query_param, parse_status_query_param
 from signatures.models import Signature
 
@@ -316,7 +329,7 @@ class EnvelopeListView(ListAPIView):
     Endpoint: GET /envelopes/
     Requires authentication.
     Supports pagination via `page` and `page_size` query parameters.
-    Optional query params: ``status`` (draft, pending, completed, rejected),
+    Optional query params: ``status`` (draft, pending, completed, self_signed, rejected),
     ``search`` (case-insensitive match on name, description, creator email),
     ``is_self_sign`` (true|false).
     Returns:
@@ -325,33 +338,14 @@ class EnvelopeListView(ListAPIView):
     """
     
     permission_classes = [IsAuthenticated]
-    serializer_class = EnvelopeDetailSerializer # Use EnvelopeDetailSerializer
+    serializer_class = EnvelopeListSerializer
     pagination_class = EnvelopeListPagination
     
     def get_queryset(self):
         """
         Return envelopes where the user is either the creator or a signer.
         """
-        user = self.request.user
-        
-        # Fetch all envelopes and filter in Python due to SQLite's
-        # limited JSONField __contains lookup support in testing.
-        # In production with PostgreSQL, Q(signing_order__contains=...) would be preferred.
-        # Filter first, then order and prefetch
-        all_envelopes = Envelope.objects.select_related('creator').all()
-        
-        filtered_envelopes_pks = set()
-        for envelope in all_envelopes:
-            if envelope.creator == user:
-                filtered_envelopes_pks.add(envelope.pk)
-                continue
-            for signer_entry in envelope.signing_order:
-                if str(signer_entry.get('signer_id')) == str(user.id):
-                    filtered_envelopes_pks.add(envelope.pk)
-                    break
-        
-        # Convert the filtered list back to a queryset
-        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks))
+        queryset = get_envelopes_accessible_by_user(self.request.user)
 
         status_value, _status_error = parse_status_query_param(
             self.request,
@@ -378,11 +372,7 @@ class EnvelopeListView(ListAPIView):
         elif is_self_sign_value is False:
             queryset = queryset.filter(is_self_sign=False)
 
-        queryset = queryset.select_related('creator').prefetch_related(
-            'signatures',
-            'envelopedocument_set__document',
-        )
-        return queryset.order_by('-created_at')
+        return prefetch_envelope_list(queryset).order_by('-created_at')
     
     def list(self, request, *args, **kwargs):
         """
@@ -454,31 +444,8 @@ class EnvelopeDetailView(RetrieveAPIView):
         """
         Return envelopes where the user is either the creator or a signer.
         """
-        user = self.request.user
-        print(f"DEBUG: Filtering queryset for user: {user.id}") # Debug print
-        
-        # Fetch all relevant envelopes and filter in Python due to SQLite's
-        # limited JSONField __contains lookup support in testing.
-        # In production with PostgreSQL, Q(signing_order__contains=...) would be preferred.
-        all_envelopes = Envelope.objects.all()
-        
-        filtered_envelopes_pks = set()
-        for envelope in all_envelopes:
-            if envelope.creator == user:
-                filtered_envelopes_pks.add(envelope.pk)
-                continue
-            for signer_entry in envelope.signing_order:
-                if str(signer_entry.get('signer_id')) == str(user.id):
-                    filtered_envelopes_pks.add(envelope.pk)
-                    break
-
-        # Convert the filtered list back to a queryset
-        queryset = Envelope.objects.filter(pk__in=list(filtered_envelopes_pks))
-        queryset = queryset.select_related('creator').prefetch_related('signatures', 'envelopedocument_set__document')
-
-        print(f"DEBUG (Detail View - filtered): Queryset for user {user.id} count: {queryset.count()}")
-        print(f"DEBUG (Detail View - filtered): Queryset query: {queryset.query}")
-        return queryset
+        queryset = get_envelopes_accessible_by_user(self.request.user)
+        return prefetch_envelope_detail(queryset)
     
     def retrieve(self, request, *args, **kwargs):
         """
@@ -711,31 +678,55 @@ class EnvelopeEditView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
-class EnvelopeMetricsView(APIView):
-    """
-    API view providing high-level metrics for the authenticated user.
+DASHBOARD_ACTIVITY_ACTIONS = (
+    'SEND_ENVELOPE',
+    'SIGN_DOC',
+    'SELF_SIGN_DOC',
+    'REJECT_ENVELOPE',
+    'DECLINE_SIGN',
+)
 
-    Endpoint: GET /envelopes/metrics/
+
+def _parse_dashboard_limit(request, param_name, default):
+    """Parse a bounded positive integer query parameter for dashboard lists."""
+    raw_value = request.query_params.get(param_name, default)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, 100))
+
+
+class EnvelopeDashboardView(APIView):
+    """
+    API view providing an aggregated dashboard for the authenticated user.
+
+    Endpoint: GET /envelopes/dashboard/
+    Deprecated alias: GET /envelopes/metrics/
     Requires authentication.
-    Returns counts for documents signed, pending signatures, active envelopes, and completion rate.
+    Returns legacy metrics, envelope counts, action-required envelopes, and recent activity.
+
+    action_required includes envelopes with status ``pending`` where the authenticated
+    user is the current signer (next signer in the signing order). Self-signed envelopes
+    are excluded.
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """
-        Return a metrics summary for the current user.
-        """
+        """Return a dashboard summary for the current user."""
         user = request.user
+        action_required_limit = _parse_dashboard_limit(request, 'action_required_limit', 10)
+        activity_limit = _parse_dashboard_limit(request, 'activity_limit', 5)
 
         documents_signed = Signature.objects.filter(
             signer=user,
-            status='signed'
+            status='signed',
         ).count()
 
         pending_signatures = Signature.objects.filter(
             signer=user,
-            status='pending'
+            status='pending',
         ).count()
 
         user_envelopes = Envelope.objects.filter(creator=user)
@@ -747,13 +738,38 @@ class EnvelopeMetricsView(APIView):
         if total_envelopes:
             completion_rate = round((completed_envelopes / total_envelopes) * 100, 2)
 
+        action_required_all = get_envelopes_where_user_is_current_signer(user)
+        action_required = EnvelopeListSerializer(
+            action_required_all[:action_required_limit],
+            many=True,
+            context={'request': request},
+        ).data
+
+        recent_activity = [
+            DashboardActivitySerializer.from_audit_log(log)
+            for log in AuditLog.objects.filter(
+                actor=user,
+                action__in=DASHBOARD_ACTIVITY_ACTIONS,
+            ).select_related('target_content_type').order_by('-created_at')[:activity_limit]
+        ]
+
         return Response({
             "status": "success",
-            "message": "Metrics retrieved successfully",
+            "message": "Dashboard retrieved successfully",
             "data": {
-                "documents_signed": documents_signed,
-                "pending_signatures": pending_signatures,
-                "active_envelopes": active_envelopes,
-                "completion_rate": completion_rate,
-            }
+                "metrics": {
+                    "documents_signed": documents_signed,
+                    "pending_signatures": pending_signatures,
+                    "active_envelopes": active_envelopes,
+                    "completion_rate": completion_rate,
+                },
+                "counts": {
+                    "pending_my_signature": len(action_required_all),
+                    "pending_sent": user_envelopes.filter(status='pending').count(),
+                    "completed": completed_envelopes,
+                    "draft": user_envelopes.filter(status='draft').count(),
+                },
+                "action_required": action_required,
+                "recent_activity": recent_activity,
+            },
         }, status=status.HTTP_200_OK)
