@@ -1,14 +1,16 @@
 {% extends 'base_email.html' %}
 
 {% block content %}
-    <h2>You're Invited to Incel E-Sign</h2>
-    <p>Hi,</p>
-    <p>{{ inviter_name }} has invited you to sign documents on Incel E-Sign.</p>
-    <p>Please click the button below to register and get started:</p>
-    <div class="button-container">
-        <a href="{{ registration_url }}" class="button">Register Now</a>
+    <span class="badge badge-info">Invitation</span>
+    <h2 style="margin-top:12px;">You’re invited to Incel E-Sign</h2>
+
+    <p style="margin-top:8px;">Hi,</p>
+    <p>{{ inviter_name }} invited you to sign documents on Incel E-Sign.</p>
+
+    <div style="text-align:center;margin-top:20px;">
+        <a href="{{ registration_url }}" class="button">Accept invite</a>
     </div>
-    <p>If you have any questions, please contact our support team.</p>
-    <p>Thank you,</p>
-    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+
+    <p class="muted" style="margin-top:16px;">If you weren’t expecting this invitation, you can ignore this email.</p>
+    <p style="margin-top:20px;">The {{ brand_name|default:"Incel E-Sign" }} Team</p>
 {% endblock %}

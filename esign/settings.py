@@ -458,15 +458,31 @@ if USE_S3:
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
-    AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN', default=None)
+    _aws_s3_custom_domain = config('AWS_S3_CUSTOM_DOMAIN', default=None)
+    AWS_S3_CUSTOM_DOMAIN = (
+        _aws_s3_custom_domain.strip() if isinstance(_aws_s3_custom_domain, str) and _aws_s3_custom_domain.strip() else None
+    )
+    # CloudFront signed URLs (required for private bucket + direct browser PDF access).
+    # Set AWS_CLOUDFRONT_KEY_ID to the CloudFront key pair ID (APKA...).
+    # Provide the PEM private key via AWS_CLOUDFRONT_KEY or AWS_CLOUDFRONT_KEY_PATH.
+    AWS_CLOUDFRONT_KEY_ID = config('AWS_CLOUDFRONT_KEY_ID', default=None)
+    _cloudfront_key_path = config('AWS_CLOUDFRONT_KEY_PATH', default=None)
+    _cloudfront_key_inline = config('AWS_CLOUDFRONT_KEY', default=None)
+    if _cloudfront_key_path:
+        AWS_CLOUDFRONT_KEY = Path(_cloudfront_key_path).read_text(encoding='utf-8')
+    elif _cloudfront_key_inline:
+        AWS_CLOUDFRONT_KEY = _cloudfront_key_inline.replace('\\n', '\n')
+    else:
+        AWS_CLOUDFRONT_KEY = None
     # Prefix all stored objects under this path inside the bucket
-    AWS_LOCATION = "incel-esign-app"
+    AWS_LOCATION = config('AWS_LOCATION', default='incel-esign-app')
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
     AWS_DEFAULT_ACL = 'private'
     AWS_S3_FILE_OVERWRITE = False
     AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int)
 else:
     # Development: use local file system storage (default)
     STORAGES = {

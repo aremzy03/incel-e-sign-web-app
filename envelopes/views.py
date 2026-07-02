@@ -123,6 +123,20 @@ class EnvelopeSendView(APIView):
             Response with updated envelope details or error message
         """
         envelope = get_object_or_404(Envelope, pk=pk)
+
+        # Block sends while async signing is in-flight for this envelope.
+        from signatures.services.reset_workflow import (
+            SigningWorkflowInProgressError,
+            assert_no_inflight_signing_jobs,
+            reset_signing_workflow,
+        )
+        try:
+            assert_no_inflight_signing_jobs(envelope)
+        except SigningWorkflowInProgressError as exc:
+            return Response({
+                "status": "error",
+                "message": str(exc),
+            }, status=status.HTTP_409_CONFLICT)
         
         # Check if user is the creator
         if envelope.creator != request.user:
@@ -169,8 +183,10 @@ class EnvelopeSendView(APIView):
             request=request
         )
         
-        # Create Signature records for each signer in signing_order
-        from signatures.models import Signature
+        # Reset PDF/signature workflow state and rebuild signature rows.
+        # This guarantees current_signer starts at the first signer after resend.
+        reset_signing_workflow(envelope)
+
         from django.contrib.auth import get_user_model
         from notifications.utils import create_notification, create_envelope_sent_notification
         from notifications.tasks import send_envelope_assigned_email_task
@@ -203,37 +219,7 @@ class EnvelopeSendView(APIView):
                 # This case should ideally not happen if signing_order is well-formed
                 pass
         
-        for signer_entry in envelope.signing_order:
-            signer_id = signer_entry['signer_id']
-            try:
-                signer = User.objects.get(id=signer_id)
-                # Create signature record for this signer
-                Signature.objects.create(
-                    envelope=envelope,
-                    signer=signer,
-                    status='pending'
-                )
-            except User.DoesNotExist:
-                # This should not happen due to validation, but handle gracefully
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"User {signer_id} not found when creating signature for envelope {envelope.id}")
-                continue
-            except Exception as e:
-                # Log any other errors during signature creation
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Error creating signature for user {signer_id} in envelope {envelope.id}: {e}")
-                continue
-        
-        # Verify that Signature records were created
-        created_signatures = Signature.objects.filter(envelope=envelope).count()
-        expected_signatures = len(envelope.signing_order)
-        
-        if created_signatures != expected_signatures:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Signature creation mismatch: expected {expected_signatures}, created {created_signatures} for envelope {envelope.id}")
+        # Signature rows are rebuilt by reset_signing_workflow; nothing else to do here.
         
         # Return updated envelope details
         detail_serializer = EnvelopeDetailSerializer(envelope)
@@ -621,6 +607,19 @@ class EnvelopeEditView(APIView):
 
     def patch(self, request, pk):
         envelope = get_object_or_404(Envelope, pk=pk)
+
+        # Block edits while async signing is in-flight for this envelope.
+        from signatures.services.reset_workflow import (
+            SigningWorkflowInProgressError,
+            assert_no_inflight_signing_jobs,
+        )
+        try:
+            assert_no_inflight_signing_jobs(envelope)
+        except SigningWorkflowInProgressError as exc:
+            return Response({
+                "status": "error",
+                "message": str(exc),
+            }, status=status.HTTP_409_CONFLICT)
 
         if envelope.creator != request.user:
             return Response({

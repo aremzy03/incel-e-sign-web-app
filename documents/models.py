@@ -40,7 +40,7 @@ class Document(models.Model):
     )
     
     file_url = models.CharField(
-        max_length=500,
+        max_length=2048,
         help_text="File path or S3 URL where the document is stored"
     )
     
@@ -54,7 +54,7 @@ class Document(models.Model):
     )
     
     signed_file_url = models.CharField(
-        max_length=500,
+        max_length=2048,
         blank=True,
         null=True,
         help_text="File path or URL to the signed PDF version if available"

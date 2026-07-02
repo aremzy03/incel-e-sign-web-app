@@ -11,6 +11,7 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from .models import Document
 from .services.pdf_files import upload_staging_pdf, temp_pdf_file
+from .storage import refresh_remote_file_url
 
 
 class MergeDocumentsSerializer(serializers.Serializer):
@@ -162,8 +163,17 @@ class DocumentSerializer(serializers.ModelSerializer):
         Return the current document URL, prioritizing signed version if available.
         This matches the logic used in signing and download views.
         """
-        return obj.signed_file_url or obj.file_url
-    
+        return refresh_remote_file_url(obj.signed_file_url or obj.file_url)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if getattr(settings, "USE_S3", False):
+            if data.get("file_url"):
+                data["file_url"] = refresh_remote_file_url(data["file_url"])
+            if data.get("signed_file_url"):
+                data["signed_file_url"] = refresh_remote_file_url(data["signed_file_url"])
+        return data
+
     class Meta:
         model = Document
         fields = [

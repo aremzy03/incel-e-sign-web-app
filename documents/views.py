@@ -269,70 +269,15 @@ class DocumentDetailView(RetrieveAPIView):
     serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated]
     
-    def get_queryset(self):
-        """
-        Return documents accessible to the authenticated user.
-        
-        A document is accessible if:
-        - The user is the owner of the document, or
-        - The user is the creator of an envelope that contains the document, or
-        - The user is listed as a signer in an envelope that contains the document.
-        """
-        user = self.request.user
-        user_id_str = str(user.id)
-        
-        # Collect documents owned by the user
-        owned_documents = Document.objects.filter(owner=user)
-
-        # Collect document IDs from envelopes where user is creator
-        creator_envelopes_docs_pks = set(
-            EnvelopeDocument.objects
-            .filter(envelope__creator=user)
-            .select_related('document', 'envelope')
-            .values_list('document__id', flat=True)
-        )
-
-        # Optimize signer check: Use prefetch to avoid N+1 queries
-        # For PostgreSQL, we could use JSON queries, but for compatibility with SQLite tests,
-        # we'll fetch envelopes with prefetch and check signing_order in Python
-        # This is still much better than fetching ALL EnvelopeDocuments
-        from envelopes.models import Envelope
-        signer_envelopes_docs_pks = set()
-        
-        # Fetch only envelopes (not all EnvelopeDocuments)
-        # Then check their signing_order and fetch related documents
-        envelopes_as_signer = Envelope.objects.prefetch_related('envelopedocument_set__document').all()
-        
-        for envelope in envelopes_as_signer:
-            # Check if user is in signing_order
-            for signer_entry in envelope.signing_order:
-                if str(signer_entry.get('signer_id')) == user_id_str:
-                    # User is a signer, add all documents from this envelope
-                    signer_envelopes_docs_pks.update(
-                        env_doc.document.id for env_doc in envelope.envelopedocument_set.all()
-                    )
-                    break
-
-        accessible_ids = creator_envelopes_docs_pks.union(signer_envelopes_docs_pks)
-
-        # Combine owned documents and documents from accessible envelopes
-        accessible_documents = owned_documents | Document.objects.filter(id__in=list(accessible_ids))
-        
-        return accessible_documents.select_related('owner').distinct().order_by('-created_at')
-    
     def get_object(self):
         """
-        Get the document object, ensuring user can only access their own documents.
-        
-        Returns:
-            Document: The requested document
-            
-        Raises:
-            Http404: If document doesn't exist or user is not the owner
+        Resolve a single document the user may access (owner, envelope creator, or signer).
+
+        Uses get_accessible_document_for_user so we only inspect envelopes that contain
+        this document instead of scanning every envelope in the database.
         """
-        queryset = self.get_queryset()
         document_id = self.kwargs.get('pk')
-        return get_object_or_404(queryset, id=document_id)
+        return get_accessible_document_for_user(self.request.user, document_id)
 
 
 class DocumentDeleteView(DestroyAPIView):

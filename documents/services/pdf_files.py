@@ -18,7 +18,11 @@ import boto3
 from django.conf import settings
 from django.core.files.base import ContentFile
 
-from documents.storage import get_permanent_s3_storage, get_temp_local_storage
+from documents.storage import (
+    get_permanent_s3_storage,
+    get_temp_local_storage,
+    persistable_storage_url,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -132,12 +136,12 @@ def _upload_file_to_key(local_path: str | Path, key: str) -> str:
         storage = get_permanent_s3_storage()
         with open(local_path, "rb") as pdf_file:
             saved_key = storage.save(key, pdf_file)
-        return storage.url(saved_key)
+        return persistable_storage_url(storage.url(saved_key))
 
     storage = get_temp_local_storage()
     with open(local_path, "rb") as pdf_file:
         saved_key = storage.save(key, ContentFile(pdf_file.read()))
-    return storage.url(saved_key)
+    return persistable_storage_url(storage.url(saved_key))
 
 
 def upload_staging_pdf(document_id, local_path: str | Path) -> str:
