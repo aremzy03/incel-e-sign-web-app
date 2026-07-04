@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from envelopes.models import EnvelopeDocument
 from signatures.models import Signature, SigningJob
-from signatures.services.signing import complete_envelope, mark_signature_signed
+from signatures.services.signing import complete_envelope, mark_signature_signed, resolve_job_signature_image
 from signatures.services.signing_worker import embed_envelope_document_for_signer
 
 LOGGER = logging.getLogger(__name__)
@@ -203,6 +203,14 @@ def process_signing_job(self, job_id: str) -> None:
     job.attempt_count += 1
     job.save(update_fields=["status", "attempt_count", "updated_at"])
     _log_job_event(job, "signing_job_processing")
+
+    try:
+        if not job.signature_image_data:
+            job.signature_image_data = resolve_job_signature_image(job)
+            job.save(update_fields=["signature_image_data", "updated_at"])
+    except Exception as exc:
+        _mark_job_failed(job, str(exc))
+        return
 
     envelope_documents = list(
         EnvelopeDocument.objects.filter(envelope=job.envelope).order_by("order").values_list("id", flat=True)

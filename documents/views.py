@@ -7,10 +7,8 @@ functionality in the e-signature workflow.
 
 import logging
 import os
-import uuid
 from urllib.parse import unquote, urlparse
 
-import boto3
 import requests
 from django.conf import settings
 from django.db import models
@@ -27,7 +25,9 @@ from rest_framework.views import APIView
 from core.query_filters import parse_search_query_param, parse_status_query_param
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
-from .services.pdf_files import download_pdf_to_temp, temp_pdf_file, upload_staging_pdf
+from .services.document_creation import create_draft_document_from_local_pdf
+from .services.pdf_files import download_pdf_to_temp, temp_pdf_file
+from .services.s3_client import get_boto3_s3_client
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
 from envelopes.models import Envelope, EnvelopeDocument
 from pypdf import PdfReader, PdfWriter
@@ -560,7 +560,15 @@ class DocumentPreviewView(APIView):
         try:
             document = get_accessible_document_for_user(request.user, pk)
 
-            source_url = document.signed_file_url or document.file_url
+            source_url = (document.signed_file_url or document.file_url or "").strip()
+            if not source_url:
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Document file reference is missing'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
             # Remote storage (e.g. S3) – stream via boto3 using bucket/key instead of HTTP GET on a signed URL
             if source_url.startswith('http'):
@@ -569,17 +577,12 @@ class DocumentPreviewView(APIView):
                     encoded_key = parsed.path.lstrip('/')
                     key = unquote(encoded_key)
 
-                    s3_client = boto3.client(
-                        's3',
-                        region_name=settings.AWS_S3_REGION_NAME,
-                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    )
+                    s3_client = get_boto3_s3_client()
 
                     obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
                 except Exception as e:
                     # Distinguish not-found from other errors when possible
-                    if hasattr(boto3, "client") and getattr(getattr(e, "response", {}), "get", None):
+                    if getattr(getattr(e, "response", {}), "get", None):
                         try:
                             code = e.response.get("Error", {}).get("Code")  # type: ignore[attr-defined]
                         except Exception:
@@ -678,6 +681,7 @@ class DocumentPreviewView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
+            logger.exception("Error streaming document preview for document %s", pk)
             return Response(
                 {
                     'status': 'error',
@@ -772,23 +776,23 @@ class MergeDocumentsView(APIView):
                     'message': f'Failed to read/merge PDFs: {e}'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            new_doc = Document.objects.create(
-                owner=request.user,
-                file_url="",
-                file_name=file_name,
-                file_size=0,
-                status='draft',
-            )
-
             with temp_pdf_file() as merged_temp:
                 with open(merged_temp, 'wb') as fout:
                     writer.write(fout)
                 file_size = merged_temp.stat().st_size
-                file_url = upload_staging_pdf(new_doc.id, merged_temp)
-
-            new_doc.file_url = file_url
-            new_doc.file_size = file_size
-            new_doc.save(update_fields=['file_url', 'file_size', 'updated_at'])
+                try:
+                    new_doc = create_draft_document_from_local_pdf(
+                        owner=request.user,
+                        file_name=file_name,
+                        local_path=merged_temp,
+                        file_size=file_size,
+                    )
+                except Exception as exc:
+                    logger.exception("Error creating merged document for user %s", request.user.id)
+                    return Response({
+                        'status': 'error',
+                        'message': f'Failed to save merged document: {exc}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         finally:
             for path in temp_paths_to_cleanup:
                 try:

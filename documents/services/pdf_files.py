@@ -14,14 +14,15 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import unquote, urlparse
 
-import boto3
 from django.conf import settings
 from django.core.files.base import ContentFile
 
+from documents.services.s3_client import get_boto3_s3_client
 from documents.storage import (
     get_permanent_s3_storage,
     get_temp_local_storage,
     persistable_storage_url,
+    storage_relative_key,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -110,12 +111,7 @@ def download_pdf_to_temp(source_url: str) -> Path:
     if not key:
         raise FileNotFoundError(f"Unable to resolve S3 key from URL: {source_url}")
 
-    s3_client = boto3.client(
-        "s3",
-        region_name=settings.AWS_S3_REGION_NAME,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    )
+    s3_client = get_boto3_s3_client()
     fd, temp_path = tempfile.mkstemp(suffix=".pdf", prefix="esign_s3_")
     os.close(fd)
     try:
@@ -142,6 +138,43 @@ def _upload_file_to_key(local_path: str | Path, key: str) -> str:
     with open(local_path, "rb") as pdf_file:
         saved_key = storage.save(key, ContentFile(pdf_file.read()))
     return persistable_storage_url(storage.url(saved_key))
+
+
+def delete_storage_url(url: str | None) -> None:
+    """Best-effort delete for a persisted storage URL or local media path."""
+    if not url:
+        return
+
+    if url.startswith("/media/") or (
+        not url.startswith("http://") and not url.startswith("https://")
+    ):
+        from signatures.utils.pdf_signing import get_media_absolute_path_from_url
+
+        try:
+            abs_path = get_media_absolute_path_from_url(url)
+        except ValueError:
+            return
+
+        try:
+            os.remove(abs_path)
+        except FileNotFoundError:
+            return
+        except OSError:
+            LOGGER.warning("Failed to delete local storage file %s", abs_path, exc_info=True)
+        return
+
+    try:
+        key = resolve_s3_key_from_url(url)
+    except ValueError:
+        return
+
+    if not key:
+        return
+
+    try:
+        get_permanent_s3_storage().delete(storage_relative_key(key))
+    except Exception:
+        LOGGER.warning("Failed to delete remote storage file %s", url, exc_info=True)
 
 
 def upload_staging_pdf(document_id, local_path: str | Path) -> str:

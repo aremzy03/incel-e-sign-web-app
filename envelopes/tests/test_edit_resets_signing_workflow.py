@@ -8,6 +8,7 @@ Ensures that after a rejected envelope is edited and re-sent:
 """
 
 import os
+import uuid
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -55,19 +56,19 @@ def test_rejected_edit_resend_resets_signatures_and_pdfs(settings, tmp_path):
     )
 
     # Create a staging PDF for the document at /media/staging/<doc_id>.pdf
+    doc_id = uuid.uuid4()
+    staging_rel = f"staging/{doc_id}.pdf"
     doc = Document.objects.create(
+        id=doc_id,
         owner=creator,
-        file_url="",
+        file_url=f"/media/{staging_rel}",
         file_name="test.pdf",
         file_size=10,
         status="draft",
     )
-    staging_rel = f"staging/{doc.id}.pdf"
     staging_abs = tmp_path / staging_rel
     staging_abs.parent.mkdir(parents=True, exist_ok=True)
     staging_abs.write_bytes(b"%PDF-1.4\n%EOF")
-    doc.file_url = f"/media/{staging_rel}"
-    doc.save(update_fields=["file_url", "updated_at"])
 
     envelope = Envelope.objects.create(
         creator=creator,

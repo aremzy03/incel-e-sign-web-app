@@ -32,7 +32,7 @@ def _embed_signature_side_effect(*args, **kwargs):
 def _patch_signing_embed_for_tests():
     """Avoid real image/PDF embedding failures across the async signing pipeline."""
     with patch(
-        "signatures.utils.pdf_signing.embed_signature",
+        "signatures.services.signing.embed_signature",
         side_effect=_embed_signature_side_effect,
     ):
         yield

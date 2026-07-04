@@ -206,6 +206,11 @@ class SigningJob(models.Model):
     celery_task_id = models.CharField(max_length=255, blank=True, default='')
     signing_version = models.PositiveIntegerField(default=1)
     signature_image_data = models.TextField(blank=True, default='')
+    user_signature_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="Deferred UserSignature id when image is resolved in the worker.",
+    )
     fallback_placement = models.JSONField(default=dict, blank=True)
     is_self_sign = models.BooleanField(default=False)
     error_message = models.TextField(blank=True, default='')

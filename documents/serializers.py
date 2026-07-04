@@ -8,9 +8,8 @@ functionality in the e-signature workflow.
 import os
 from rest_framework import serializers
 from django.conf import settings
-from django.core.files.base import ContentFile
 from .models import Document
-from .services.pdf_files import upload_staging_pdf, temp_pdf_file
+from .services.document_creation import create_draft_document_from_pdf_bytes
 from .storage import refresh_remote_file_url
 
 
@@ -131,21 +130,11 @@ class DocumentUploadSerializer(serializers.Serializer):
             file_name_for_record = original_name
             file_size_for_record = len(pdf_bytes)
 
-        document = Document.objects.create(
+        return create_draft_document_from_pdf_bytes(
             owner=owner,
-            file_url="",
             file_name=file_name_for_record,
-            file_size=file_size_for_record,
-            status='draft',
+            pdf_bytes=pdf_bytes,
         )
-
-        with temp_pdf_file() as temp_path:
-            temp_path.write_bytes(pdf_bytes)
-            file_url = upload_staging_pdf(document.id, temp_path)
-
-        document.file_url = file_url
-        document.save(update_fields=["file_url", "updated_at"])
-        return document
 
 
 class DocumentSerializer(serializers.ModelSerializer):

@@ -90,6 +90,25 @@ def resolve_signature_image(user, validated_data: dict[str, Any]) -> str:
         ) from exc
 
 
+def resolve_job_signature_image(job) -> str:
+    """
+    Resolve signature image for a signing job, including deferred UserSignature loads.
+    """
+    if job.signature_image_data:
+        return job.signature_image_data
+
+    if job.user_signature_id:
+        try:
+            user_signature = UserSignature.objects.get(id=job.user_signature_id, user=job.signer)
+            return _user_signature_to_data_url(user_signature)
+        except UserSignature.DoesNotExist as exc:
+            raise SignatureImageError(
+                "UserSignature not found or does not belong to the signer."
+            ) from exc
+
+    return resolve_signature_image(job.signer, {})
+
+
 def embed_document_pdf_for_signer(
     envelope: Envelope,
     signer,

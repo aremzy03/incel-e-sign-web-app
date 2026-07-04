@@ -500,6 +500,11 @@ else:
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
 
+# Boto3 S3 client timeouts for Celery signing workers (download/upload helpers).
+AWS_S3_CONNECT_TIMEOUT = config('AWS_S3_CONNECT_TIMEOUT', default=10, cast=int)
+AWS_S3_READ_TIMEOUT = config('AWS_S3_READ_TIMEOUT', default=60, cast=int)
+AWS_S3_MAX_ATTEMPTS = config('AWS_S3_MAX_ATTEMPTS', default=3, cast=int)
+
 
 # Custom user model
 AUTH_USER_MODEL = 'users.CustomUser'

@@ -104,13 +104,21 @@ class SignDocumentView(APIView):
         
         validated_data = serializer.validated_data
 
-        try:
-            signature_image_data = resolve_signature_image(request.user, validated_data)
-        except SignatureImageError as exc:
-            return Response({
-                "status": "error",
-                "message": str(exc)
-            }, status=status.HTTP_400_BAD_REQUEST)
+        signature_image_data = ''
+        user_signature_id = None
+        if validated_data.get('signature_image'):
+            signature_image_data = validated_data['signature_image']
+        elif validated_data.get('signature_id'):
+            # Defer S3/storage fetch to the Celery worker so this endpoint returns 202 quickly.
+            user_signature_id = validated_data['signature_id']
+        else:
+            try:
+                signature_image_data = resolve_signature_image(request.user, validated_data)
+            except SignatureImageError as exc:
+                return Response({
+                    "status": "error",
+                    "message": str(exc)
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         if signature.is_signed:
             signature_serializer = SignatureSerializer(signature)
@@ -156,6 +164,7 @@ class SignDocumentView(APIView):
                 signer=request.user,
                 signature=signature,
                 signature_image_data=signature_image_data,
+                user_signature_id=user_signature_id,
                 fallback_placement=fallback_placement,
                 request=request,
             )
@@ -271,7 +280,14 @@ class SelfSignView(APIView):
                     envelopedocument_set__envelope=envelope,
                 ).update(status='sent')
 
-            signature_image_data = resolve_signature_image(request.user, sign_data)
+            signature_image_data = ''
+            user_signature_id = None
+            if sign_data.get('signature_image'):
+                signature_image_data = sign_data['signature_image']
+            elif sign_data.get('signature_id'):
+                user_signature_id = sign_data['signature_id']
+            else:
+                signature_image_data = resolve_signature_image(request.user, sign_data)
             fallback_placement = {
                 'page': sign_data.get('page', 1),
                 'x': sign_data.get('x', 100),
@@ -285,6 +301,7 @@ class SelfSignView(APIView):
                 signer=request.user,
                 signature=signature,
                 signature_image_data=signature_image_data,
+                user_signature_id=user_signature_id,
                 fallback_placement=fallback_placement,
                 is_self_sign=True,
                 request=request,
