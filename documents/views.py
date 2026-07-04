@@ -414,12 +414,7 @@ class DocumentDownloadView(APIView):
                             status=status.HTTP_502_BAD_GATEWAY
                         )
 
-                    s3_client = boto3.client(
-                        's3',
-                        region_name=settings.AWS_S3_REGION_NAME,
-                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    )
+                    s3_client = get_boto3_s3_client()
 
                     obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
                 except Exception as e:

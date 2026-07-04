@@ -11,9 +11,20 @@ from contextlib import contextmanager
 from celery import chord, group, shared_task
 from django.utils import timezone
 
+try:
+    from botocore.exceptions import EndpointConnectionError
+except ImportError:  # pragma: no cover
+    EndpointConnectionError = None
+
 from envelopes.models import EnvelopeDocument
 from signatures.models import Signature, SigningJob
-from signatures.services.signing import complete_envelope, mark_signature_signed, resolve_job_signature_image
+from signatures.services.signing import (
+    DocumentNotAvailableForSigningError,
+    SignatureImageError,
+    complete_envelope,
+    mark_signature_signed,
+    resolve_job_signature_image,
+)
 from signatures.services.signing_worker import embed_envelope_document_for_signer
 
 LOGGER = logging.getLogger(__name__)
@@ -53,6 +64,33 @@ def _log_job_event(job: SigningJob, message: str, **extra):
             **extra,
         },
     )
+
+
+def _is_retryable_signing_error(exc: Exception) -> bool:
+    """
+    Return True for transient worker failures that are worth retrying.
+    """
+    if EndpointConnectionError is not None and isinstance(exc, EndpointConnectionError):
+        return True
+
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+
+    if isinstance(exc, (ValueError, SignatureImageError, FileNotFoundError, DocumentNotAvailableForSigningError)):
+        return False
+
+    return False
+
+
+def _signature_image_for_job(job: SigningJob) -> str:
+    """
+    Resolve and persist deferred signature image data for a signing job.
+    """
+    image_data = resolve_job_signature_image(job)
+    if image_data != job.signature_image_data:
+        job.signature_image_data = image_data
+        job.save(update_fields=["signature_image_data", "updated_at"])
+    return image_data
 
 
 def _notify_next_signer(envelope):
@@ -138,7 +176,11 @@ def embed_document_for_signer(self, job_id: str, envelope_document_id: str) -> d
         from django.conf import settings as django_settings
 
         eager = getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False)
-        if not eager and self.request.retries < self.max_retries:
+        if (
+            not eager
+            and _is_retryable_signing_error(exc)
+            and self.request.retries < self.max_retries
+        ):
             raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
         return {
             "envelope_document_id": envelope_document_id,
@@ -188,7 +230,11 @@ def finalize_signer_chord(self, results: list, job_id: str) -> None:
         from django.conf import settings as django_settings
 
         eager = getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False)
-        if not eager and self.request.retries < self.max_retries:
+        if (
+            not eager
+            and _is_retryable_signing_error(exc)
+            and self.request.retries < self.max_retries
+        ):
             raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
         _mark_job_failed(job, str(exc))
 
@@ -206,8 +252,7 @@ def process_signing_job(self, job_id: str) -> None:
 
     try:
         if not job.signature_image_data:
-            job.signature_image_data = resolve_job_signature_image(job)
-            job.save(update_fields=["signature_image_data", "updated_at"])
+            job.signature_image_data = _signature_image_for_job(job)
     except Exception as exc:
         _mark_job_failed(job, str(exc))
         return
@@ -237,7 +282,11 @@ def process_signing_job(self, job_id: str) -> None:
             chord(header)(callback)
     except Exception as exc:
         eager = getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False)
-        if not eager and self.request.retries < self.max_retries:
+        if (
+            not eager
+            and _is_retryable_signing_error(exc)
+            and self.request.retries < self.max_retries
+        ):
             raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
         _mark_job_failed(job, str(exc))
 

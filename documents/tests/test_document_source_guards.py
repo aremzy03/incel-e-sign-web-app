@@ -1,6 +1,6 @@
 import uuid
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -188,3 +188,45 @@ def test_preview_returns_404_for_legacy_document_with_missing_source_url(setting
 
     assert response.status_code == 404, response.data
     assert response.data["message"] == "Document file reference is missing"
+
+
+@pytest.mark.django_db
+def test_download_streams_remote_document_via_shared_s3_client(settings):
+    settings.AWS_STORAGE_BUCKET_NAME = "test-bucket"
+
+    user = get_user_model().objects.create_user(
+        email="download@test.com",
+        username="download",
+        full_name="Download User",
+        password="testpass123",
+    )
+    client = _make_client(user)
+
+    doc = Document.objects.create(
+        owner=user,
+        file_url="https://test-bucket.s3.amazonaws.com/documents/remote.pdf",
+        file_name="remote.pdf",
+        file_size=10,
+        status="draft",
+    )
+
+    body = MagicMock()
+    body.iter_chunks.return_value = [b"%PDF-1.4\n", b"%%EOF"]
+    s3_client = MagicMock()
+    s3_client.get_object.return_value = {
+        "Body": body,
+        "ContentType": "application/pdf",
+        "ContentLength": 12,
+    }
+
+    with patch("documents.views.get_boto3_s3_client", return_value=s3_client):
+        response = client.get(reverse("documents:document_download", kwargs={"pk": str(doc.id)}))
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "application/pdf"
+    assert response["Content-Disposition"] == 'attachment; filename="remote.pdf"'
+    assert b"".join(response.streaming_content) == b"%PDF-1.4\n%%EOF"
+    s3_client.get_object.assert_called_once_with(
+        Bucket="test-bucket",
+        Key="documents/remote.pdf",
+    )
