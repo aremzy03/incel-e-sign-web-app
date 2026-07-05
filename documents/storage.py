@@ -6,8 +6,56 @@ This module provides explicit storage backends for:
 - permanent S3 storage after envelope completion
 """
 
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
+
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
+from django.utils.deconstruct import deconstructible
+from django.utils.encoding import filepath_to_uri
+from storages.backends.s3boto3 import S3Boto3Storage
+from storages.utils import clean_name
+
+
+@deconstructible
+class TimezoneAwareS3Boto3Storage(S3Boto3Storage):
+    """
+    S3 storage that signs CloudFront URLs with timezone-aware expiration.
+
+    django-storages 1.14.6 still uses deprecated datetime.utcnow() when
+    generating CloudFront signed URLs.
+    """
+
+    def url(self, name, parameters=None, expire=None, http_method=None):
+        name = self._normalize_name(clean_name(name))
+        params = parameters.copy() if parameters else {}
+        if expire is None:
+            expire = self.querystring_expire
+
+        if self.custom_domain:
+            url = "{}//{}/{}{}".format(
+                self.url_protocol,
+                self.custom_domain,
+                filepath_to_uri(name),
+                "?{}".format(urlencode(params)) if params else "",
+            )
+
+            if self.querystring_auth and self.cloudfront_signer:
+                expiration = datetime.now(UTC) + timedelta(seconds=expire)
+                return self.cloudfront_signer.generate_presigned_url(
+                    url, date_less_than=expiration
+                )
+
+            return url
+
+        return super().url(
+            name,
+            parameters=parameters,
+            expire=expire,
+            http_method=http_method,
+        )
 
 
 def get_temp_local_storage() -> FileSystemStorage:
@@ -26,9 +74,7 @@ def get_permanent_s3_storage():
 
     Django-storages reads AWS_* settings from Django settings.
     """
-    from storages.backends.s3boto3 import S3Boto3Storage
-
-    return S3Boto3Storage()
+    return TimezoneAwareS3Boto3Storage()
 
 
 def storage_relative_key(key: str) -> str:

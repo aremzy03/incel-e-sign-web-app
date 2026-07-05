@@ -66,44 +66,46 @@ def embed_signature(pdf_path: str, output_path: str, signature_image: str, page:
     if not os.path.isabs(output_path):
         raise ValueError("output_path must be an absolute path")
 
-    reader = PdfReader(pdf_path)
-    if page < 1 or page > len(reader.pages):
-        raise IndexError(f"page {page} is out of bounds for document with {len(reader.pages)} pages")
+    with PdfReader(pdf_path) as reader:
+        if page < 1 or page > len(reader.pages):
+            raise IndexError(f"page {page} is out of bounds for document with {len(reader.pages)} pages")
 
-    image_bytes = _decode_signature_image(signature_image)
+        image_bytes = _decode_signature_image(signature_image)
 
-    writer = PdfWriter()
+        writer = PdfWriter()
 
-    target_index = page - 1
-    for i, p in enumerate(reader.pages):
-        page_obj = p
-        if i == target_index:
-            # determine page size
-            media_box = page_obj.mediabox
-            page_width = float(media_box.width)
-            page_height = float(media_box.height)
-            
-            # Convert Y coordinate if needed
-            if convert_y_axis:
-                # Convert from top-left (UI convention) to bottom-left (PDF convention)
-                # PDF Y = page_height - UI_Y - signature_height
-                pdf_y = page_height - y - height
-                
-                # Clamp to page bounds to ensure signature is visible
-                if pdf_y < 0:
-                    pdf_y = 0  # Bottom of page
-                elif pdf_y + height > page_height:
-                    pdf_y = page_height - height  # Top of page
-            else:
-                # Use Y coordinate as-is (already in PDF convention)
-                pdf_y = y
+        target_index = page - 1
+        for i, p in enumerate(reader.pages):
+            page_obj = p
+            if i == target_index:
+                # determine page size
+                media_box = page_obj.mediabox
+                page_width = float(media_box.width)
+                page_height = float(media_box.height)
 
-            overlay_pdf_bytes = _make_signature_overlay(page_width, page_height, image_bytes, x, pdf_y, width, height)
-            overlay_reader = PdfReader(io.BytesIO(overlay_pdf_bytes))
-            overlay_page = overlay_reader.pages[0]
-            page_obj.merge_page(overlay_page)
+                # Convert Y coordinate if needed
+                if convert_y_axis:
+                    # Convert from top-left (UI convention) to bottom-left (PDF convention)
+                    # PDF Y = page_height - UI_Y - signature_height
+                    pdf_y = page_height - y - height
 
-        writer.add_page(page_obj)
+                    # Clamp to page bounds to ensure signature is visible
+                    if pdf_y < 0:
+                        pdf_y = 0  # Bottom of page
+                    elif pdf_y + height > page_height:
+                        pdf_y = page_height - height  # Top of page
+                else:
+                    # Use Y coordinate as-is (already in PDF convention)
+                    pdf_y = y
+
+                overlay_pdf_bytes = _make_signature_overlay(
+                    page_width, page_height, image_bytes, x, pdf_y, width, height
+                )
+                with PdfReader(io.BytesIO(overlay_pdf_bytes)) as overlay_reader:
+                    overlay_page = overlay_reader.pages[0]
+                    page_obj.merge_page(overlay_page)
+
+            writer.add_page(page_obj)
 
     # Ensure destination directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -159,35 +161,37 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
     if not os.path.isabs(output_path):
         raise ValueError("output_path must be an absolute path")
 
-    reader = PdfReader(pdf_path)
-    if page < 1 or page > len(reader.pages):
-        raise IndexError(f"page {page} is out of bounds for document with {len(reader.pages)} pages")
+    with PdfReader(pdf_path) as reader:
+        if page < 1 or page > len(reader.pages):
+            raise IndexError(f"page {page} is out of bounds for document with {len(reader.pages)} pages")
 
-    writer = PdfWriter()
+        writer = PdfWriter()
 
-    target_index = page - 1
-    for i, p in enumerate(reader.pages):
-        page_obj = p
-        if i == target_index:
-            media_box = page_obj.mediabox
-            page_width = float(media_box.width)
-            page_height = float(media_box.height)
+        target_index = page - 1
+        for i, p in enumerate(reader.pages):
+            page_obj = p
+            if i == target_index:
+                media_box = page_obj.mediabox
+                page_width = float(media_box.width)
+                page_height = float(media_box.height)
 
-            pdf_y = y
-            text_height = font_size * 1.2
-            if convert_y_axis:
-                pdf_y = page_height - y - text_height
-                if pdf_y < 0:
-                    pdf_y = 0
-                elif pdf_y + text_height > page_height:
-                    pdf_y = page_height - text_height
+                pdf_y = y
+                text_height = font_size * 1.2
+                if convert_y_axis:
+                    pdf_y = page_height - y - text_height
+                    if pdf_y < 0:
+                        pdf_y = 0
+                    elif pdf_y + text_height > page_height:
+                        pdf_y = page_height - text_height
 
-            overlay_pdf_bytes = _make_text_overlay(page_width, page_height, text, x, pdf_y, font_family, font_size)
-            overlay_reader = PdfReader(io.BytesIO(overlay_pdf_bytes))
-            overlay_page = overlay_reader.pages[0]
-            page_obj.merge_page(overlay_page)
+                overlay_pdf_bytes = _make_text_overlay(
+                    page_width, page_height, text, x, pdf_y, font_family, font_size
+                )
+                with PdfReader(io.BytesIO(overlay_pdf_bytes)) as overlay_reader:
+                    overlay_page = overlay_reader.pages[0]
+                    page_obj.merge_page(overlay_page)
 
-        writer.add_page(page_obj)
+            writer.add_page(page_obj)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'wb') as f:

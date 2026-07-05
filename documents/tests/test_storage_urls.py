@@ -2,12 +2,40 @@
 Tests for S3/CloudFront URL refresh helpers used in API serializers.
 """
 
+import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from documents.serializers import DocumentSerializer
-from documents.storage import refresh_remote_file_url, storage_relative_key, persistable_storage_url
+from documents.storage import (
+    TimezoneAwareS3Boto3Storage,
+    persistable_storage_url,
+    refresh_remote_file_url,
+    storage_relative_key,
+)
+
+
+def test_timezone_aware_s3_storage_cloudfront_signing_without_utcnow_warning():
+    signer = MagicMock()
+    signer.generate_presigned_url.return_value = (
+        "https://cdn.example.com/staging/doc.pdf?Signature=abc"
+    )
+    storage = TimezoneAwareS3Boto3Storage(cloudfront_signer=signer)
+    storage.custom_domain = "cdn.example.com"
+    storage.querystring_auth = True
+    storage.url_protocol = "https:"
+    storage.querystring_expire = 3600
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        url = storage.url("staging/doc.pdf")
+
+    assert url.endswith("Signature=abc")
+    assert not any("utcnow" in str(warning.message).lower() for warning in caught)
+    signer.generate_presigned_url.assert_called_once()
+    expiration = signer.generate_presigned_url.call_args.kwargs["date_less_than"]
+    assert expiration.tzinfo is not None
 
 
 def test_persistable_storage_url_strips_signing_query_params():
@@ -47,6 +75,7 @@ def test_refresh_remote_file_url_skips_when_s3_disabled(settings):
 
 def test_refresh_remote_file_url_regenerates_signed_url(settings):
     settings.USE_S3 = True
+    settings.AWS_LOCATION = "incel-esign-app"
     stored_url = (
         "https://dijl0kmob0tbo.cloudfront.net/incel-esign-app/staging/"
         "11111111-1111-1111-1111-111111111111.pdf?Expires=1&Signature=old"

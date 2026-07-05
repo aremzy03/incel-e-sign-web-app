@@ -27,3 +27,12 @@ SIGNING_CUTOVER_AT = datetime(2020, 1, 1, tzinfo=dt_timezone.utc)
 
 # Tests always use local filesystem storage, not live S3.
 USE_S3 = False
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
+DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"

@@ -158,6 +158,9 @@ def test_preview_allowed_for_envelope_signer(settings, tmp_path):
 
     url = reverse("documents:document_preview", kwargs={"pk": str(doc.id)})
     resp = client.get(url)
-    assert resp.status_code == 200, getattr(resp, "data", resp.content[:200])
-    assert resp["Content-Type"] == "application/pdf"
-    assert os.path.exists(abs_pdf)
+    try:
+        assert resp.status_code == 200, getattr(resp, "data", resp.content[:200])
+        assert resp["Content-Type"] == "application/pdf"
+        assert os.path.exists(abs_pdf)
+    finally:
+        resp.close()

@@ -444,13 +444,13 @@ if USE_S3:
     # for backwards compatibility and third-party apps that still read it.
     STORAGES = {
         "default": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "documents.storage.TimezoneAwareS3Boto3Storage",
         },
         "staticfiles": {
             "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
         },
     }
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    DEFAULT_FILE_STORAGE = 'documents.storage.TimezoneAwareS3Boto3Storage'
     STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
 
     # AWS S3 configuration
