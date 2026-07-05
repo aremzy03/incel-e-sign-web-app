@@ -20,6 +20,7 @@ class Signature(models.Model):
     
     STATUS_CHOICES = [
         ("pending", "Pending"),
+        ("processing", "Processing"),
         ("signed", "Signed"),
         ("declined", "Declined"),
     ]
@@ -103,6 +104,11 @@ class Signature(models.Model):
     def is_pending(self) -> bool:
         """Returns True if the signature status is 'pending'."""
         return self.status == 'pending'
+
+    @property
+    def is_processing(self) -> bool:
+        """Returns True if the signature status is 'processing'."""
+        return self.status == 'processing'
     
     def get_signing_order(self) -> int:
         """
@@ -136,7 +142,9 @@ class Signature(models.Model):
         Returns:
             bool: True if this is the current signer who can act
         """
-        if not self.is_pending:
+        if self.is_processing:
+            return True
+        if not self.is_pending and not self.is_processing:
             return False
         
         # Get all pending signatures for this envelope, ordered by signing order
@@ -152,7 +160,8 @@ class Signature(models.Model):
         pending_signatures_list = list(pending_signatures)
         
         if not pending_signatures_list:
-            return False
+            # Current signer may be in processing state
+            return self.is_processing
         
         # Find the signature with the lowest signing order
         current_signature = min(
@@ -161,6 +170,64 @@ class Signature(models.Model):
         )
         
         return self.id == current_signature.id
+
+
+class SigningJob(models.Model):
+    """
+    Tracks async PDF signing work for a signer on an envelope.
+    """
+
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("processing", "Processing"),
+        ("succeeded", "Succeeded"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    envelope = models.ForeignKey(
+        'envelopes.Envelope',
+        on_delete=models.CASCADE,
+        related_name='signing_jobs',
+    )
+    signer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='signing_jobs',
+    )
+    signature = models.ForeignKey(
+        'Signature',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='signing_jobs',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='queued')
+    celery_task_id = models.CharField(max_length=255, blank=True, default='')
+    signing_version = models.PositiveIntegerField(default=1)
+    signature_image_data = models.TextField(blank=True, default='')
+    user_signature_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="Deferred UserSignature id when image is resolved in the worker.",
+    )
+    fallback_placement = models.JSONField(default=dict, blank=True)
+    is_self_sign = models.BooleanField(default=False)
+    error_message = models.TextField(blank=True, default='')
+    attempt_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['envelope', 'signer', 'status']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+
+    def __str__(self) -> str:
+        return f"SigningJob {self.id} ({self.status})"
 
 
 class UserSignature(models.Model):

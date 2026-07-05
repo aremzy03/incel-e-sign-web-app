@@ -1,14 +1,21 @@
 {% extends 'base_email.html' %}
 
 {% block content %}
-    <h2>Document Signed Successfully</h2>
-    <p>Dear {{ user_name }},</p>
-    <p>The document titled <strong>{{ document_title }}</strong> has been successfully signed.</p>
-    <p>You can view or download the signed document here:</p>
-    <div class="button-container">
-        <a href="{{ view_document_url }}" class="button">View Document</a>
+    <span class="badge badge-completed">Completed</span>
+    <h2 style="margin-top:12px;">Document signed successfully</h2>
+
+    <p style="margin-top:8px;">Hi {{ user_name }},</p>
+    <p>The signing process for the document below is complete.</p>
+
+    <div class="event" style="margin-top:16px;">
+        <p class="event-title">Document</p>
+        <p class="event-meta">{{ document_title }}</p>
     </div>
-    <p>Thank you for using {{ brand_name|default:"Incel E-Sign" }}.</p>
-    <p>Sincerely,</p>
-    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+
+    <div style="text-align:center;margin-top:20px;">
+        <a href="{{ view_document_url }}" class="button">View document</a>
+    </div>
+
+    <p class="muted" style="margin-top:16px;">Keep this email for your records.</p>
+    <p style="margin-top:20px;">The {{ brand_name|default:"Incel E-Sign" }} Team</p>
 {% endblock %}

@@ -6,9 +6,11 @@ in the e-signature workflow.
 """
 
 from rest_framework import serializers
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from .models import Envelope, EnvelopeDocument
 from documents.models import Document
+from documents.storage import refresh_remote_file_url
 from signatures.serializers import SignatureSerializer # Import SignatureSerializer
 from fields.serializers import FieldSerializer
 import uuid
@@ -348,6 +350,17 @@ class EnvelopeDocumentSerializer(serializers.ModelSerializer):
     document_file_name = serializers.CharField(source='document.file_name', read_only=True)
     document_file_url = serializers.CharField(source='document.file_url', read_only=True)
     document_signed_file_url = serializers.CharField(source='document.signed_file_url', read_only=True)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if getattr(settings, "USE_S3", False):
+            if data.get("document_file_url"):
+                data["document_file_url"] = refresh_remote_file_url(data["document_file_url"])
+            if data.get("document_signed_file_url"):
+                data["document_signed_file_url"] = refresh_remote_file_url(
+                    data["document_signed_file_url"]
+                )
+        return data
 
     class Meta:
         model = EnvelopeDocument

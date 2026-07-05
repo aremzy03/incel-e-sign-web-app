@@ -675,3 +675,30 @@ class UserSignatureSerializer(serializers.ModelSerializer):
                 validated_data["image"] = processed
 
         return super().update(instance, validated_data)
+
+
+class SigningJobSerializer(serializers.ModelSerializer):
+    """Serializer for async signing job status polling."""
+
+    envelope_id = serializers.UUIDField(source="envelope.id", read_only=True)
+    signer_id = serializers.UUIDField(source="signer.id", read_only=True)
+    envelope_status = serializers.CharField(source="envelope.status", read_only=True)
+    signature = SignatureSerializer(read_only=True, allow_null=True)
+
+    class Meta:
+        from signatures.models import SigningJob
+
+        model = SigningJob
+        fields = [
+            "id",
+            "status",
+            "envelope_id",
+            "signer_id",
+            "error_message",
+            "attempt_count",
+            "created_at",
+            "completed_at",
+            "envelope_status",
+            "signature",
+        ]
+        read_only_fields = fields

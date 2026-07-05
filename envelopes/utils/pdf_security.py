@@ -47,18 +47,13 @@ def lock_pdf_with_password(
         return None
 
     try:
-        reader = PdfReader(pdf_path)
-    except Exception as exc:
-        logger.error("lock_pdf_with_password: failed to read PDF %s: %s", pdf_path, exc)
-        return None
+        with PdfReader(pdf_path) as reader:
+            writer = PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
 
-    writer = PdfWriter()
-    try:
-        for page in reader.pages:
-            writer.add_page(page)
-
-        # Use the same password for user and owner for simplicity.
-        writer.encrypt(user_password=password, owner_password=password)
+            # Use the same password for user and owner for simplicity.
+            writer.encrypt(user_password=password, owner_password=password)
     except Exception as exc:
         logger.error("lock_pdf_with_password: failed to encrypt PDF %s: %s", pdf_path, exc)
         return None

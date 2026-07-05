@@ -32,11 +32,9 @@ class MergeDocumentsApiTest(APITestCase):
 
     def _create_doc(self, owner, name: str) -> Document:
         pdf_bytes = _make_pdf_bytes(name)
-        rel_dir = 'documents'
-        os.makedirs(os.path.join(str(settings.MEDIA_ROOT), rel_dir), exist_ok=True)
-        filename = f"{owner.id}_{name}.pdf"
-        rel_path = f"{rel_dir}/{filename}"
+        rel_path = f"staging/{owner.id}_{name}.pdf"
         abs_path = os.path.join(str(settings.MEDIA_ROOT), rel_path)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
         with open(abs_path, 'wb') as f:
             f.write(pdf_bytes)
         file_url = f"{settings.MEDIA_URL}{rel_path}"

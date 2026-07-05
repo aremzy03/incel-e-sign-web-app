@@ -23,6 +23,7 @@ pillow
 django-celery-results
 sentry-sdk
 gunicorn
+moto[s3]
 rembg
 #
 # System dependency required for Word → PDF conversion used in documents upload:

@@ -1,14 +1,22 @@
 {% extends 'base_email.html' %}
 
 {% block content %}
-    <h2>You Have a Document to Sign</h2>
-    <p>Hi {{ user_name }},</p>
-    <p>{{ creator_name }} has requested you to sign the document titled <strong>{{ document_title }}</strong>.</p>
-    <p>Please click the button below to review and sign the document:</p>
-    <div class="button-container">
-        <a href="{{ sign_document_url }}" class="button">Sign Document</a>
+    <span class="badge badge-info">Action required</span>
+    <h2 style="margin-top:12px;">You have a document to sign</h2>
+
+    <p style="margin-top:8px;">Hi {{ user_name }},</p>
+    <p>{{ creator_name }} requested your signature.</p>
+
+    <div class="event" style="margin-top:16px;">
+        <p class="event-title">Document</p>
+        <p class="event-meta">{{ document_title }}</p>
+        <p class="event-meta" style="margin-top:6px;">Requested by {{ creator_name }}</p>
     </div>
-    <p>Please sign when convenient to keep the process moving.</p>
-    <p>Thank you,</p>
-    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+
+    <div style="text-align:center;margin-top:20px;">
+        <a href="{{ sign_document_url }}" class="button">Review and sign</a>
+    </div>
+
+    <p class="muted" style="margin-top:16px;">Signing promptly helps keep the process moving.</p>
+    <p style="margin-top:20px;">The {{ brand_name|default:"Incel E-Sign" }} Team</p>
 {% endblock %}

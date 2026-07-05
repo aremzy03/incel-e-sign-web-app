@@ -25,6 +25,23 @@ from documents.models import Document
 User = get_user_model()
 
 
+MINIMAL_PDF_BYTES = b'%PDF-1.4\n%EOF'
+
+
+def _embed_signature_writes_output(*args, **kwargs):
+    """Mock embed_signature that records kwargs and writes a minimal PDF."""
+    output_path = kwargs.get("output_path")
+    if output_path is None and len(args) >= 2:
+        output_path = args[1]
+    if output_path:
+        parent = os.path.dirname(output_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(output_path, "wb") as pdf_file:
+            pdf_file.write(MINIMAL_PDF_BYTES)
+    return kwargs
+
+
 class AutomaticSignaturePlacementTestCase(APITestCase):
     """
     Test cases for automatic signature placement using envelope position coordinates.
@@ -69,7 +86,23 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         
         # Sample signature image (small PNG as base64)
         self.signature_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-        
+
+        pdf_dir = os.path.join(str(settings.MEDIA_ROOT), 'documents')
+        os.makedirs(pdf_dir, exist_ok=True)
+        pdf_path = os.path.join(pdf_dir, 'test_document.pdf')
+        with open(pdf_path, 'wb') as f:
+            f.write(b'%PDF-1.4\n%EOF')
+        self.document.file_url = f"{settings.MEDIA_URL}documents/test_document.pdf"
+        self.document.save(update_fields=['file_url'])
+
+        self._upload_completed_patcher = patch(
+            'signatures.services.signing.upload_completed_pdf',
+            side_effect=lambda e, d, p: f'https://fake-s3.local/completed/{e}/{d}.pdf',
+        )
+        self._upload_completed_patcher.start()
+
+    def tearDown(self):
+        self._upload_completed_patcher.stop()
     def test_sign_with_envelope_document_position_coordinates(self):
         """Test signing with position coordinates from EnvelopeDocument.signer_document_positions."""
         # Define signer positions for the document
@@ -128,10 +161,10 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function to capture the position arguments
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
                 # Authenticate as signer1
                 self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                 
@@ -144,7 +177,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 response = self.client.post(url, data, format='json')
                 
                 # Verify the response is successful
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                 self.assertEqual(response.data['status'], 'success')
                 
                 # Verify embed_signature was called with position from EnvelopeDocument
@@ -191,10 +224,10 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function to capture the position arguments
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
                 # Authenticate as signer1
                 self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                 
@@ -207,7 +240,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 response = self.client.post(url, data, format='json')
                 
                 # Verify the response is successful
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                 
                 # Verify embed_signature was called with default coordinates
                 mock_embed.assert_called_once()
@@ -248,10 +281,10 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
                 # Authenticate as signer1
                 self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                 
@@ -269,7 +302,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 response = self.client.post(url, data, format='json')
                 
                 # Verify the response is successful
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                 
                 # Verify embed_signature was called with request coordinates
                 mock_embed.assert_called_once()
@@ -331,10 +364,10 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
         
         # Mock the PDF embedding function
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                mock_exists.return_value = True
-                
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
                 # First signer signs
                 self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                 
@@ -342,7 +375,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 data = {'signature_image': self.signature_image}
                 
                 response = self.client.post(url, data, format='json')
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                 
                 # Verify first signer's position was used (with SIGNATURE_X_OFFSET of 5.0)
                 first_call_args = mock_embed.call_args
@@ -356,7 +389,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                 self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
                 
                 response = self.client.post(url, data, format='json')
-                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                 
                 # Verify second signer's position was used (with SIGNATURE_X_OFFSET of 5.0)
                 second_call_args = mock_embed.call_args
@@ -428,10 +461,11 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         user_signature.image.close = MagicMock()
 
         # Mock the PDF embedding function and UserSignature.objects.get
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                mock_exists.return_value = True
-                with patch('signatures.services.signing.UserSignature.objects.get', return_value=user_signature):
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
+            with patch('signatures.services.signing.UserSignature.objects.get', return_value=user_signature):
                     # Authenticate as signer1
                     self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
                     
@@ -444,7 +478,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                     response = self.client.post(url, data, format='json')
                     
                     # Verify the response is successful
-                    self.assertEqual(response.status_code, status.HTTP_200_OK)
+                    self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                     
                     # Verify embed_signature was called with EnvelopeDocument position
                     mock_embed.assert_called_once()
@@ -500,9 +534,11 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
         )
 
         # Mock the PDF embedding function and UserSignature.objects.get
-        with patch('signatures.services.signing.embed_signature') as mock_embed:
-            with patch('signatures.services.signing.os.path.exists') as mock_exists:
-                with patch('signatures.services.signing.UserSignature.objects.get') as mock_get_signature:
+        with patch(
+            'signatures.services.signing.embed_signature',
+            side_effect=_embed_signature_writes_output,
+        ) as mock_embed:
+            with patch('signatures.services.signing.UserSignature.objects.get') as mock_get_signature:
                     # Mock the UserSignature object and its image methods for default retrieval
                     mock_signature = MagicMock()
                     mock_signature.image.name = 'signature.png'
@@ -511,8 +547,6 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                     mock_signature.image.close = MagicMock()
                     # For default signature retrieval (no signature_id in request)
                     mock_get_signature.return_value = mock_signature
-                    
-                    mock_exists.return_value = True
                     
                     # Authenticate as signer1
                     self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
@@ -524,7 +558,7 @@ class AutomaticSignaturePlacementTestCase(APITestCase):
                     response = self.client.post(url, data, format='json')
                     
                     # Verify the response is successful
-                    self.assertEqual(response.status_code, status.HTTP_200_OK)
+                    self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
                     
                     # Verify embed_signature was called with EnvelopeDocument position
                     mock_embed.assert_called_once()

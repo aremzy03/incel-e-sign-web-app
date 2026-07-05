@@ -1,14 +1,21 @@
 {% extends 'base_email.html' %}
 
 {% block content %}
-    <h2>It's Your Turn to Sign</h2>
-    <p>Hi {{ user_name }},</p>
-    <p>It is now your turn to sign the document titled <strong>{{ document_title }}</strong>.</p>
-    <p>Please click the button below to proceed with signing:</p>
-    <div class="button-container">
-        <a href="{{ sign_document_url }}" class="button">Sign Document</a>
+    <span class="badge badge-your-turn">Your turn</span>
+    <h2 style="margin-top:12px;">It’s your turn to sign</h2>
+
+    <p style="margin-top:8px;">Hi {{ user_name }},</p>
+    <p>It’s now your turn to sign.</p>
+
+    <div class="event" style="margin-top:16px;">
+        <p class="event-title">Document</p>
+        <p class="event-meta">{{ document_title }}</p>
     </div>
-    <p>Please proceed to sign to keep the process moving.</p>
-    <p>Thank you,</p>
-    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+
+    <div style="text-align:center;margin-top:20px;">
+        <a href="{{ sign_document_url }}" class="button">Review and sign</a>
+    </div>
+
+    <p class="muted" style="margin-top:16px;">If you weren’t expecting this request, you can ignore this email or contact support.</p>
+    <p style="margin-top:20px;">The {{ brand_name|default:"Incel E-Sign" }} Team</p>
 {% endblock %}

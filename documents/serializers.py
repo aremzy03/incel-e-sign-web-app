@@ -8,9 +8,9 @@ functionality in the e-signature workflow.
 import os
 from rest_framework import serializers
 from django.conf import settings
-from django.core.files.base import ContentFile
 from .models import Document
-from .storage import get_temp_local_storage
+from .services.document_creation import create_draft_document_from_pdf_bytes
+from .storage import refresh_remote_file_url
 
 
 class MergeDocumentsSerializer(serializers.Serializer):
@@ -29,6 +29,11 @@ class MergeDocumentsSerializer(serializers.Serializer):
         # Require at least 2 documents to merge
         if len(value) < 2:
             raise serializers.ValidationError("At least two documents are required to merge.")
+        max_docs = getattr(settings, "MAX_MERGE_DOCUMENTS", 10)
+        if len(value) > max_docs:
+            raise serializers.ValidationError(
+                f"Cannot merge more than {max_docs} documents at once."
+            )
         return value
 
 class DocumentUploadSerializer(serializers.Serializer):
@@ -83,7 +88,6 @@ class DocumentUploadSerializer(serializers.Serializer):
             Document: The created Document instance
         """
         file = self.validated_data['file']
-        temp_storage = get_temp_local_storage()
         
         # Determine handling by extension
         original_name = file.name
@@ -119,33 +123,18 @@ class DocumentUploadSerializer(serializers.Serializer):
             with open(output_pdf_abs, 'rb') as fpdf:
                 pdf_bytes = fpdf.read()
             
-            # Generate unique PDF filename for storage (with UUID prefix for uniqueness on disk)
-            unique_pdf_filename = f"{owner.id}_{os.path.basename(base_name)}.pdf"
-            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_pdf_filename}"
-
-            # Save PDF locally and build a MEDIA_URL-based URL
-            saved_path = temp_storage.save(storage_rel_path, ContentFile(pdf_bytes))
-            file_url = temp_storage.url(saved_path)
-            # Store clean filename without UUID prefix for display
             file_name_for_record = f"{base_name}.pdf"
             file_size_for_record = len(pdf_bytes)
         else:
-            # Handle PDF directly: store as-is
-            unique_filename = f"{owner.id}_{original_name}"
-            storage_rel_path = f"{settings.TEMP_UPLOAD_SUBDIR}/documents/{unique_filename}"
-            saved_path = temp_storage.save(storage_rel_path, file)
-            file_url = temp_storage.url(saved_path)
+            pdf_bytes = b"".join(chunk for chunk in file.chunks())
             file_name_for_record = original_name
-            file_size_for_record = file.size
-        
-        document = Document.objects.create(
+            file_size_for_record = len(pdf_bytes)
+
+        return create_draft_document_from_pdf_bytes(
             owner=owner,
-            file_url=file_url,
             file_name=file_name_for_record,
-            file_size=file_size_for_record,
-            status='draft'
+            pdf_bytes=pdf_bytes,
         )
-        return document
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -163,8 +152,17 @@ class DocumentSerializer(serializers.ModelSerializer):
         Return the current document URL, prioritizing signed version if available.
         This matches the logic used in signing and download views.
         """
-        return obj.signed_file_url or obj.file_url
-    
+        return refresh_remote_file_url(obj.signed_file_url or obj.file_url)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if getattr(settings, "USE_S3", False):
+            if data.get("file_url"):
+                data["file_url"] = refresh_remote_file_url(data["file_url"])
+            if data.get("signed_file_url"):
+                data["signed_file_url"] = refresh_remote_file_url(data["signed_file_url"])
+        return data
+
     class Meta:
         model = Document
         fields = [

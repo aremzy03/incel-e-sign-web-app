@@ -8,6 +8,7 @@ in the e-signature workflow.
 import uuid
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 
 class Document(models.Model):
@@ -40,7 +41,7 @@ class Document(models.Model):
     )
     
     file_url = models.CharField(
-        max_length=500,
+        max_length=2048,
         help_text="File path or S3 URL where the document is stored"
     )
     
@@ -54,7 +55,7 @@ class Document(models.Model):
     )
     
     signed_file_url = models.CharField(
-        max_length=500,
+        max_length=2048,
         blank=True,
         null=True,
         help_text="File path or URL to the signed PDF version if available"
@@ -89,6 +90,17 @@ class Document(models.Model):
     
     def __str__(self):
         return f"{self.file_name} ({self.status})"
+
+    def clean(self):
+        super().clean()
+        if not self.file_url or not self.file_url.strip():
+            raise ValidationError({"file_url": "Document file_url cannot be blank."})
+
+    def save(self, *args, **kwargs):
+        skip_validation = kwargs.pop("skip_validation", False)
+        if not skip_validation:
+            self.full_clean()
+        return super().save(*args, **kwargs)
     
     @property
     def file_size_mb(self):

@@ -25,6 +25,25 @@ class _FakeS3Storage:
         return f"https://fake-s3.local/{key}"
 
 
+MINIMAL_PDF_BYTES = (
+    b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n"
+    b"2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n"
+    b"3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n>>\nendobj\n"
+    b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n"
+    b"trailer\n<<\n/Size 4\n/Root 1 0 R\n>>\nstartxref\n174\n%%EOF"
+)
+
+
+def _embed_signature_side_effect(*args, **kwargs):
+    output_path = kwargs.get("output_path")
+    if output_path is None and len(args) >= 2:
+        output_path = args[1]
+    if output_path:
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as pdf_file:
+            pdf_file.write(MINIMAL_PDF_BYTES)
+
+
 @pytest.mark.django_db
 def test_on_final_sign_completion_uploads_locked_pdf_to_s3_and_updates_urls(settings, tmp_path):
     settings.MEDIA_ROOT = tmp_path
@@ -75,9 +94,11 @@ def test_on_final_sign_completion_uploads_locked_pdf_to_s3_and_updates_urls(sett
     }
 
     fake_storage = _FakeS3Storage()
-    with patch("signatures.services.signing.get_permanent_s3_storage", return_value=fake_storage):
-        sign_resp = client.post(reverse("signatures:sign_document", kwargs={"envelope_id": envelope_id}), sign_data, format="json")
-        assert sign_resp.status_code == 200, sign_resp.data
+    with patch("signatures.services.signing.upload_completed_pdf") as mock_upload_completed:
+        mock_upload_completed.side_effect = lambda e, d, p: fake_storage.url(f"completed/{e}/{d}.pdf")
+        with patch("signatures.utils.pdf_signing.embed_signature", side_effect=_embed_signature_side_effect):
+            sign_resp = client.post(reverse("signatures:sign_document", kwargs={"envelope_id": envelope_id}), sign_data, format="json")
+            assert sign_resp.status_code == 202, sign_resp.data
 
     env = Envelope.objects.get(id=envelope_id)
     assert env.status == "completed"
@@ -85,9 +106,6 @@ def test_on_final_sign_completion_uploads_locked_pdf_to_s3_and_updates_urls(sett
     doc = Document.objects.get(id=doc_id)
     assert doc.file_url.startswith("https://fake-s3.local/"), doc.file_url
     assert doc.signed_file_url == doc.file_url
-    assert fake_storage.saved == [f"completed/{envelope_id}/{doc_id}.pdf"]
-
-    # Ensure local artifacts still exist (retained for cleanup)
-    signed_dir = os.path.join(str(settings.MEDIA_ROOT), settings.TEMP_SIGNED_SUBDIR)
-    assert os.path.isdir(signed_dir)
+    assert fake_storage.saved == []
+    assert mock_upload_completed.called
 

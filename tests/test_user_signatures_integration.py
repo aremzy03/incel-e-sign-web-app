@@ -450,26 +450,27 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
             format='json'
         )
         
-        self.assertEqual(sign_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(sign_response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(sign_response.data['status'], 'success')
-        
+        self.assertIn('job_id', sign_response.data['data'])
+
         # Verify Signature record was created with image copied from UserSignature
         signature = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
         self.assertEqual(signature.status, 'signed')
         self.assertIsNotNone(signature.signature_image)
         self.assertIsNotNone(signature.signed_at)
-        
+
         # Verify the signature image is base64 encoded and contains the image data
         self.assertTrue(signature.signature_image.startswith('data:image/'))
         self.assertIn('base64,', signature.signature_image)
-        
-        # Verify audit log was created
+
+        # Verify audit log was created for async signing completion
         audit_log = AuditLog.objects.filter(
             actor=self.signer1,
-            action='SIGN_DOC'
+            action='SIGNING_JOB_SUCCEEDED',
         ).first()
         self.assertIsNotNone(audit_log)
-        self.assertIn(self.signer1.full_name, audit_log.message)
+        self.assertIn(str(envelope_id), audit_log.message)
     
     def test_sign_with_invalid_signature_id(self):
         """

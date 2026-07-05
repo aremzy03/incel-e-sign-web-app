@@ -14,6 +14,10 @@ urlpatterns = [
     # User signature management
     path('user/', views.UserSignatureListCreateView.as_view(), name='user-signatures'),
     path('user/<uuid:id>/', views.UserSignatureDetailView.as_view(), name='user-signature-detail'),
+
+    # Async signing jobs
+    path('jobs/<uuid:id>/', views.SigningJobDetailView.as_view(), name='signing-job-detail'),
+    path('jobs/<uuid:id>/retry/', views.SigningJobRetryView.as_view(), name='signing-job-retry'),
     
     # Document signing
     path('self-sign/', views.SelfSignView.as_view(), name='self_sign'),

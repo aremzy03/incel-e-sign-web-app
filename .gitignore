@@ -42,3 +42,6 @@ Thumbs.db
 
 .cursor/
 test/
+test_media/
+cloudfront-private-key.pem
+cloudfront-public-key.pem

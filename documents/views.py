@@ -7,10 +7,8 @@ functionality in the e-signature workflow.
 
 import logging
 import os
-import uuid
 from urllib.parse import unquote, urlparse
 
-import boto3
 import requests
 from django.conf import settings
 from django.db import models
@@ -27,8 +25,11 @@ from rest_framework.views import APIView
 from core.query_filters import parse_search_query_param, parse_status_query_param
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
-from envelopes.models import Envelope, EnvelopeDocument
+from .services.document_creation import create_draft_document_from_local_pdf
+from .services.pdf_files import download_pdf_to_temp, temp_pdf_file
+from .services.s3_client import get_boto3_s3_client
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
+from envelopes.models import Envelope, EnvelopeDocument
 from pypdf import PdfReader, PdfWriter
 
 logger = logging.getLogger(__name__)
@@ -268,70 +269,15 @@ class DocumentDetailView(RetrieveAPIView):
     serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated]
     
-    def get_queryset(self):
-        """
-        Return documents accessible to the authenticated user.
-        
-        A document is accessible if:
-        - The user is the owner of the document, or
-        - The user is the creator of an envelope that contains the document, or
-        - The user is listed as a signer in an envelope that contains the document.
-        """
-        user = self.request.user
-        user_id_str = str(user.id)
-        
-        # Collect documents owned by the user
-        owned_documents = Document.objects.filter(owner=user)
-
-        # Collect document IDs from envelopes where user is creator
-        creator_envelopes_docs_pks = set(
-            EnvelopeDocument.objects
-            .filter(envelope__creator=user)
-            .select_related('document', 'envelope')
-            .values_list('document__id', flat=True)
-        )
-
-        # Optimize signer check: Use prefetch to avoid N+1 queries
-        # For PostgreSQL, we could use JSON queries, but for compatibility with SQLite tests,
-        # we'll fetch envelopes with prefetch and check signing_order in Python
-        # This is still much better than fetching ALL EnvelopeDocuments
-        from envelopes.models import Envelope
-        signer_envelopes_docs_pks = set()
-        
-        # Fetch only envelopes (not all EnvelopeDocuments)
-        # Then check their signing_order and fetch related documents
-        envelopes_as_signer = Envelope.objects.prefetch_related('envelopedocument_set__document').all()
-        
-        for envelope in envelopes_as_signer:
-            # Check if user is in signing_order
-            for signer_entry in envelope.signing_order:
-                if str(signer_entry.get('signer_id')) == user_id_str:
-                    # User is a signer, add all documents from this envelope
-                    signer_envelopes_docs_pks.update(
-                        env_doc.document.id for env_doc in envelope.envelopedocument_set.all()
-                    )
-                    break
-
-        accessible_ids = creator_envelopes_docs_pks.union(signer_envelopes_docs_pks)
-
-        # Combine owned documents and documents from accessible envelopes
-        accessible_documents = owned_documents | Document.objects.filter(id__in=list(accessible_ids))
-        
-        return accessible_documents.select_related('owner').distinct().order_by('-created_at')
-    
     def get_object(self):
         """
-        Get the document object, ensuring user can only access their own documents.
-        
-        Returns:
-            Document: The requested document
-            
-        Raises:
-            Http404: If document doesn't exist or user is not the owner
+        Resolve a single document the user may access (owner, envelope creator, or signer).
+
+        Uses get_accessible_document_for_user so we only inspect envelopes that contain
+        this document instead of scanning every envelope in the database.
         """
-        queryset = self.get_queryset()
         document_id = self.kwargs.get('pk')
-        return get_object_or_404(queryset, id=document_id)
+        return get_accessible_document_for_user(self.request.user, document_id)
 
 
 class DocumentDeleteView(DestroyAPIView):
@@ -468,12 +414,7 @@ class DocumentDownloadView(APIView):
                             status=status.HTTP_502_BAD_GATEWAY
                         )
 
-                    s3_client = boto3.client(
-                        's3',
-                        region_name=settings.AWS_S3_REGION_NAME,
-                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    )
+                    s3_client = get_boto3_s3_client()
 
                     obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
                 except Exception as e:
@@ -614,7 +555,15 @@ class DocumentPreviewView(APIView):
         try:
             document = get_accessible_document_for_user(request.user, pk)
 
-            source_url = document.signed_file_url or document.file_url
+            source_url = (document.signed_file_url or document.file_url or "").strip()
+            if not source_url:
+                return Response(
+                    {
+                        'status': 'error',
+                        'message': 'Document file reference is missing'
+                    },
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
             # Remote storage (e.g. S3) – stream via boto3 using bucket/key instead of HTTP GET on a signed URL
             if source_url.startswith('http'):
@@ -623,17 +572,12 @@ class DocumentPreviewView(APIView):
                     encoded_key = parsed.path.lstrip('/')
                     key = unquote(encoded_key)
 
-                    s3_client = boto3.client(
-                        's3',
-                        region_name=settings.AWS_S3_REGION_NAME,
-                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    )
+                    s3_client = get_boto3_s3_client()
 
                     obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
                 except Exception as e:
                     # Distinguish not-found from other errors when possible
-                    if hasattr(boto3, "client") and getattr(getattr(e, "response", {}), "get", None):
+                    if getattr(getattr(e, "response", {}), "get", None):
                         try:
                             code = e.response.get("Error", {}).get("Code")  # type: ignore[attr-defined]
                         except Exception:
@@ -732,6 +676,7 @@ class DocumentPreviewView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
+            logger.exception("Error streaming document preview for document %s", pk)
             return Response(
                 {
                     'status': 'error',
@@ -760,101 +705,97 @@ class MergeDocumentsView(APIView):
         document_ids = serializer.validated_data['document_ids']
         desired_name = serializer.validated_data.get('name') or ""
 
-        # Fetch and validate ownership/access
+        MERGEABLE_STATUSES = ('draft', 'completed')
         docs = []
-        for doc_id in document_ids:
-            doc = Document.objects.filter(id=doc_id, owner=request.user).first()
-            if not doc:
-                return Response({
-                    'status': 'error',
-                    'message': f'Access denied or document not found: {doc_id}'
-                }, status=status.HTTP_403_FORBIDDEN)
-            # Resolve file path (prefer signed if exists)
-            source_url = doc.signed_file_url or doc.file_url
-            abs_path = get_media_absolute_path_from_url(source_url)
-
-            # For local filesystem paths, ensure the file exists.
-            if os.path.isabs(abs_path):
-                if not os.path.exists(abs_path):
+        temp_paths_to_cleanup = []
+        try:
+            for doc_id in document_ids:
+                doc = Document.objects.filter(id=doc_id, owner=request.user).first()
+                if not doc:
                     return Response({
                         'status': 'error',
-                        'message': f'Source file missing on server for document {doc_id}'
+                        'message': f'Access denied or document not found: {doc_id}'
+                    }, status=status.HTTP_403_FORBIDDEN)
+
+                if doc.status not in MERGEABLE_STATUSES:
+                    return Response({
+                        'status': 'error',
+                        'message': (
+                            f'Document {doc_id} cannot be merged (status={doc.status}). '
+                            'Only draft or completed documents are allowed.'
+                        )
                     }, status=status.HTTP_400_BAD_REQUEST)
-                docs.append((doc, abs_path))
+
+                if EnvelopeDocument.objects.filter(
+                    document=doc,
+                    envelope__status='pending',
+                ).exists():
+                    return Response({
+                        'status': 'error',
+                        'message': (
+                            f'Document {doc_id} is part of a pending envelope and cannot be merged.'
+                        )
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+                source_url = doc.signed_file_url or doc.file_url
+                try:
+                    local_path = download_pdf_to_temp(source_url)
+                    temp_paths_to_cleanup.append(str(local_path))
+                    docs.append((doc, str(local_path)))
+                except FileNotFoundError:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Source file missing for document {doc_id}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                except Exception as exc:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Failed to download source for document {doc_id}: {exc}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            if desired_name.strip() and not _is_placeholder_merge_name(desired_name):
+                safe_base = _sanitize_filename_component(desired_name.strip(), fallback="Merged Document", max_len=120)
+                file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
             else:
-                # For non-local sources (e.g. S3 URLs), merging is not currently
-                # supported without first downloading to a temporary location.
+                file_name = _default_merged_filename(docs[0][0].file_name, len(docs))
+
+            writer = PdfWriter()
+            try:
+                for _, abs_path in docs:
+                    reader = PdfReader(abs_path)
+                    for page in reader.pages:
+                        writer.add_page(page)
+            except Exception as e:
                 return Response({
                     'status': 'error',
-                    'message': f'Merging documents stored on remote storage is not supported for document {doc_id}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'message': f'Failed to read/merge PDFs: {e}'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # Determine output name:
-        # - if user supplied a name, sanitize it and ensure ".pdf"
-        # - if the client sent a placeholder name (e.g. "merged.pdf"), treat it as blank
-        # - else generate a friendly default based on the first doc and count (Option A)
-        if desired_name.strip() and not _is_placeholder_merge_name(desired_name):
-            safe_base = _sanitize_filename_component(desired_name.strip(), fallback="Merged Document", max_len=120)
-            file_name = safe_base if safe_base.lower().endswith('.pdf') else f"{safe_base}.pdf"
-        else:
-            file_name = _default_merged_filename(docs[0][0].file_name, len(docs))
+            with temp_pdf_file() as merged_temp:
+                with open(merged_temp, 'wb') as fout:
+                    writer.write(fout)
+                file_size = merged_temp.stat().st_size
+                try:
+                    new_doc = create_draft_document_from_local_pdf(
+                        owner=request.user,
+                        file_name=file_name,
+                        local_path=merged_temp,
+                        file_size=file_size,
+                    )
+                except Exception as exc:
+                    logger.exception("Error creating merged document for user %s", request.user.id)
+                    return Response({
+                        'status': 'error',
+                        'message': f'Failed to save merged document: {exc}'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            for path in temp_paths_to_cleanup:
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
 
-        # Perform merge preserving order
-        writer = PdfWriter()
-        try:
-            for _, abs_path in docs:
-                reader = PdfReader(abs_path)
-                for page in reader.pages:
-                    writer.add_page(page)
-        except Exception as e:
-            return Response({
-                'status': 'error',
-                'message': f'Failed to read/merge PDFs: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Write merged PDF to MEDIA_ROOT/merged_docs
-        merged_dir = os.path.join(str(settings.MEDIA_ROOT), 'merged_docs')
-        os.makedirs(merged_dir, exist_ok=True)
-        merged_id = uuid.uuid4()
-        # Prepend uuid to ensure uniqueness on disk
-        disk_name = f"{merged_id}_{file_name}"
-        abs_out = os.path.join(merged_dir, disk_name)
-        try:
-            with open(abs_out, 'wb') as fout:
-                writer.write(fout)
-        except Exception as e:
-            return Response({
-                'status': 'error',
-                'message': f'Failed to write merged PDF: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Build file_url relative to MEDIA_URL
-        rel_path = os.path.relpath(abs_out, str(settings.MEDIA_ROOT))
-        file_url = f"{settings.MEDIA_URL}{rel_path}"
-
-        # Create Document record
-        try:
-            file_size = os.path.getsize(abs_out)
-            new_doc = Document.objects.create(
-                owner=request.user,
-                file_url=file_url,
-                file_name=file_name,
-                file_size=file_size,
-                status='draft'
-            )
-        except Exception as e:
-            # Cleanup file if DB create fails
-            try:
-                if os.path.exists(abs_out):
-                    os.remove(abs_out)
-            except Exception:
-                pass
-            return Response({
-                'status': 'error',
-                'message': f'Failed to create merged Document record: {e}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Audit log
         try:
             from audit.utils import log_action
             joined_ids = ", ".join([str(i) for i in document_ids])

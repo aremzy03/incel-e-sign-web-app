@@ -178,6 +178,13 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 AWS_STORAGE_BUCKET_NAME=your-bucket-name
 AWS_S3_REGION_NAME=us-east-1
 AWS_S3_CUSTOM_DOMAIN=your-cdn-domain.com  # Optional CDN domain
+AWS_LOCATION=incel-esign-app  # S3 key prefix for staging/signing/completed PDFs
+
+# Async signing pipeline
+SIGNING_CUTOVER_AT=2026-08-01T02:00:00+01:00  # ISO 8601; envelopes pending before this are frozen at sign (409)
+MAX_MERGE_DOCUMENTS=10
+GUNICORN_TIMEOUT=120
+CELERY_WORKER_CONCURRENCY=4  # CapRover signing worker; queues: notifications,signing
 
 # Email Configuration
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
@@ -813,6 +820,36 @@ curl -X POST http://localhost:8000/api/signatures/ENVELOPE_ID/sign/ \
   -d '{}'
 ```
 
+**Response (202 Accepted):** Signing is asynchronous. Poll the job until `status` is `succeeded` or `failed`.
+
+```json
+{
+  "status": "success",
+  "message": "Signing job queued",
+  "data": {
+    "job_id": "uuid",
+    "status": "queued",
+    "envelope_id": "uuid"
+  }
+}
+```
+
+Poll job status:
+
+```bash
+curl -X GET http://localhost:8000/api/signatures/jobs/JOB_ID/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN"
+```
+
+Retry a failed job (signer only):
+
+```bash
+curl -X POST http://localhost:8000/api/signatures/jobs/JOB_ID/retry/ \
+  -H "Authorization: Bearer SIGNER_ACCESS_TOKEN"
+```
+
+**Cutover guard:** Envelopes that were `pending` before `SIGNING_CUTOVER_AT` return **409** with message *"Envelope frozen for system upgrade. Ask the creator to resend."*
+
 ## 📚 Features & API Overview
 
 ### Authentication Endpoints
@@ -947,8 +984,10 @@ Notes:
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| `POST` | `/api/signatures/self-sign/` | Self-sign document(s) in one call (no recipients) | ✅ |
-| `POST` | `/api/signatures/{envelope_id}/sign/` | Sign document (sequential) | ✅ |
+| `POST` | `/api/signatures/self-sign/` | Self-sign document(s) in one call (returns **202** + `job_id`) | ✅ |
+| `POST` | `/api/signatures/{envelope_id}/sign/` | Sign document (sequential, returns **202** + `job_id`) | ✅ |
+| `GET` | `/api/signatures/jobs/{id}/` | Poll async signing job status | ✅ |
+| `POST` | `/api/signatures/jobs/{id}/retry/` | Retry a failed signing job (signer only) | ✅ |
 | `POST` | `/api/signatures/{envelope_id}/decline/` | Decline to sign | ✅ |
 
 ### Fields (Non-signature Annotations)

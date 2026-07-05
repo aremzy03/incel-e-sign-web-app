@@ -57,12 +57,22 @@ def signer2():
 
 @pytest.fixture
 def document(user):
-    """Create a test document."""
+    """Create a test document with a real PDF on disk."""
+    import os
+
+    from django.conf import settings as django_settings
+
+    media_root = django_settings.MEDIA_ROOT
+    os.makedirs(media_root, exist_ok=True)
+    pdf_path = os.path.join(str(media_root), "test.pdf")
+    with open(pdf_path, "wb") as pdf_file:
+        pdf_file.write(b"%PDF-1.4\n%EOF")
+
     return Document.objects.create(
         owner=user,
         file_name="test.pdf",
         file_url="/media/test.pdf",
-        file_size=1024
+        file_size=1024,
     )
 
 
@@ -411,7 +421,7 @@ class TestNotificationTriggers:
             data={'signature_image': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='}
         )
         
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         
         # Check notification was sent to next signer with envelope name
         expected_message = f"It is now your turn to sign the document '{envelope.name}'."
@@ -437,7 +447,7 @@ class TestNotificationTriggers:
             data={'signature_image': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='}
         )
         
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         
         # Check notification was sent to creator with envelope name
         expected_message = f"Your envelope for '{envelope.name}' has been fully signed and completed."

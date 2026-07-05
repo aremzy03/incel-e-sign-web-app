@@ -413,6 +413,22 @@ MEDIA_ROOT = media_root_path
 # Temporary local storage subdirectories (used regardless of USE_S3).
 TEMP_UPLOAD_SUBDIR = config('TEMP_UPLOAD_SUBDIR', default='temp_uploads')
 TEMP_SIGNED_SUBDIR = config('TEMP_SIGNED_SUBDIR', default='signed_docs')
+STAGING_KEY_PREFIX = config('STAGING_KEY_PREFIX', default='staging')
+MAX_MERGE_DOCUMENTS = config('MAX_MERGE_DOCUMENTS', default=10, cast=int)
+
+# Signing architecture cutover (ISO 8601, timezone-aware). Envelopes created before this
+# datetime cannot be signed if still pending after deploy.
+_signing_cutover_raw = config('SIGNING_CUTOVER_AT', default='')
+SIGNING_CUTOVER_AT = None
+if _signing_cutover_raw:
+    from django.utils.dateparse import parse_datetime
+    from django.utils import timezone as dj_timezone
+
+    _parsed_cutover = parse_datetime(_signing_cutover_raw)
+    if _parsed_cutover is not None:
+        if dj_timezone.is_naive(_parsed_cutover):
+            _parsed_cutover = dj_timezone.make_aware(_parsed_cutover, dj_timezone.get_current_timezone())
+        SIGNING_CUTOVER_AT = _parsed_cutover
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -428,13 +444,13 @@ if USE_S3:
     # for backwards compatibility and third-party apps that still read it.
     STORAGES = {
         "default": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "documents.storage.TimezoneAwareS3Boto3Storage",
         },
         "staticfiles": {
             "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
         },
     }
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    DEFAULT_FILE_STORAGE = 'documents.storage.TimezoneAwareS3Boto3Storage'
     STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
 
     # AWS S3 configuration
@@ -442,15 +458,31 @@ if USE_S3:
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
-    AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN', default=None)
+    _aws_s3_custom_domain = config('AWS_S3_CUSTOM_DOMAIN', default=None)
+    AWS_S3_CUSTOM_DOMAIN = (
+        _aws_s3_custom_domain.strip() if isinstance(_aws_s3_custom_domain, str) and _aws_s3_custom_domain.strip() else None
+    )
+    # CloudFront signed URLs (required for private bucket + direct browser PDF access).
+    # Set AWS_CLOUDFRONT_KEY_ID to the CloudFront key pair ID (APKA...).
+    # Provide the PEM private key via AWS_CLOUDFRONT_KEY or AWS_CLOUDFRONT_KEY_PATH.
+    AWS_CLOUDFRONT_KEY_ID = config('AWS_CLOUDFRONT_KEY_ID', default=None)
+    _cloudfront_key_path = config('AWS_CLOUDFRONT_KEY_PATH', default=None)
+    _cloudfront_key_inline = config('AWS_CLOUDFRONT_KEY', default=None)
+    if _cloudfront_key_path:
+        AWS_CLOUDFRONT_KEY = Path(_cloudfront_key_path).read_text(encoding='utf-8')
+    elif _cloudfront_key_inline:
+        AWS_CLOUDFRONT_KEY = _cloudfront_key_inline.replace('\\n', '\n')
+    else:
+        AWS_CLOUDFRONT_KEY = None
     # Prefix all stored objects under this path inside the bucket
-    AWS_LOCATION = "incel-esign-app"
+    AWS_LOCATION = config('AWS_LOCATION', default='incel-esign-app')
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
     AWS_DEFAULT_ACL = 'private'
     AWS_S3_FILE_OVERWRITE = False
     AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int)
 else:
     # Development: use local file system storage (default)
     STORAGES = {
@@ -467,6 +499,11 @@ else:
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
+
+# Boto3 S3 client timeouts for Celery signing workers (download/upload helpers).
+AWS_S3_CONNECT_TIMEOUT = config('AWS_S3_CONNECT_TIMEOUT', default=10, cast=int)
+AWS_S3_READ_TIMEOUT = config('AWS_S3_READ_TIMEOUT', default=60, cast=int)
+AWS_S3_MAX_ATTEMPTS = config('AWS_S3_MAX_ATTEMPTS', default=3, cast=int)
 
 
 # Custom user model
@@ -497,7 +534,12 @@ CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localho
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_IMPORTS = ('notifications.tasks',)
+CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks',)
+
+CELERY_TASK_ROUTES = {
+    'signatures.tasks.*': {'queue': 'signing'},
+    'notifications.tasks.*': {'queue': 'notifications'},
+}
 
 # Celery task settings
 CELERY_TASK_ACKS_LATE = True

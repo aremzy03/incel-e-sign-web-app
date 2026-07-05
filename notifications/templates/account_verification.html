@@ -1,13 +1,16 @@
 {% extends 'base_email.html' %}
 
 {% block content %}
-    <h2>Account Verification</h2>
-    <p>Dear {{ user_name }},</p>
-    <p>Thank you for registering with {{ brand_name|default:"Incel E-Sign" }}! To complete your registration, please verify your email address by clicking the button below:</p>
-    <div class="button-container">
-        <a href="{{ verification_url }}" class="button">Verify Account</a>
+    <span class="badge badge-info">Verify email</span>
+    <h2 style="margin-top:12px;">Confirm your email</h2>
+
+    <p style="margin-top:8px;">Hi {{ user_name }},</p>
+    <p>Thanks for signing up. Please confirm your email address to activate your account.</p>
+
+    <div style="text-align:center;margin-top:20px;">
+        <a href="{{ verification_url }}" class="button">Verify account</a>
     </div>
-    <p>If you did not create an account with us, please ignore this email.</p>
-    <p>Sincerely,</p>
-    <p>The {{ brand_name|default:"Incel E-Sign" }} Team</p>
+
+    <p class="muted" style="margin-top:16px;">If you didn’t create an account, you can safely ignore this email.</p>
+    <p style="margin-top:20px;">The {{ brand_name|default:"Incel E-Sign" }} Team</p>
 {% endblock %}
