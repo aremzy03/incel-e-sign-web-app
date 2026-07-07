@@ -244,7 +244,23 @@ def process_signing_job(self, job_id: str) -> None:
     """Orchestrate parallel per-document signing for a job."""
     from django.conf import settings as django_settings
 
-    job = SigningJob.objects.select_related("envelope", "signer").get(pk=job_id)
+    try:
+        job = SigningJob.objects.select_related("envelope", "signer").get(pk=job_id)
+    except SigningJob.DoesNotExist as exc:
+        # Defense-in-depth against the enqueue/commit race: a fast worker can
+        # consume the message before the web request's transaction has committed
+        # the SigningJob row (or before it is visible on a read replica). Retry
+        # with a short backoff before giving up.
+        eager = getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False)
+        if not eager and self.request.retries < self.max_retries:
+            LOGGER.warning(
+                "process_signing_job could not find job yet, retrying job_id=%s attempt=%s",
+                job_id,
+                self.request.retries + 1,
+            )
+            raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+        raise
+
     job.status = "processing"
     job.attempt_count += 1
     job.save(update_fields=["status", "attempt_count", "updated_at"])
@@ -292,8 +308,37 @@ def process_signing_job(self, job_id: str) -> None:
 
 
 def enqueue_signing_job(job: SigningJob) -> str:
-    """Enqueue process_signing_job and persist celery task id."""
-    async_result = process_signing_job.apply_async(args=[str(job.id)], queue="signing")
-    job.celery_task_id = async_result.id or ""
+    """Enqueue process_signing_job after the surrounding DB transaction commits.
+
+    The Celery message is published via ``transaction.on_commit`` so a worker can
+    never consume the task before the ``SigningJob`` row is committed. Publishing
+    inline (the previous behaviour) allowed a fast worker to run
+    ``SigningJob.objects.get(pk=job_id)`` before the enqueueing transaction
+    committed, raising ``SigningJob.DoesNotExist``.
+
+    The task id is generated up front so callers still receive it synchronously
+    and it is persisted before the message is published.
+    """
+    from uuid import uuid4
+
+    from django.conf import settings as django_settings
+    from django.db import transaction
+
+    task_id = str(uuid4())
+    job.celery_task_id = task_id
     job.save(update_fields=["celery_task_id", "updated_at"])
-    return async_result.id
+
+    def _publish() -> None:
+        process_signing_job.apply_async(
+            args=[str(job.id)], task_id=task_id, queue="signing"
+        )
+
+    if getattr(django_settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        # In eager mode (tests) there is no separate worker/connection, so there
+        # is no cross-process race. Run inline to preserve synchronous behaviour;
+        # on_commit callbacks would not fire inside a rolled-back test transaction.
+        _publish()
+    else:
+        transaction.on_commit(_publish)
+
+    return task_id
