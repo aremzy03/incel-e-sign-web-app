@@ -75,12 +75,19 @@ class EnvelopeCreateView(APIView):
             
             # Log the envelope creation action
             from audit.utils import log_action
+            from integrations.services.jwt_claims import enrich_message_with_client_id
+
+            create_message = (
+                f"User {request.user.full_name or request.user.username} "
+                f"created envelope '{envelope.name}' with "
+                f"{envelope.envelopedocument_set.count()} documents."
+            )
             log_action(
-                request.user, 
-                "CREATE_ENVELOPE", 
-                envelope, 
-                f"User {request.user.full_name or request.user.username} created envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
-                request=request
+                request.user,
+                "CREATE_ENVELOPE",
+                envelope,
+                enrich_message_with_client_id(create_message, request),
+                request=request,
             )
             
             # Return envelope details using the detail serializer
@@ -175,12 +182,19 @@ class EnvelopeSendView(APIView):
             
         # Log the envelope send action
         from audit.utils import log_action
+        from integrations.services.jwt_claims import enrich_message_with_client_id
+
+        send_message = (
+            f"User {request.user.full_name or request.user.username} "
+            f"sent envelope '{envelope.name}' with "
+            f"{envelope.envelopedocument_set.count()} documents."
+        )
         log_action(
-            request.user, 
-            "SEND_ENVELOPE", 
-            envelope, 
-            f"User {request.user.full_name or request.user.username} sent envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
-            request=request
+            request.user,
+            "SEND_ENVELOPE",
+            envelope,
+            enrich_message_with_client_id(send_message, request),
+            request=request,
         )
         
         # Reset PDF/signature workflow state and rebuild signature rows.

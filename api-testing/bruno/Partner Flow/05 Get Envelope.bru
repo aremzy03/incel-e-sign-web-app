@@ -1,0 +1,29 @@
+meta {
+  name: 05 Get Envelope
+  type: http
+  seq: 5
+  tags: [
+    partner-flow
+    smoke
+  ]
+}
+
+get {
+  url: {{baseUrl}}/api/envelopes/{{envelopeId}}/
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+headers {
+  Accept: application/json
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq success
+  res.body.data.id: eq {{envelopeId}}
+  res.body.data.status: eq pending
+}
