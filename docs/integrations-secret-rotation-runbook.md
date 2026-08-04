@@ -47,6 +47,15 @@ emails (JIT create may invent users). Treat secrets like production passwords.
 | `client_secret` | Secret store only; never commit |
 | Token URL | `POST /api/v1/integrations/token/` over HTTPS |
 | Access lifetime | Integration access JWTs use `INTEGRATION_ACCESS_TOKEN_LIFETIME` (default 30m) |
+| Webhook signing secret | Shown once when creating/rotating an **Integration webhook endpoint** in admin; partner verifies `X-ESign-Signature`. Encrypted at rest in e-sign; never log |
+
+## Webhook signing secrets
+
+1. Django admin → **Integration webhook endpoints** → Add (pick Integration, HTTPS URL, optional `enabled_events`).
+2. Copy **signing_secret** from the one-time admin message; deliver out-of-band to the partner.
+3. To rotate: select exactly one endpoint → action **Rotate webhook signing secret**; update partner verification secret immediately.
+4. Deactivate an endpoint to stop deliveries without deleting history.
+5. Events: `envelope.sent`, `envelope.completed` (only for envelopes originated via that integration’s JWT).
 
 ## IP allowlist notes
 

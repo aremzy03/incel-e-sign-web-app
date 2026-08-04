@@ -30,10 +30,12 @@ Partner app (holds client_secret)
     │      { client_id, client_secret, email, full_name? }
     │    ← access, refresh, user
     │
+    │  Three-step (or composite in §4.7):
     ├─2─ POST /api/documents/upload/          Bearer access
-    ├─3─ POST /api/envelopes/create/          Bearer access
+    ├─3─ POST /api/envelopes/create/          Bearer access (+ email signers OK)
     ├─4─ POST /api/envelopes/{id}/send/       Bearer access
     └─5─ GET  /api/envelopes/{id}/            Bearer access (poll)
+         or wait for webhooks (§4.8)
 ```
 
 Base URL examples:
@@ -88,7 +90,7 @@ Optional request field. When set, e-sign upserts `IntegrationUserLink` keyed by 
 
 ### 2.4 Document + envelope pipeline (reused)
 
-After exchange, use existing APIs with the user JWT. Ownership, audit, notifications, and UI list rules are unchanged.
+After exchange, use existing APIs with the user JWT. Ownership, audit, notifications, and UI list rules are unchanged. Signers may be specified by **UUID** and/or **email** (find-or-invite). Optional composite send and outbound webhooks are described below.
 
 ### 2.5 Audit enrichment
 
@@ -98,6 +100,16 @@ After exchange, use existing APIs with the user JWT. Ownership, audit, notificat
 ### 2.6 IP allowlist (token exchange)
 
 If `allowed_cidrs` is non-empty, requests from IPs outside the list receive **403**. Ensure reverse proxies set client IP correctly (`X-Forwarded-For` trust configuration).
+
+### 2.7 Idempotency-Key
+
+Send header `Idempotency-Key: <opaque-string>` on:
+
+- `POST /api/envelopes/create/`
+- `POST /api/envelopes/{id}/send/`
+- `POST /api/v1/integrations/envelopes/send/`
+
+Same key + same authenticated user + same endpoint scope → original success response is replayed without duplicate side effects. Failures are not stored. Different keys create new work.
 
 ---
 
@@ -255,7 +267,9 @@ Document **owner** is the JWT user.
 | Auth | Bearer access JWT |
 | Content-Type | `application/json` |
 
-Documents in `document_ids` must be **owned by** `request.user`. Each `signer_id` must be an **existing** e-sign user UUID (no email-only signers in MVP).
+Documents in `document_ids` must be **owned by** `request.user`. Each `signing_order` entry needs `order` plus **`signer_id` (UUID) and/or `email`**. Unknown emails are find-or-invited: a `CustomUser` is created with an unusable password, an invite email is sent, and a Contact may be upserted for the creator. Stored `signing_order` always uses resolved UUID `signer_id` values.
+
+Optional header: `Idempotency-Key`.
 
 #### Request body
 
@@ -264,20 +278,34 @@ Documents in `document_ids` must be **owned by** `request.user`. Each `signer_id
 | `document_ids` | uuid[] | yes | At least one; owned by the JWT user |
 | `name` | string | no | Envelope title |
 | `description` | string | no | Optional notes |
-| `signing_order` | object[] | yes* | `[{ "signer_id": "<uuid>", "order": 1 }, ...]` |
-| `documents_with_positions` | object[] | no | Optional per-document signature placements |
+| `signing_order` | object[] | yes* | See shapes below |
+| `documents_with_positions` | object[] | no | Optional placements (`signer_id` UUIDs matching resolved order) |
 
 \*Empty `signing_order` may be allowed by serializer rules in some flows; for partner send, include at least one signer.
+
+**`signing_order` entry shapes (backward compatible):**
+
+```json
+{ "signer_id": "<uuid>", "order": 1 }
+```
+
+```json
+{ "email": "signer@example.com", "order": 1, "full_name": "Optional Name" }
+```
+
+```json
+{ "signer_id": "<uuid>", "email": "signer@example.com", "order": 1 }
+```
+
+(When both `signer_id` and `email` are present, they must refer to the same user.)
 
 ```json
 {
   "name": "Offer letter — Ada Lovelace",
   "document_ids": ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
   "signing_order": [
-    {
-      "signer_id": "b7bd2f39-b697-4089-bf6e-e29794ed158d",
-      "order": 1
-    }
+    { "signer_id": "b7bd2f39-b697-4089-bf6e-e29794ed158d", "order": 1 },
+    { "email": "new.hire@example.com", "order": 2, "full_name": "New Hire" }
   ]
 }
 ```
@@ -316,8 +344,9 @@ Documents in `document_ids` must be **owned by** `request.user`. Each `signer_id
 |--|--|
 | Auth | Bearer access JWT |
 | Body | Empty |
+| Header | Optional `Idempotency-Key` |
 
-Only the **creator** can send. Transitions `draft` / `rejected` → **`pending`**, resets signing workflow, notifies the first signer.
+Only the **creator** can send. Transitions `draft` / `rejected` → **`pending`**, resets signing workflow, notifies the first signer. When the JWT carries `client_id`, an integration origin is recorded and `envelope.sent` webhooks may fire.
 
 #### Success — `200 OK`
 
@@ -379,26 +408,123 @@ Authenticated as the same user (integration access token **or** normal UI login)
 
 ---
 
+### 4.7 Composite create-and-send
+
+**`POST /api/v1/integrations/envelopes/send/`**
+
+| | |
+|--|--|
+| Auth | **User JWT** (`Authorization: Bearer <access>`) — **not** client credentials |
+| Content-Type | `multipart/form-data` **or** `application/json` |
+| Header | Optional `Idempotency-Key` |
+
+Orchestrates upload (optional) + create + send using the same `EnvelopeCreateSerializer` and shared `send_envelope` service as the three-step flow (identical audit / notifications / ownership).
+
+#### Multipart
+
+| Field | Notes |
+|-------|-------|
+| `file` | PDF/Word upload (same rules as document upload) |
+| `name` / `description` | Optional |
+| `signing_order` | JSON string of the signing_order array (email and/or signer_id) |
+| `documents_with_positions` / `fields` | Optional JSON strings |
+
+#### JSON (skip upload)
+
+| Field | Notes |
+|-------|-------|
+| `document_ids` | Required if no `file` — owned by JWT user |
+| `signing_order` | Array (email and/or signer_id) |
+| `name` / `description` / … | Same as create |
+
+#### Success — `201 Created`
+
+```json
+{
+  "status": "success",
+  "message": "Envelope created and sent successfully",
+  "data": {
+    "envelope_id": "<uuid>",
+    "document_ids": ["<uuid>"],
+    "status": "pending",
+    "envelope": { },
+    "uploaded_document": null
+  }
+}
+```
+
+(`uploaded_document` is set when a multipart `file` was provided.)
+
+#### Common errors
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Missing file/`document_ids`, validation failed |
+| `401` | Missing/invalid JWT |
+| `409` | Signing workflow in progress |
+
+---
+
+### 4.8 Outbound webhooks
+
+Staff register **Integration webhook endpoints** in Django admin (per Integration): URL, enabled events, signing secret (shown once; encrypted at rest).
+
+| Event | When |
+|-------|------|
+| `envelope.sent` | After successful send for an envelope originated via an integration JWT (`client_id`) |
+| `envelope.completed` | When that envelope reaches `completed` |
+
+**Delivery:** Celery POST JSON to the partner URL with retries/backoff.
+
+**Headers:**
+
+| Header | Value |
+|--------|-------|
+| `Content-Type` | `application/json` |
+| `X-ESign-Event` | e.g. `envelope.sent` |
+| `X-ESign-Delivery-Id` | Delivery UUID |
+| `X-ESign-Signature` | `t=<unix>,v1=<hmac-sha256-hex>` over `{t}.{body}` |
+
+Partners verify with the webhook signing secret from admin. Use **HTTPS** URLs in production. Never log signing secrets. Ops: rotate via admin action (secret shown once) — see [runbook](./integrations-secret-rotation-runbook.md).
+
+Example payload shape:
+
+```json
+{
+  "event": "envelope.sent",
+  "occurred_at": "2026-08-04T12:00:00+00:00",
+  "data": {
+    "envelope_id": "...",
+    "status": "pending",
+    "name": "...",
+    "creator_id": "...",
+    "document_ids": [],
+    "signing_order": []
+  }
+}
+```
+
+---
+
 ## 5. End-to-end implementation checklist
 
-1. **Ops:** Staff creates Integration in admin; store `client_id` / `client_secret` in partner secrets manager.  
+1. **Ops:** Staff creates Integration in admin; store `client_id` / `client_secret` in partner secrets manager. Optionally register webhook URL + store signing secret.  
 2. **Identity:** For each end user action, call token exchange with that user’s email (`full_name` if JIT).  
-3. **Upload** PDF/Word with the returned access token.  
-4. **Resolve signer UUIDs** in e-sign beforehand (search users API or pre-provisioned accounts).  
-5. **Create** envelope with `document_ids` + `signing_order`.  
-6. **Send** envelope; store `envelope_id` in the partner system.  
-7. **Poll** `GET /api/envelopes/{id}/` as needed (webhooks are out of MVP).  
-8. Prefer short-lived use of access tokens; re-exchange when expired (default ~30m for integration access).
+3. **Upload** PDF/Word with the returned access token, **or** use composite §4.7.  
+4. **Create** envelope with `document_ids` + `signing_order` (UUID and/or email). Prefer `Idempotency-Key`.  
+5. **Send** envelope (or rely on composite); store `envelope_id` in the partner system.  
+6. **Poll** `GET /api/envelopes/{id}/` and/or consume webhooks (`envelope.sent` / `envelope.completed`).  
+7. Prefer short-lived use of access tokens; re-exchange when expired (default ~30m for integration access).
 
 ---
 
 ## 6. Security notes
 
-- Treat `client_secret` like a production password (compromise ≈ mint sessions for asserted emails if JIT is on).  
+- Treat `client_secret` and webhook `signing_secret` like production passwords.  
 - Rotate/deactivate via admin when compromised ([runbook](./integrations-secret-rotation-runbook.md)).  
-- HTTPS in production.  
+- HTTPS in production (API and webhook URLs).  
 - Do not log secrets or full tokens.  
-- Signers must already exist as e-sign users (UUIDs) until find-or-invite ships.
+- Signer emails may invent invited users with unusable passwords — treat like JIT trust assumptions.
 
 ---
 
@@ -422,3 +548,5 @@ The companion OpenAPI 3.1 document describes these paths and schemas:
 [`docs/openapi/integrations-v1.yaml`](./openapi/integrations-v1.yaml)
 
 Import it into Swagger UI, Postman, or Bruno for contract-driven clients. Keep this guide and the YAML in sync when endpoints change.
+
+Public developer portal / self-serve registration is **not** available — staff admin only.

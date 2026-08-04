@@ -1,7 +1,8 @@
 """
 API views for first-party integrations.
 
-Exposes token exchange so trusted partner apps can obtain a user-scoped JWT.
+Exposes token exchange so trusted partner apps can obtain a user-scoped JWT,
+and composite envelope send orchestration for partners holding a user JWT.
 """
 
 from __future__ import annotations
@@ -22,6 +23,9 @@ from integrations.services.token_exchange import (
 )
 from integrations.services.users import UserInactiveError, UserNotFoundError
 from integrations.throttles import IntegrationTokenThrottle
+
+# Re-export composite view for urls import convenience.
+from integrations.views_envelopes import IntegrationEnvelopeSendView  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

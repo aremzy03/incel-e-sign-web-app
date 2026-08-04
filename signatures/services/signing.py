@@ -442,3 +442,15 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
 
         message = create_envelope_completed_notification(envelope)
         create_notification(str(envelope.creator.id), message)
+
+    # Outbound partner webhooks for integration-originated envelopes.
+    if envelope.status == "completed":
+        try:
+            from integrations.services.webhooks import dispatch_envelope_event
+
+            dispatch_envelope_event("envelope.completed", envelope)
+        except Exception:
+            LOGGER.exception(
+                "Failed to dispatch envelope.completed webhook for envelope %s",
+                envelope.id,
+            )

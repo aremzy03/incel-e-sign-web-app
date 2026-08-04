@@ -428,7 +428,7 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('signing_order', response.data['data'])
-        self.assertIn('must have both', response.data['data']['signing_order'][0])
+        self.assertIn('order', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signer_id_invalid_uuid_format(self):
         """Test creation fails if signer_id is not a valid UUID format."""
@@ -446,7 +446,7 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('signing_order', response.data['data'])
-        self.assertIn('valid UUID', response.data['data']['signing_order'][0])
+        self.assertIn('Users not found', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_order_not_positive_integer(self):
         """Test creation fails if order is not a positive integer."""

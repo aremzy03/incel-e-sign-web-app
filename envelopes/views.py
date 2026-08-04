@@ -49,8 +49,9 @@ class EnvelopeCreateView(APIView):
     
     Endpoint: POST /envelopes/create/
     Requires authentication.
-    Accepts payload: {document_id, signing_order}
-    Returns created envelope details.
+    Accepts payload: {document_ids, signing_order} where signing_order entries
+    may use signer_id and/or email (find-or-invite).
+    Supports Idempotency-Key for safe retries.
     """
     
     permission_classes = [IsAuthenticated]
@@ -60,11 +61,28 @@ class EnvelopeCreateView(APIView):
         Create a new envelope for a document.
         
         Args:
-            request: HTTP request containing document_id and signing_order
+            request: HTTP request containing document_ids and signing_order
             
         Returns:
             Response with created envelope details or error message
         """
+        from integrations.services.idempotency import (
+            SCOPE_ENVELOPE_CREATE,
+            get_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+
+        idem_key = get_idempotency_key(request)
+        if idem_key:
+            cached = lookup_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=SCOPE_ENVELOPE_CREATE,
+            )
+            if cached is not None:
+                return cached
+
         serializer = EnvelopeCreateSerializer(
             data=request.data,
             context={'request': request}
@@ -75,6 +93,9 @@ class EnvelopeCreateView(APIView):
             
             # Log the envelope creation action
             from audit.utils import log_action
+            from integrations.services.envelope_origin import (
+                record_envelope_integration_origin,
+            )
             from integrations.services.jwt_claims import enrich_message_with_client_id
 
             create_message = (
@@ -89,15 +110,25 @@ class EnvelopeCreateView(APIView):
                 enrich_message_with_client_id(create_message, request),
                 request=request,
             )
+            record_envelope_integration_origin(envelope, request=request)
             
             # Return envelope details using the detail serializer
             detail_serializer = EnvelopeDetailSerializer(envelope)
-            
-            return Response({
+            body = {
                 "status": "success",
                 "message": "Envelope created successfully",
-                "data": detail_serializer.data
-            }, status=status.HTTP_201_CREATED)
+                "data": detail_serializer.data,
+            }
+            if idem_key:
+                store_idempotent_response(
+                    user=request.user,
+                    key=idem_key,
+                    scope=SCOPE_ENVELOPE_CREATE,
+                    response_status=status.HTTP_201_CREATED,
+                    response_body=body,
+                    envelope_id=envelope.id,
+                )
+            return Response(body, status=status.HTTP_201_CREATED)
         
         return Response({
             "status": "error",
@@ -114,6 +145,7 @@ class EnvelopeSendView(APIView):
     Requires authentication.
     Only the envelope creator can send.
     Changes status from "draft" to "pending".
+    Supports Idempotency-Key for safe retries.
     """
     
     permission_classes = [IsAuthenticated]
@@ -129,120 +161,59 @@ class EnvelopeSendView(APIView):
         Returns:
             Response with updated envelope details or error message
         """
+        from envelopes.services.send import EnvelopeSendError, send_envelope
+        from integrations.services.idempotency import (
+            SCOPE_ENVELOPE_SEND,
+            get_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+        from signatures.services.reset_workflow import SigningWorkflowInProgressError
+
+        idem_key = get_idempotency_key(request)
+        # Scope send idempotency per envelope so the same key can be reused
+        # across different envelopes if needed; key+scope still unique per user.
+        send_scope = f"{SCOPE_ENVELOPE_SEND}:{pk}"
+        if idem_key:
+            cached = lookup_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=send_scope,
+            )
+            if cached is not None:
+                return cached
+
         envelope = get_object_or_404(Envelope, pk=pk)
 
-        # Block sends while async signing is in-flight for this envelope.
-        from signatures.services.reset_workflow import (
-            SigningWorkflowInProgressError,
-            assert_no_inflight_signing_jobs,
-            reset_signing_workflow,
-        )
         try:
-            assert_no_inflight_signing_jobs(envelope)
+            envelope = send_envelope(envelope, user=request.user, request=request)
         except SigningWorkflowInProgressError as exc:
             return Response({
                 "status": "error",
                 "message": str(exc),
             }, status=status.HTTP_409_CONFLICT)
-        
-        # Check if user is the creator
-        if envelope.creator != request.user:
+        except EnvelopeSendError as exc:
             return Response({
                 "status": "error",
-                "message": "You can only send envelopes you created."
-            }, status=status.HTTP_403_FORBIDDEN)
+                "message": exc.message,
+            }, status=exc.status_code)
 
-        if envelope.is_self_sign:
-            return Response({
-                "status": "error",
-                "message": "Self-signed envelopes cannot be sent to recipients."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check if envelope is in draft or rejected status
-        if envelope.status not in ["draft", "rejected"]:
-            return Response({
-                "status": "error",
-                "message": f"Only draft or rejected envelopes can be sent. Current status: {envelope.status}"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # If the envelope was rejected, reset it to draft before sending
-        if envelope.status == "rejected":
-            envelope.status = "draft"
-            envelope.save()
-
-        # Update envelope status to pending
-        envelope.status = "pending"
-        envelope.save()
-
-        # Update the status of all documents in this envelope to 'sent'
-        for envelope_document in envelope.envelopedocument_set.all():
-            document = envelope_document.document
-            document.status = "sent"
-            document.save()
-            
-        # Log the envelope send action
-        from audit.utils import log_action
-        from integrations.services.jwt_claims import enrich_message_with_client_id
-
-        send_message = (
-            f"User {request.user.full_name or request.user.username} "
-            f"sent envelope '{envelope.name}' with "
-            f"{envelope.envelopedocument_set.count()} documents."
-        )
-        log_action(
-            request.user,
-            "SEND_ENVELOPE",
-            envelope,
-            enrich_message_with_client_id(send_message, request),
-            request=request,
-        )
-        
-        # Reset PDF/signature workflow state and rebuild signature rows.
-        # This guarantees current_signer starts at the first signer after resend.
-        reset_signing_workflow(envelope)
-
-        from django.contrib.auth import get_user_model
-        from notifications.utils import create_notification, create_envelope_sent_notification
-        from notifications.tasks import send_envelope_assigned_email_task
-        
-        User = get_user_model()
-        
-        # Notify first signer
-        if envelope.signing_order:
-            first_signer_id = envelope.signing_order[0]['signer_id']
-            try:
-                first_signer = User.objects.get(id=first_signer_id)
-                message = create_envelope_sent_notification(envelope)
-                # utils.create_notification proxies to Celery task; no need to call .delay here
-                create_notification(str(first_signer.id), message)
-                # Send assignment email to first signer
-                try:
-                    recipient_email = getattr(first_signer, 'email', None)
-                    if recipient_email:
-                        send_envelope_assigned_email_task.delay(
-                            recipient_email,
-                            request.user.full_name or request.user.username,
-                            envelope.name,
-                            str(envelope.id) # Pass envelope ID instead of URL
-                        )
-                except Exception as e:
-                    # Log email sending error but don't block the main process
-                    print(f"Error sending envelope assigned email: {e}")
-                    # TODO: Add proper logging here. (AR 2025-10-17)
-            except User.DoesNotExist:
-                # This case should ideally not happen if signing_order is well-formed
-                pass
-        
-        # Signature rows are rebuilt by reset_signing_workflow; nothing else to do here.
-        
-        # Return updated envelope details
         detail_serializer = EnvelopeDetailSerializer(envelope)
-        
-        return Response({
+        body = {
             "status": "success",
             "message": "Envelope sent successfully",
-            "data": detail_serializer.data
-        }, status=status.HTTP_200_OK)
+            "data": detail_serializer.data,
+        }
+        if idem_key:
+            store_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=send_scope,
+                response_status=status.HTTP_200_OK,
+                response_body=body,
+                envelope_id=envelope.id,
+            )
+        return Response(body, status=status.HTTP_200_OK)
 
 
 class EnvelopeRejectView(APIView):

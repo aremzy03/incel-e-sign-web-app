@@ -25,12 +25,16 @@ This document is the architecture and implementation map for that feature.
 
 ### Non-Goals (MVP)
 
-- Public third-party developer portal / self-serve app registration.
+- Public third-party developer portal / self-serve app registration (**still deferred** after Phase 4).
 - Per-user personal API keys.
 - OAuth2 authorization-code “Connect e-sign” for untrusted partners.
-- Outbound webhooks (follow-up).
-- Guest / email-only signers that are not e-sign users (follow-up: find-or-invite).
 - Parallel “integration envelope” domain model.
+
+### Delivered after MVP (Phase 4)
+
+- Outbound webhooks (`envelope.sent`, `envelope.completed`) with HMAC + delivery logs.
+- Email find-or-invite signers (backward compatible with `signer_id` UUIDs).
+- Composite create-and-send + `Idempotency-Key` on create/send/composite.
 
 ---
 
@@ -249,11 +253,13 @@ After exchange, partner uses existing endpoints with `Authorization: Bearer <acc
 3. `POST /api/envelopes/{id}/send/`
 4. `GET /api/envelopes/{id}/` (status polling)
 
-Signers in `signing_order` remain **existing user UUIDs** until a find-or-invite enhancement ships.
+Signers in `signing_order` may use existing user UUIDs **or** email (find-or-invite creates `CustomUser` + invite email when unknown).
 
-### 7.3 Optional composite endpoint (phase 2)
 
-`POST /api/v1/integrations/envelopes/send/` — multipart/json orchestration of upload + create + send in one call. Must call the same internal create/send services (or serializers) to keep audit/notifications identical. Not required for MVP if partners can do three calls.
+### 7.3 Composite endpoint (Phase 4)
+
+`POST /api/v1/integrations/envelopes/send/` — multipart/json orchestration of upload + create + send in one call. Calls the same `EnvelopeCreateSerializer` and shared `send_envelope` service so audit/notifications stay identical. Auth: **user JWT** (not client credentials). Supports `Idempotency-Key`.
+
 
 ---
 
@@ -456,13 +462,14 @@ Do **not** fork envelope create/send into this app for MVP; call existing views 
 - [x] Secret rotation runbook
 - [x] Shorter integration access token lifetime (optional)
 
-### Phase 4 — Follow-ups (out of MVP)
+### Phase 4 — Follow-ups (completed; portal deferred)
 
-- [ ] Email-based signer resolution / find-or-invite
-- [ ] Composite create-and-send endpoint
-- [ ] Outbound webhooks (`envelope.sent`, `envelope.completed`)
-- [ ] Idempotency-Key on create/send
-- [ ] Public developer portal (only if third parties appear)
+- [x] Email-based signer resolution / find-or-invite
+- [x] Composite create-and-send endpoint
+- [x] Outbound webhooks (`envelope.sent`, `envelope.completed`)
+- [x] Idempotency-Key on create/send
+- [ ] Public developer portal (only if third parties appear) — **deferred**; admin registration remains the only path
+
 
 ---
 
@@ -552,14 +559,14 @@ MVP is done when:
 | Staff-only via Django admin or also REST?          | **Admin first**; REST only if ops needs automation             |
 | Put `client_id` on access token, refresh, or both? | Both if SimpleJWT allows easy claim copy                       |
 | Require `full_name` on exchange?                   | Required when JIT create; optional if user exists              |
-| Signer provisioning from partner                   | Out of MVP; document that signers must already be e-sign users |
+| Signer provisioning from partner                   | **Phase 4:** email find-or-invite on envelope create; UUID still supported |
 
 
 ---
 
 ## 21. Summary
 
-Implement a small `integrations` app whose only job is **admin-trusted client credentials → user JWT**. Reuse the existing document and envelope pipeline so ownership, audit, notifications, and UI visibility stay correct. Keep registration admin-only while the exchange endpoint can assert user identity. Expand later with links, webhooks, and email-based signers without changing the core “real user as creator” model.
+Implement a small `integrations` app whose core job is **admin-trusted client credentials → user JWT**. Reuse the existing document and envelope pipeline so ownership, audit, notifications, and UI visibility stay correct. Keep registration admin-only while the exchange endpoint can assert user identity. Phase 4 adds email find-or-invite signers, composite send, idempotency keys, and outbound webhooks **without** changing the core “real user as creator” model.
 
 ---
 
@@ -575,6 +582,8 @@ Implement a small `integrations` app whose only job is **admin-trusted client cr
 4. `POST /api/envelopes/{id}/send/` → status `pending`; first signer notified.
 5. Store `envelope_id`; optional poll `GET /api/envelopes/{id}/`.
 
-**Signer constraint:** Each `signer_id` in `signing_order` must be an existing e-sign `CustomUser` UUID (find-or-invite is out of MVP).
+**Signer constraint:** Each `signing_order` entry needs `order` plus `signer_id` (UUID) and/or `email` (find-or-invite). Stored order always uses resolved UUIDs.
+
+**Optional composite:** `POST /api/v1/integrations/envelopes/send/` (user JWT) uploads/creates/sends in one call. Prefer `Idempotency-Key` on create/send/composite. Outbound webhooks (`envelope.sent`, `envelope.completed`) are registered per Integration in admin.
 
 **UI parity:** The same user logging into e-sign sees the envelope under `GET /api/envelopes/` because `Envelope.creator` is that user.

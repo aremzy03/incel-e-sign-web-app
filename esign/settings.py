@@ -554,11 +554,12 @@ CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localho
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks',)
+CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks', 'integrations.tasks',)
 
 CELERY_TASK_ROUTES = {
     'signatures.tasks.*': {'queue': 'signing'},
     'notifications.tasks.*': {'queue': 'notifications'},
+    'integrations.tasks.*': {'queue': 'notifications'},
 }
 
 # Celery task settings
