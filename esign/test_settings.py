@@ -20,6 +20,30 @@ CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_BROKER_URL = "memory://"
 CELERY_RESULT_BACKEND = "cache+memory://"
 
+# Isolate test cache from shared Redis (production CACHES). Redis-backed
+# UserRateThrottle / AnonRateThrottle state otherwise bleeds across tests and
+# can surface as intermittent 401/429 / missing response `data` in full runs.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "esign-test-cache",
+    }
+}
+
+# Disable global throttles for the suite; keep rate map so scoped throttles
+# (auth / integration_token) remain configurable when a test opts into them.
+REST_FRAMEWORK = {
+    **REST_FRAMEWORK,
+    "DEFAULT_THROTTLE_CLASSES": [],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "10000/hour",
+        "user": "10000/hour",
+        "auth": "10000/minute",
+        "upload": "10000/hour",
+        "integration_token": "10000/minute",
+    },
+}
+
 # All test envelopes use the async signing pipeline
 from datetime import datetime, timezone as dt_timezone
 
