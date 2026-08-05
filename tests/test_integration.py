@@ -51,6 +51,10 @@ class ESignIntegrationTestCase(APITestCase):
     
     def setUp(self):
         """Set up test data and authentication."""
+        # Clear leftover client auth from other suite tests.
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+
         # Create test users
         self.creator = User.objects.create_user(
             email='creator@test.com',
@@ -87,7 +91,7 @@ class ESignIntegrationTestCase(APITestCase):
         self.signer1_token = str(RefreshToken.for_user(self.signer1).access_token)
         self.signer2_token = str(RefreshToken.for_user(self.signer2).access_token)
         self.admin_token = str(RefreshToken.for_user(self.admin_user).access_token)
-        
+
         # Test signature image (base64 encoded)
         self.test_signature_image = base64.b64encode(b"test signature data").decode('utf-8')
         
@@ -96,6 +100,16 @@ class ESignIntegrationTestCase(APITestCase):
         
         # Large test PDF content (>20MB)
         self.large_pdf_content = self.test_pdf_content * 1000000  # ~20MB+
+
+    def tearDown(self):
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+        super().tearDown()
+
+    def authenticate_as(self, user):
+        """Authenticate via force_authenticate to avoid suite JWT pollution."""
+        self.client.credentials()
+        self.client.force_authenticate(user=user)
 
 
 class HappyPathSigningFlowTest(ESignIntegrationTestCase):
@@ -119,7 +133,7 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         6. Verify completion and audit logs
         """
         # Step 1: Creator uploads document
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         test_file = SimpleUploadedFile(
             "test_document.pdf",
@@ -201,7 +215,7 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         self.assertIsNotNone(send_audit_log)
         
         # Step 4: Signer1 signs
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         sign_data = {
             'signature_image': f'data:image/png;base64,{self.test_signature_image}',
@@ -245,7 +259,7 @@ class HappyPathSigningFlowTest(ESignIntegrationTestCase):
         self.assertIsNotNone(sign1_audit_log)
         
         # Step 5: Signer2 signs
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         
         sign2_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope_id}),
@@ -311,7 +325,7 @@ class DeclineFlowTest(ESignIntegrationTestCase):
         3. Verify envelope status = 'rejected' and notifications
         """
         # Step 1: Creator uploads document
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         test_file = SimpleUploadedFile(
             "test_document.pdf",
@@ -351,7 +365,7 @@ class DeclineFlowTest(ESignIntegrationTestCase):
         self.assertEqual(send_response.status_code, status.HTTP_200_OK)
         
         # Step 4: Signer1 declines
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         decline_response = self.client.post(
             reverse('signatures:decline_signature', kwargs={'envelope_id': envelope_id})
@@ -398,7 +412,7 @@ class CreatorRejectEnvelopeTest(ESignIntegrationTestCase):
         3. Verify envelope status = 'rejected' and notifications
         """
         # Step 1: Creator uploads document
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         test_file = SimpleUploadedFile(
             "test_document.pdf",
@@ -478,7 +492,7 @@ class DocumentUploadEdgeCasesTest(ESignIntegrationTestCase):
         """
         Test uploading a file <= 20MB should be accepted.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         test_file = SimpleUploadedFile(
             "test_document.pdf",
@@ -500,7 +514,7 @@ class DocumentUploadEdgeCasesTest(ESignIntegrationTestCase):
         """
         Test uploading a file > 20MB should be rejected.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         # Create a file that exceeds 20MB
         large_file = SimpleUploadedFile(
@@ -522,7 +536,7 @@ class DocumentUploadEdgeCasesTest(ESignIntegrationTestCase):
         """
         Test uploading a non-PDF file should be rejected.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         # Create a non-PDF file
         invalid_file = SimpleUploadedFile(
@@ -559,7 +573,7 @@ class AuditLogImmutabilityTest(ESignIntegrationTestCase):
         )
         
         # Try to delete as regular user
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         delete_response = self.client.delete(
             reverse('audit:audit-log-detail', kwargs={'pk': audit_log.id})
@@ -582,7 +596,7 @@ class AuditLogImmutabilityTest(ESignIntegrationTestCase):
         )
         
         # Try to modify as regular user
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         modify_data = {'message': 'Modified message'}
         modify_response = self.client.patch(
@@ -598,7 +612,7 @@ class AuditLogImmutabilityTest(ESignIntegrationTestCase):
         """
         Test that regular users cannot access /audit/logs/ endpoint.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         list_response = self.client.get(reverse('audit:audit-log-list'))
         
@@ -627,7 +641,7 @@ class AuditLogImmutabilityTest(ESignIntegrationTestCase):
         )
         
         # Access as admin user
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.admin_token}')
+        self.authenticate_as(self.admin_user)
         
         list_response = self.client.get(reverse('audit:audit-log-list'))
         
@@ -683,6 +697,7 @@ class UserRegistrationAndAuthenticationTest(ESignIntegrationTestCase):
         
         # Test accessing protected endpoint with token
         access_token = login_response.data['data']['access']
+        self.client.force_authenticate(user=None)
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}')
         
         profile_response = self.client.get(reverse('auth-profile'))
@@ -700,7 +715,7 @@ class NotificationSystemTest(ESignIntegrationTestCase):
         Test that notifications are properly created during the signing workflow.
         """
         # Create a complete workflow and verify notifications
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         # Upload document
         test_file = SimpleUploadedFile(
@@ -747,7 +762,7 @@ class NotificationSystemTest(ESignIntegrationTestCase):
         self.assertGreater(signer1_notifications.count(), 0)
         
         # Sign the document
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         sign_data = {
             'signature_image': f'data:image/png;base64,{self.test_signature_image}',
@@ -782,9 +797,14 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
     def setUp(self):
         super().setUp()
         # Upload doc + create envelope with 2 signers
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         upload_resp = self.client.post(reverse('documents:document_upload'), {'file': test_file}, format='multipart')
+        self.assertEqual(
+            upload_resp.status_code,
+            status.HTTP_201_CREATED,
+            f"Document upload failed in setUp: {upload_resp.status_code} {upload_resp.data}",
+        )
         self.doc_id = upload_resp.data['data']['id']
 
         envelope_data = {
@@ -795,12 +815,22 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
             ]
         }
         create_resp = self.client.post(reverse('envelopes:envelope_create'), envelope_data, format='json')
+        self.assertEqual(
+            create_resp.status_code,
+            status.HTTP_201_CREATED,
+            f"Envelope create failed in setUp: {create_resp.status_code} {create_resp.data}",
+        )
         self.envelope_id = create_resp.data['data']['id']
-        self.client.post(reverse('envelopes:envelope_send', kwargs={'pk': self.envelope_id}))
+        send_resp = self.client.post(reverse('envelopes:envelope_send', kwargs={'pk': self.envelope_id}))
+        self.assertEqual(
+            send_resp.status_code,
+            status.HTTP_200_OK,
+            f"Envelope send failed in setUp: {send_resp.status_code} {send_resp.data}",
+        )
 
     def test_out_of_order_signing_blocked(self):
         """Signer2 should not be able to sign before signer1."""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         sign_data = {
             'signature_image': f'data:image/png;base64,{self.test_signature_image}',
             'page': 1,
@@ -817,7 +847,7 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
 
     def test_duplicate_signing_blocked(self):
         """Signer1 cannot sign twice."""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         sign_data = {
             'signature_image': f'data:image/png;base64,{self.test_signature_image}',
             'page': 1,
@@ -837,7 +867,7 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
     def test_post_completion_signing_or_decline_blocked(self):
         """No further actions should be possible once envelope is completed."""
         # signer1 signs
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         sign_data = {
             'signature_image': f'data:image/png;base64,{self.test_signature_image}',
             'page': 1,
@@ -849,7 +879,7 @@ class SigningEdgeCasesTest(ESignIntegrationTestCase):
         self.client.post(reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope_id}), sign_data, format='json')
 
         # signer2 signs
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         self.client.post(reverse('signatures:sign_document', kwargs={'envelope_id': self.envelope_id}), sign_data, format='json')
 
         # Now envelope should be completed
@@ -874,7 +904,7 @@ class NotificationIdentityTest(ESignIntegrationTestCase):
     """
 
     def test_decline_notification_includes_signer_name(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         doc_id = self.client.post(reverse('documents:document_upload'), {'file': test_file}).data['data']['id']
 
@@ -882,7 +912,7 @@ class NotificationIdentityTest(ESignIntegrationTestCase):
         env_id = self.client.post(reverse('envelopes:envelope_create'), envelope_data, format='json').data['data']['id']
         self.client.post(reverse('envelopes:envelope_send', kwargs={'pk': env_id}))
 
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         self.client.post(reverse('signatures:decline_signature', kwargs={'envelope_id': env_id}))
 
         # Manually create notification (since Celery is mocked)
@@ -895,7 +925,7 @@ class NotificationIdentityTest(ESignIntegrationTestCase):
         self.assertIn(self.signer1.full_name, note.message)
 
     def test_reject_notification_includes_creator_name(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         doc_id = self.client.post(reverse('documents:document_upload'), {'file': test_file}).data['data']['id']
 
@@ -921,7 +951,7 @@ class AuditLogContentTest(ESignIntegrationTestCase):
     """
 
     def test_audit_log_message_contains_envelope_and_actor(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         doc_id = self.client.post(reverse('documents:document_upload'), {'file': test_file}).data['data']['id']
 
@@ -941,7 +971,7 @@ class PermissionEdgeCasesTest(ESignIntegrationTestCase):
     """
 
     def test_non_creator_cannot_reject_envelope(self):
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         doc_id = self.client.post(reverse('documents:document_upload'), {'file': test_file}).data['data']['id']
 
@@ -951,7 +981,7 @@ class PermissionEdgeCasesTest(ESignIntegrationTestCase):
         self.client.post(reverse('envelopes:envelope_send', kwargs={'pk': env_id}))
 
         # signer1 tries to reject, should fail
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         resp = self.client.post(reverse('envelopes:envelope_reject', kwargs={'pk': env_id}))
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -959,9 +989,8 @@ class PermissionEdgeCasesTest(ESignIntegrationTestCase):
         random_user = User.objects.create_user(
             email="random@test.com", username="random", full_name="Random User", password="testpass123"
         )
-        random_token = str(RefreshToken.for_user(random_user).access_token)
 
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         test_file = SimpleUploadedFile("test.pdf", self.test_pdf_content, content_type="application/pdf")
         doc_id = self.client.post(reverse('documents:document_upload'), {'file': test_file}).data['data']['id']
 
@@ -971,7 +1000,7 @@ class PermissionEdgeCasesTest(ESignIntegrationTestCase):
         self.client.post(reverse('envelopes:envelope_send', kwargs={'pk': env_id}))
 
         # Random user tries to sign
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {random_token}')
+        self.authenticate_as(random_user)
         sign_data = {'signature_image': f'data:image/png;base64,{self.test_signature_image}'}
         resp = self.client.post(reverse('signatures:sign_document', kwargs={'envelope_id': env_id}), sign_data, format='json')
         self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)

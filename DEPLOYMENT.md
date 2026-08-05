@@ -150,8 +150,9 @@ Use the same environment variables as the web service.
 
 ### Static Files Not Loading
 - Ensure `collectstatic` runs during build (in `build.sh`)
-- Check static files are served correctly
-- Consider using CDN for static files
+- Admin/Django static assets are served by **WhiteNoise** from `STATIC_ROOT` (not private S3)
+- Media/uploads still use S3 when `USE_S3=True`
+- Confirm `whitenoise` is installed and `WhiteNoiseMiddleware` sits after `SecurityMiddleware`
 
 ## Environment Variables Reference
 

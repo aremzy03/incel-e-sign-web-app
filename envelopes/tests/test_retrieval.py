@@ -36,6 +36,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def setUp(self):
         """Set up test data."""
         super().setUp() # Ensure parent setUp is called
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+
         # Create test users
         self.creator = User.objects.create_user(
             username="creator",
@@ -140,10 +143,25 @@ class EnvelopeRetrievalTestCase(APITestCase):
             print(f"Failed to resolve list URL: {e}")
         print("----------------------------")
 
+    def authenticate_as(self, user):
+        """
+        Authenticate the test client as the given user.
+
+        Prefer force_authenticate over JWT headers so full-suite runs are not
+        sensitive to token/header pollution from other tests.
+        """
+        self.client.credentials()
+        self.client.force_authenticate(user=user)
+
     def get_auth_headers(self, user):
-        """Get authentication headers for a user."""
+        """Get authentication headers for a user (legacy JWT header helper)."""
         refresh = RefreshToken.for_user(user)
         return {'HTTP_AUTHORIZATION': f'Bearer {refresh.access_token}'}
+
+    def tearDown(self):
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+        super().tearDown()
 
     def _envelope_list_results(self, response):
         """Return envelope items from a paginated list response."""
@@ -171,9 +189,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_creator_can_list_envelopes(self):
         """Test that creator can list their envelopes."""
         url = '/api/envelopes/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
@@ -199,9 +217,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_signer_can_list_envelopes(self):
         """Test that signer can list envelopes they are assigned to."""
         url = '/api/envelopes/' # Corrected URL path
-        headers = self.get_auth_headers(self.signer1)
+        self.authenticate_as(self.signer1)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
@@ -245,9 +263,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
         EnvelopeDocument.objects.create(envelope=another_envelope, document=another_document, order=1)
         
         url = '/api/envelopes/' # Corrected URL path
-        headers = self.get_auth_headers(self.signer1)
+        self.authenticate_as(self.signer1)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
@@ -262,9 +280,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_other_user_cannot_list_unrelated_envelopes(self):
         """Test that other users cannot list unrelated envelopes."""
         url = '/api/envelopes/' # Corrected URL path
-        headers = self.get_auth_headers(self.other_user)
+        self.authenticate_as(self.other_user)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
@@ -279,17 +297,19 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_unauthenticated_request_returns_401(self):
         """Test that unauthenticated requests return 401."""
         url = '/api/envelopes/' # Corrected URL path
-        
+
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
         response = self.client.get(url)
-        
+
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
     def test_creator_can_view_envelope_detail(self):
         """Test that creator can view their envelope details."""
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
@@ -317,10 +337,10 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_signer_can_view_envelope_detail(self):
         """Test that signer can view envelope details they are assigned to."""
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.signer1)
-        
-        response = self.client.get(url, **headers)
-        
+        self.authenticate_as(self.signer1)
+
+        response = self.client.get(url)
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
         
@@ -336,9 +356,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_other_user_cannot_view_unrelated_envelope(self):
         """Test that other users cannot view unrelated envelopes (404)."""
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.other_user)
+        self.authenticate_as(self.other_user)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(response.data['status'], 'error')
@@ -347,18 +367,20 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_unauthenticated_detail_request_returns_401(self):
         """Test that unauthenticated detail requests return 401."""
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        
+
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
         response = self.client.get(url)
-        
+
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
     def test_nonexistent_envelope_returns_404(self):
         """Test that nonexistent envelope returns 404."""
         nonexistent_id = uuid.uuid4()
         url = f'/api/envelopes/{nonexistent_id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertEqual(response.data['status'], 'error')
@@ -366,9 +388,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_envelope_detail_includes_all_required_fields(self):
         """Test that envelope detail includes all required fields."""
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -411,9 +433,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_envelope_list_includes_required_fields(self):
         """Test that envelope list items include only lightweight list fields."""
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._envelope_list_results(response)
@@ -447,8 +469,8 @@ class EnvelopeRetrievalTestCase(APITestCase):
         )
 
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
-        response = self.client.get(url, **headers)
+        self.authenticate_as(self.creator)
+        response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results_by_id = {item['id']: item for item in self._envelope_list_results(response)}
@@ -468,9 +490,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
         EnvelopeDocument.objects.create(envelope=newer_envelope, document=self.document1, order=1)
         
         url = '/api/envelopes/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._envelope_list_results(response)
@@ -495,16 +517,16 @@ class EnvelopeRetrievalTestCase(APITestCase):
         )
 
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
-        pending_response = self.client.get(url, {'status': 'pending'}, **headers)
+        pending_response = self.client.get(url, {'status': 'pending'})
         self.assertEqual(pending_response.status_code, status.HTTP_200_OK)
         pending_results = self._envelope_list_results(pending_response)
         self.assertEqual(len(pending_results), 1)
         self.assertEqual(pending_results[0]['id'], str(self.envelope.id))
         self.assertEqual(pending_results[0]['status'], 'pending')
 
-        draft_response = self.client.get(url, {'status': 'draft'}, **headers)
+        draft_response = self.client.get(url, {'status': 'draft'})
         self.assertEqual(draft_response.status_code, status.HTTP_200_OK)
         draft_results = self._envelope_list_results(draft_response)
         self.assertEqual(len(draft_results), 1)
@@ -527,9 +549,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
         )
 
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
-        response = self.client.get(url, {'search': 'vendor'}, **headers)
+        response = self.client.get(url, {'search': 'vendor'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._envelope_list_results(response)
         self.assertEqual(len(results), 1)
@@ -538,9 +560,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_envelope_list_search_by_creator_email(self):
         """Signers can find envelopes by creator email."""
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.signer1)
+        self.authenticate_as(self.signer1)
 
-        response = self.client.get(url, {'search': 'creator@test.com'}, **headers)
+        response = self.client.get(url, {'search': 'creator@test.com'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._envelope_list_results(response)
         self.assertEqual(len(results), 1)
@@ -567,12 +589,11 @@ class EnvelopeRetrievalTestCase(APITestCase):
         )
 
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
         response = self.client.get(
             url,
             {'search': 'retainer', 'status': 'draft'},
-            **headers,
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._envelope_list_results(response)
@@ -582,9 +603,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_envelope_list_invalid_status_returns_400(self):
         """Test invalid status query parameter returns structured error."""
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
-        response = self.client.get(url, {'status': 'sent'}, **headers)
+        response = self.client.get(url, {'status': 'sent'})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
@@ -607,9 +628,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
             )
 
         url = '/api/envelopes/'
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
 
-        page_one = self.client.get(url, {'page': 1, 'page_size': 10}, **headers)
+        page_one = self.client.get(url, {'page': 1, 'page_size': 10})
         self.assertEqual(page_one.status_code, status.HTTP_200_OK)
         page_one_data = page_one.data['data']
         self.assertEqual(page_one_data['count'], 26)  # 1 from setUp + 25 created here
@@ -617,13 +638,13 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertIsNone(page_one_data['previous'])
         self.assertEqual(len(page_one_data['results']), 10)
 
-        page_two = self.client.get(url, {'page': 2, 'page_size': 10}, **headers)
+        page_two = self.client.get(url, {'page': 2, 'page_size': 10})
         self.assertEqual(page_two.status_code, status.HTTP_200_OK)
         page_two_data = page_two.data['data']
         self.assertIsNotNone(page_two_data['previous'])
         self.assertEqual(len(page_two_data['results']), 10)
 
-        page_three = self.client.get(url, {'page': 3, 'page_size': 10}, **headers)
+        page_three = self.client.get(url, {'page': 3, 'page_size': 10})
         self.assertEqual(page_three.status_code, status.HTTP_200_OK)
         page_three_data = page_three.data['data']
         self.assertIsNone(page_three_data['next'])
@@ -632,9 +653,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
     def test_envelope_with_no_signatures(self):
         """Test envelope detail with no signatures."""
         url = f'/api/envelopes/{self.other_envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.other_user)
+        self.authenticate_as(self.other_user)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -652,9 +673,9 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.signature2.save()
         
         url = f'/api/envelopes/{self.envelope.id}/' # Corrected URL path
-        headers = self.get_auth_headers(self.creator)
+        self.authenticate_as(self.creator)
         
-        response = self.client.get(url, **headers)
+        response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         

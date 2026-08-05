@@ -1,0 +1,38 @@
+meta {
+  name: Token Exchange Invalid Email
+  type: http
+  seq: 3
+  tags: [
+    integrations
+    negative
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/integrations/token/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "client_id": "{{process.env.ESIGN_CLIENT_ID}}",
+    "client_secret": "{{process.env.ESIGN_CLIENT_SECRET}}",
+    "email": "not-an-email",
+    "full_name": "Invalid"
+  }
+}
+
+vars:pre-request {
+  baseUrl: http://localhost:8000
+}
+
+assert {
+  res.status: eq 400
+  res.body.status: eq error
+}

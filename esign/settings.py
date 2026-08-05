@@ -149,6 +149,7 @@ INSTALLED_APPS = [
     'notifications',
     'audit',
     'contacts',
+    'integrations',
     'django_celery_results',
 ]
 
@@ -159,6 +160,9 @@ AUTHENTICATION_BACKENDS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Serve Django/admin static files from STATIC_ROOT (gunicorn has no nginx).
+    # Must sit directly after SecurityMiddleware. Media/uploads stay on S3 when USE_S3.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -286,6 +290,9 @@ THROTTLE_RATE_ANON = config('THROTTLE_RATE_ANON', default=None) or '100/hour'
 THROTTLE_RATE_USER = config('THROTTLE_RATE_USER', default=None) or '1000/hour'
 THROTTLE_RATE_AUTH = config('THROTTLE_RATE_AUTH', default=None) or '10/minute'
 THROTTLE_RATE_UPLOAD = config('THROTTLE_RATE_UPLOAD', default=None) or '20/hour'
+THROTTLE_RATE_INTEGRATION_TOKEN = (
+    config('THROTTLE_RATE_INTEGRATION_TOKEN', default=None) or THROTTLE_RATE_AUTH
+)
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -311,6 +318,7 @@ REST_FRAMEWORK = {
         'user': THROTTLE_RATE_USER,
         'auth': THROTTLE_RATE_AUTH,    # For login/register
         'upload': THROTTLE_RATE_UPLOAD,  # For file uploads
+        'integration_token': THROTTLE_RATE_INTEGRATION_TOKEN,  # Token exchange
     },
 }
 
@@ -436,8 +444,13 @@ if _signing_cutover_raw:
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # File storage
-# Use S3 in production if configured, otherwise use local storage
+# Use S3 for media/uploads when configured. Django/admin static files are always
+# served locally via WhiteNoise (not private S3/CloudFront), so admin CSS/JS work
+# behind gunicorn without nginx and without weakening SECURE_* settings.
 USE_S3 = config('USE_S3', cast=bool, default=False)
+
+# Compressed + hashed filenames for long-lived cache headers under WhiteNoise.
+_STATICFILES_BACKEND = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 if USE_S3:
     # Django 5+ uses STORAGES for backend configuration; keep DEFAULT_FILE_STORAGE
@@ -447,11 +460,11 @@ if USE_S3:
             "BACKEND": "documents.storage.TimezoneAwareS3Boto3Storage",
         },
         "staticfiles": {
-            "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+            "BACKEND": _STATICFILES_BACKEND,
         },
     }
     DEFAULT_FILE_STORAGE = 'documents.storage.TimezoneAwareS3Boto3Storage'
-    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
+    STATICFILES_STORAGE = _STATICFILES_BACKEND
 
     # AWS S3 configuration
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
@@ -484,16 +497,17 @@ if USE_S3:
     AWS_QUERYSTRING_AUTH = True
     AWS_QUERYSTRING_EXPIRE = config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int)
 else:
-    # Development: use local file system storage (default)
+    # Development: local filesystem for media; WhiteNoise for static/admin assets
     STORAGES = {
         "default": {
             "BACKEND": "django.core.files.storage.FileSystemStorage",
         },
         "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+            "BACKEND": _STATICFILES_BACKEND,
         },
     }
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    STATICFILES_STORAGE = _STATICFILES_BACKEND
     # AWS variables still available for optional use
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
@@ -522,6 +536,12 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Shorter access lifetime for tokens minted via integration token exchange
+# (auth_via=integration). Refresh tokens still use SIMPLE_JWT defaults.
+INTEGRATION_ACCESS_TOKEN_LIFETIME = timedelta(
+    minutes=int(config('INTEGRATION_ACCESS_TOKEN_LIFETIME_MINUTES', default='30'))
+)
+
 # Google OAuth settings
 GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default=None)
 GOOGLE_OAUTH_CLIENT_SECRET = config('GOOGLE_OAUTH_CLIENT_SECRET', default=None)
@@ -534,11 +554,12 @@ CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localho
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks',)
+CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks', 'integrations.tasks',)
 
 CELERY_TASK_ROUTES = {
     'signatures.tasks.*': {'queue': 'signing'},
     'notifications.tasks.*': {'queue': 'notifications'},
+    'integrations.tasks.*': {'queue': 'notifications'},
 }
 
 # Celery task settings

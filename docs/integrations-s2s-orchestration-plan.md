@@ -25,26 +25,32 @@ This document is the architecture and implementation map for that feature.
 
 ### Non-Goals (MVP)
 
-- Public third-party developer portal / self-serve app registration.
+- Public third-party developer portal / self-serve app registration (**still deferred** after Phase 4).
 - Per-user personal API keys.
 - OAuth2 authorization-code “Connect e-sign” for untrusted partners.
-- Outbound webhooks (follow-up).
-- Guest / email-only signers that are not e-sign users (follow-up: find-or-invite).
 - Parallel “integration envelope” domain model.
+
+### Delivered after MVP (Phase 4)
+
+- Outbound webhooks (`envelope.sent`, `envelope.completed`) with HMAC + delivery logs.
+- Email find-or-invite signers (backward compatible with `signer_id` UUIDs).
+- Composite create-and-send + `Idempotency-Key` on create/send/composite.
 
 ---
 
 ## 3. Product Decisions (Locked)
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Actor for envelopes | Real `CustomUser` | UI parity via existing `creator` / queryset rules |
-| App registration | **Admin / staff only** | Client secret can mint JWTs for asserted emails; high privilege |
-| Developer accounts | **Not for MVP** | Only needed for public partner ecosystem |
-| Auth after exchange | Existing SimpleJWT | Same as login / Google OAuth; no new business auth class |
-| Envelope APIs | Reuse `/api/documents/`, `/api/envelopes/` | Avoid duplicating create/send logic |
-| User join key | Email (unique on `CustomUser`) | Matches Google OAuth find/create pattern |
-| JIT user create | Configurable (recommend **on** for first-party) | Other app may onboard users who never opened e-sign UI |
+
+| Decision            | Choice                                          | Rationale                                                       |
+| ------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
+| Actor for envelopes | Real `CustomUser`                               | UI parity via existing `creator` / queryset rules               |
+| App registration    | **Admin / staff only**                          | Client secret can mint JWTs for asserted emails; high privilege |
+| Developer accounts  | **Not for MVP**                                 | Only needed for public partner ecosystem                        |
+| Auth after exchange | Existing SimpleJWT                              | Same as login / Google OAuth; no new business auth class        |
+| Envelope APIs       | Reuse `/api/documents/`, `/api/envelopes/`      | Avoid duplicating create/send logic                             |
+| User join key       | Email (unique on `CustomUser`)                  | Matches Google OAuth find/create pattern                        |
+| JIT user create     | Configurable (recommend **on** for first-party) | Other app may onboard users who never opened e-sign UI          |
+
 
 ---
 
@@ -95,10 +101,12 @@ This document is the architecture and implementation map for that feature.
 
 Two identities on the wire, separated by phase:
 
-| Phase | Identity | Mechanism |
-|-------|----------|-----------|
+
+| Phase          | Identity              | Mechanism                     |
+| -------------- | --------------------- | ----------------------------- |
 | Token exchange | Integration (machine) | `client_id` + `client_secret` |
-| Business APIs | End user | User JWT (`request.user`) |
+| Business APIs  | End user              | User JWT (`request.user`)     |
+
 
 Never use a shared “service user” as `Envelope.creator` for multi-user first-party apps.
 
@@ -126,17 +134,19 @@ New Django app: `integrations`.
 
 ### 6.1 `Integration`
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | UUID PK | |
-| `name` | CharField | Human label, e.g. "HR Portal" |
-| `client_id` | CharField, unique | Public identifier (uuid or opaque string) |
-| `client_secret_hash` | CharField | Store hash only (e.g. Django `make_password` / dedicated hasher) |
-| `is_active` | Boolean | Soft disable without delete |
-| `allow_jit_user_create` | Boolean | Default `True` for first-party; can disable per app |
-| `created_by` | FK `CustomUser`, null | Staff who registered it |
-| `notes` | TextField, blank | Ops notes |
-| `created_at` / `updated_at` | DateTime | |
+
+| Field                       | Type                  | Notes                                                            |
+| --------------------------- | --------------------- | ---------------------------------------------------------------- |
+| `id`                        | UUID PK               |                                                                  |
+| `name`                      | CharField             | Human label, e.g. "HR Portal"                                    |
+| `client_id`                 | CharField, unique     | Public identifier (uuid or opaque string)                        |
+| `client_secret_hash`        | CharField             | Store hash only (e.g. Django `make_password` / dedicated hasher) |
+| `is_active`                 | Boolean               | Soft disable without delete                                      |
+| `allow_jit_user_create`     | Boolean               | Default `True` for first-party; can disable per app              |
+| `created_by`                | FK `CustomUser`, null | Staff who registered it                                          |
+| `notes`                     | TextField, blank      | Ops notes                                                        |
+| `created_at` / `updated_at` | DateTime              |                                                                  |
+
 
 **Secret handling**
 
@@ -146,15 +156,17 @@ New Django app: `integrations`.
 
 ### 6.2 `IntegrationUserLink` (optional MVP+, recommended soon)
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | UUID PK | |
-| `integration` | FK | |
-| `user` | FK `CustomUser` | |
-| `external_user_id` | CharField | Partner’s user id |
-| `linked_at` | DateTime | |
-| Unique | `(integration, external_user_id)` | |
-| Unique | `(integration, user)` | Optional |
+
+| Field              | Type                              | Notes             |
+| ------------------ | --------------------------------- | ----------------- |
+| `id`               | UUID PK                           |                   |
+| `integration`      | FK                                |                   |
+| `user`             | FK `CustomUser`                   |                   |
+| `external_user_id` | CharField                         | Partner’s user id |
+| `linked_at`        | DateTime                          |                   |
+| Unique             | `(integration, external_user_id)` |                   |
+| Unique             | `(integration, user)`             | Optional          |
+
 
 MVP can resolve by email only; add this when partner user ids should be stable even if email changes.
 
@@ -172,11 +184,13 @@ MVP can resolve by email only; add this when partner user ids should be stable e
 
 Base path: `/api/v1/integrations/`
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/api/v1/integrations/token/` | None (client credentials in body) | Exchange → user JWT |
-| `POST` | `/api/v1/integrations/` | Staff / admin only | Register integration (optional API; Django admin is enough for MVP) |
-| `POST` | `/api/v1/integrations/{id}/rotate-secret/` | Staff only | Rotate secret |
+
+| Method | Path                                       | Auth                              | Purpose                                                             |
+| ------ | ------------------------------------------ | --------------------------------- | ------------------------------------------------------------------- |
+| `POST` | `/api/v1/integrations/token/`              | None (client credentials in body) | Exchange → user JWT                                                 |
+| `POST` | `/api/v1/integrations/`                    | Staff / admin only                | Register integration (optional API; Django admin is enough for MVP) |
+| `POST` | `/api/v1/integrations/{id}/rotate-secret/` | Staff only                        | Rotate secret                                                       |
+
 
 #### Token exchange request
 
@@ -220,13 +234,15 @@ Optional later:
 
 #### Error cases
 
-| Condition | Status |
-|-----------|--------|
-| Unknown `client_id` / bad secret | 401 |
-| Inactive integration | 401 |
-| User not found and JIT disabled | 404 |
-| Invalid email / validation | 400 |
-| Throttled | 429 |
+
+| Condition                        | Status |
+| -------------------------------- | ------ |
+| Unknown `client_id` / bad secret | 401    |
+| Inactive integration             | 401    |
+| User not found and JIT disabled  | 404    |
+| Invalid email / validation       | 400    |
+| Throttled                        | 429    |
+
 
 ### 7.2 Business APIs (unchanged)
 
@@ -237,11 +253,13 @@ After exchange, partner uses existing endpoints with `Authorization: Bearer <acc
 3. `POST /api/envelopes/{id}/send/`
 4. `GET /api/envelopes/{id}/` (status polling)
 
-Signers in `signing_order` remain **existing user UUIDs** until a find-or-invite enhancement ships.
+Signers in `signing_order` may use existing user UUIDs **or** email (find-or-invite creates `CustomUser` + invite email when unknown).
 
-### 7.3 Optional composite endpoint (phase 2)
 
-`POST /api/v1/integrations/envelopes/send/` — multipart/json orchestration of upload + create + send in one call. Must call the same internal create/send services (or serializers) to keep audit/notifications identical. Not required for MVP if partners can do three calls.
+### 7.3 Composite endpoint (Phase 4)
+
+`POST /api/v1/integrations/envelopes/send/` — multipart/json orchestration of upload + create + send in one call. Calls the same `EnvelopeCreateSerializer` and shared `send_envelope` service so audit/notifications stay identical. Auth: **user JWT** (not client credentials). Supports `Idempotency-Key`.
+
 
 ---
 
@@ -309,8 +327,8 @@ On token exchange:
 1. Normalize email (lowercase/strip).
 2. If `CustomUser` exists with that email → use it (update `full_name` only if empty / policy allows).
 3. If missing and `integration.allow_jit_user_create` → create user:
-   - `email`, `username=email`, `full_name` (required or fallback to email local-part)
-   - Unusable password (`set_unusable_password()`) so login is via Google/password reset later
+  - `email`, `username=email`, `full_name` (required or fallback to email local-part)
+  - Unusable password (`set_unusable_password()`) so login is via Google/password reset later
 4. If missing and JIT off → 404 with clear message.
 5. If user `is_active=False` → 403.
 
@@ -351,17 +369,19 @@ Same user logs into e-sign UI → `GET /api/envelopes/` includes the envelope (`
 
 ## 12. Security Controls
 
-| Control | MVP requirement |
-|---------|-----------------|
-| Secret at rest | Hashed only |
-| Secret in transit | HTTPS only in production |
-| Registration | Staff only |
+
+| Control                 | MVP requirement                                                    |
+| ----------------------- | ------------------------------------------------------------------ |
+| Secret at rest          | Hashed only                                                        |
+| Secret in transit       | HTTPS only in production                                           |
+| Registration            | Staff only                                                         |
 | Token endpoint throttle | Strict (e.g. reuse `auth` 10/minute or tighter per IP + client_id) |
-| Inactive clients | Rejected |
-| Impersonation surface | Trusted first-party only; document threat model |
-| JWT claims | `client_id`, `auth_via` for forensic audit |
-| Logging | Never log raw `client_secret` or full tokens |
-| Optional | IP allowlist field on `Integration` |
+| Inactive clients        | Rejected                                                           |
+| Impersonation surface   | Trusted first-party only; document threat model                    |
+| JWT claims              | `client_id`, `auth_via` for forensic audit                         |
+| Logging                 | Never log raw `client_secret` or full tokens                       |
+| Optional                | IP allowlist field on `Integration`                                |
+
 
 ### Threat model (accepted for first-party)
 
@@ -415,40 +435,41 @@ Do **not** fork envelope create/send into this app for MVP; call existing views 
 
 ### Phase 0 — Foundations
 
-- [ ] Create `integrations` app and models.
-- [ ] Migrations + Django admin (create, deactivate, rotate secret UX).
-- [ ] Credential generate / hash / verify helpers.
-- [ ] Unit tests for credentials.
+- [x] Create `integrations` app and models.
+- [x] Migrations + Django admin (create, deactivate, rotate secret UX).
+- [x] Credential generate / hash / verify helpers.
+- [x] Unit tests for credentials.
 
 ### Phase 1 — Token exchange
 
-- [ ] `POST /api/v1/integrations/token/`
-- [ ] User resolve + JIT create path
-- [ ] JWT issuance with `client_id` / `auth_via` claims
-- [ ] Throttling + error contract
-- [ ] API tests for success / 401 / 404 / inactive / JIT off
+- [x] `POST /api/v1/integrations/token/`
+- [x] User resolve + JIT create path
+- [x] JWT issuance with `client_id` / `auth_via` claims
+- [x] Throttling + error contract
+- [x] API tests for success / 401 / 404 / inactive / JIT off
 
 ### Phase 2 — End-to-end partner flow (no new business endpoints)
 
-- [ ] Document partner sequence in README (or this doc appendix)
-- [ ] Integration test: exchange → upload → create → send → assert creator + list visibility
-- [ ] Mock Celery email like existing envelope send tests
+- [x] Document partner sequence in README (or this doc appendix)
+- [x] Integration test: exchange → upload → create → send → assert creator + list visibility
+- [x] Mock Celery email like existing envelope send tests
 
 ### Phase 3 — Hardening (recommended before production)
 
-- [ ] `IntegrationUserLink` (if needed)
-- [ ] Audit enrichment with `client_id`
-- [ ] IP allowlist (optional)
-- [ ] Secret rotation runbook
-- [ ] Shorter integration access token lifetime (optional)
+- [x] `IntegrationUserLink` (if needed)
+- [x] Audit enrichment with `client_id`
+- [x] IP allowlist (optional)
+- [x] Secret rotation runbook
+- [x] Shorter integration access token lifetime (optional)
 
-### Phase 4 — Follow-ups (out of MVP)
+### Phase 4 — Follow-ups (completed; portal deferred)
 
-- [ ] Email-based signer resolution / find-or-invite
-- [ ] Composite create-and-send endpoint
-- [ ] Outbound webhooks (`envelope.sent`, `envelope.completed`)
-- [ ] Idempotency-Key on create/send
-- [ ] Public developer portal (only if third parties appear)
+- [x] Email-based signer resolution / find-or-invite
+- [x] Composite create-and-send endpoint
+- [x] Outbound webhooks (`envelope.sent`, `envelope.completed`)
+- [x] Idempotency-Key on create/send
+- [ ] Public developer portal (only if third parties appear) — **deferred**; admin registration remains the only path
+
 
 ---
 
@@ -494,11 +515,13 @@ Align with existing patterns: `APITestCase` + `APIClient`, fixtures in `integrat
 
 Suggested settings / env (names illustrative):
 
-| Setting | Purpose |
-|---------|---------|
-| (none required beyond existing JWT) | Reuse `SIMPLE_JWT` |
-| Optional `INTEGRATION_TOKEN_THROTTLE` | Override throttle rate |
-| Optional shorter lifetime for integration tokens | Feature flag / custom claim handling |
+
+| Setting                                          | Purpose                              |
+| ------------------------------------------------ | ------------------------------------ |
+| (none required beyond existing JWT)              | Reuse `SIMPLE_JWT`                   |
+| Optional `INTEGRATION_TOKEN_THROTTLE`            | Override throttle rate               |
+| `INTEGRATION_ACCESS_TOKEN_LIFETIME` / `INTEGRATION_ACCESS_TOKEN_LIFETIME_MINUTES` | Shorter access JWT for `auth_via=integration` (default 30m) |
+
 
 Secrets for partners live in **partner** env, not in e-sign `.env` (except when e-sign itself is the client).
 
@@ -509,7 +532,8 @@ Secrets for partners live in **partner** env, not in e-sign `.env` (except when 
 - This orchestration plan (`docs/integrations-s2s-orchestration-plan.md`).
 - README section: “First-party integrations” with sequence and admin registration steps.
 - OpenAPI/Swagger update when token endpoint ships (per project API rules).
-- Ops runbook: create integration, rotate secret, revoke compromised client.
+- Ops runbook: create integration, rotate secret, revoke compromised client
+  (`docs/integrations-secret-rotation-runbook.md`).
 
 ---
 
@@ -528,16 +552,38 @@ MVP is done when:
 
 ## 20. Open Questions (Resolve During Phase 0/1)
 
-| Question | Recommendation |
-|----------|----------------|
-| JIT create on by default? | **Yes** for first-party; per-integration flag |
-| Staff-only via Django admin or also REST? | **Admin first**; REST only if ops needs automation |
-| Put `client_id` on access token, refresh, or both? | Both if SimpleJWT allows easy claim copy |
-| Require `full_name` on exchange? | Required when JIT create; optional if user exists |
-| Signer provisioning from partner | Out of MVP; document that signers must already be e-sign users |
+
+| Question                                           | Recommendation                                                 |
+| -------------------------------------------------- | -------------------------------------------------------------- |
+| JIT create on by default?                          | **Yes** for first-party; per-integration flag                  |
+| Staff-only via Django admin or also REST?          | **Admin first**; REST only if ops needs automation             |
+| Put `client_id` on access token, refresh, or both? | Both if SimpleJWT allows easy claim copy                       |
+| Require `full_name` on exchange?                   | Required when JIT create; optional if user exists              |
+| Signer provisioning from partner                   | **Phase 4:** email find-or-invite on envelope create; UUID still supported |
+
 
 ---
 
 ## 21. Summary
 
-Implement a small `integrations` app whose only job is **admin-trusted client credentials → user JWT**. Reuse the existing document and envelope pipeline so ownership, audit, notifications, and UI visibility stay correct. Keep registration admin-only while the exchange endpoint can assert user identity. Expand later with links, webhooks, and email-based signers without changing the core “real user as creator” model.
+Implement a small `integrations` app whose core job is **admin-trusted client credentials → user JWT**. Reuse the existing document and envelope pipeline so ownership, audit, notifications, and UI visibility stay correct. Keep registration admin-only while the exchange endpoint can assert user identity. Phase 4 adds email find-or-invite signers, composite send, idempotency keys, and outbound webhooks **without** changing the core “real user as creator” model.
+
+---
+
+## Appendix A — Partner sequence (quick reference)
+
+**Admin (one-liner):** Django admin → create Integration → copy one-time `client_id` / `client_secret` into the partner app env.
+
+**Partner flow:**
+
+1. `POST /api/v1/integrations/token/` with `client_id`, `client_secret`, `email` (+ `full_name` when JIT-creating) → user-scoped `access` / `refresh`.
+2. `POST /api/documents/upload/` with `Authorization: Bearer <access>` → `document_id`.
+3. `POST /api/envelopes/create/` with document IDs and `signing_order` → draft `envelope_id`.
+4. `POST /api/envelopes/{id}/send/` → status `pending`; first signer notified.
+5. Store `envelope_id`; optional poll `GET /api/envelopes/{id}/`.
+
+**Signer constraint:** Each `signing_order` entry needs `order` plus `signer_id` (UUID) and/or `email` (find-or-invite). Stored order always uses resolved UUIDs.
+
+**Optional composite:** `POST /api/v1/integrations/envelopes/send/` (user JWT) uploads/creates/sends in one call. Prefer `Idempotency-Key` on create/send/composite. Outbound webhooks (`envelope.sent`, `envelope.completed`) are registered per Integration in admin.
+
+**UI parity:** The same user logging into e-sign sees the envelope under `GET /api/envelopes/` because `Envelope.creator` is that user.

@@ -1,0 +1,28 @@
+meta {
+  name: 04 Send Envelope
+  type: http
+  seq: 4
+  tags: [
+    partner-flow
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/envelopes/{{envelopeId}}/send/
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+headers {
+  Accept: application/json
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq success
+  res.body.data.status: eq pending
+}

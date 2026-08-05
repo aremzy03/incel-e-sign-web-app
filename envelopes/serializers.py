@@ -71,7 +71,12 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
     signing_order = serializers.ListField(
         child=serializers.DictField(),
         allow_empty=True,
-        help_text="List of signers in order: [{'signer_id': 'uuid', 'order': 1}, ...]. Document-specific positions are in EnvelopeDocument."
+        help_text=(
+            "List of signers in order. Each entry needs order plus signer_id "
+            "(UUID) and/or email (find-or-invite). Example: "
+            "[{'signer_id': 'uuid', 'order': 1}] or "
+            "[{'email': 'a@b.com', 'order': 1, 'full_name': 'Ada'}]."
+        ),
     )
 
     # New field to accept document-specific signer positions
@@ -131,136 +136,151 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
     def validate_signing_order(self, value):
         """
-        Validate the signing_order field.
+        Validate and normalize signing_order.
 
-        Ensures:
-        - signing_order is a list of dictionaries
-        - Each dict has 'signer_id' and 'order' keys
-        - Orders start from 1 and are unique (no duplicates, no gaps)
-        - signer_id values correspond to existing users
+        Accepts signer_id (UUID) and/or email per entry. Unknown emails are
+        find-or-invited into CustomUser rows. Stored value always uses UUID
+        signer_id only for backward compatibility with the rest of the product.
         """
-        if not isinstance(value, list):
-            raise serializers.ValidationError('Signing order must be a list.')
+        request = self.context.get("request")
+        inviter = getattr(request, "user", None) if request else None
 
-        if not value:
-            return value # Empty list is valid (no signers yet)
+        from envelopes.services.signer_resolution import (
+            SignerResolutionError,
+            resolve_signing_order,
+        )
 
-        signer_ids = set()
-        orders = []
-
-        for i, signer_entry in enumerate(value):
-            if not isinstance(signer_entry, dict):
-                raise serializers.ValidationError(f'Entry {i} must be a dictionary.')
-
-            if 'signer_id' not in signer_entry or 'order' not in signer_entry:
-                raise serializers.ValidationError(f'Entry {i} must have both "signer_id" and "order" keys.')
-
-            signer_id = signer_entry['signer_id']
-            order = signer_entry['order']
-
-            try:
-                uuid.UUID(str(signer_id))
-            except (ValueError, TypeError):
-                raise serializers.ValidationError(f'Entry {i}: signer_id must be a valid UUID.')
-
-            if not isinstance(order, int) or order < 1:
-                raise serializers.ValidationError(f'Entry {i}: order must be a positive integer.')
-
-            if signer_id in signer_ids:
-                raise serializers.ValidationError(f'Duplicate signer_id found: {signer_id}')
-            signer_ids.add(signer_id)
-
-            if order in orders:
-                raise serializers.ValidationError(f'Duplicate order found: {order}')
-            orders.append(order)
-
-        if orders:
-            orders.sort()
-            expected_orders = list(range(1, len(orders) + 1))
-            if orders != expected_orders:
-                raise serializers.ValidationError('Orders must start from 1 and have no gaps.')
-
-        # Validate that all signer_ids correspond to existing users
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
-        existing_user_ids = set(str(user_id) for user_id in 
-                                User.objects.filter(id__in=[uuid.UUID(str(s_id)) for s_id in signer_ids]).values_list('id', flat=True))
-        missing_user_ids = signer_ids - existing_user_ids
-        if missing_user_ids:
-            raise serializers.ValidationError(f'Users not found: {list(missing_user_ids)}')
-
-        return value
+        try:
+            return resolve_signing_order(value, inviter=inviter)
+        except SignerResolutionError as exc:
+            raise serializers.ValidationError(exc.message) from exc
 
     def validate_documents_with_positions(self, value):
-        document_ids_in_envelope = set(str(doc_id) for doc_id in self.initial_data.get('document_ids', []))
+        # Document membership only here; signer membership checked in validate()
+        # after signing_order emails are resolved to UUIDs.
+        document_ids_in_envelope = set(
+            str(doc_id) for doc_id in self.initial_data.get("document_ids", [])
+        )
         for entry in value:
-            doc_id = str(entry['document_id'])
+            doc_id = str(entry["document_id"])
             if doc_id not in document_ids_in_envelope:
-                raise serializers.ValidationError(f"Document ID {doc_id} in documents_with_positions is not part of the envelope's document_ids.")
-
-            signer_ids_in_envelope = set(str(s['signer_id']) for s in self.initial_data.get('signing_order', []))
-            for signer_pos in entry.get('signer_document_positions', []):
-                signer_id = str(signer_pos['signer_id'])
-                if signer_id not in signer_ids_in_envelope:
-                    raise serializers.ValidationError(f"Signer ID {signer_id} in signer_document_positions for document {doc_id} is not part of the envelope's signing_order.")
+                raise serializers.ValidationError(
+                    f"Document ID {doc_id} in documents_with_positions is not "
+                    f"part of the envelope's document_ids."
+                )
         return value
 
     def validate_fields(self, value):
-        # Basic schema validation for field items
+        # Schema + document checks here; signer membership in validate().
         allowed_types = {"initials", "date", "text", "designation"}
-        document_ids_in_envelope = set(str(doc_id) for doc_id in self.initial_data.get('document_ids', []))
-        signer_ids_in_envelope = set(str(s['signer_id']) for s in self.initial_data.get('signing_order', []))
+        document_ids_in_envelope = set(
+            str(doc_id) for doc_id in self.initial_data.get("document_ids", [])
+        )
 
         for i, item in enumerate(value):
             if not isinstance(item, dict):
                 raise serializers.ValidationError(f"fields[{i}] must be an object")
 
-            # Required keys
-            required_keys = ["document_id", "page", "x", "y", "width", "height", "type", "assigned_signer", "required"]
+            required_keys = [
+                "document_id",
+                "page",
+                "x",
+                "y",
+                "width",
+                "height",
+                "type",
+                "assigned_signer",
+                "required",
+            ]
             missing = [k for k in required_keys if k not in item]
             if missing:
-                raise serializers.ValidationError(f"fields[{i}] missing keys: {missing}")
+                raise serializers.ValidationError(
+                    f"fields[{i}] missing keys: {missing}"
+                )
 
-            # Validate document id membership
-            doc_id = str(item.get('document_id'))
+            doc_id = str(item.get("document_id"))
             if doc_id not in document_ids_in_envelope:
-                raise serializers.ValidationError(f"fields[{i}].document_id {doc_id} not in document_ids")
+                raise serializers.ValidationError(
+                    f"fields[{i}].document_id {doc_id} not in document_ids"
+                )
 
-            # Validate signer membership
-            signer_id = str(item.get('assigned_signer'))
-            if signer_id not in signer_ids_in_envelope:
-                raise serializers.ValidationError(f"fields[{i}].assigned_signer {signer_id} not in signing_order")
-
-            # Type
-            typ = str(item.get('type'))
+            typ = str(item.get("type"))
             if typ not in allowed_types:
-                raise serializers.ValidationError(f"fields[{i}].type must be one of {sorted(list(allowed_types))}")
+                raise serializers.ValidationError(
+                    f"fields[{i}].type must be one of {sorted(list(allowed_types))}"
+                )
 
-            # Numerics
             try:
-                page = int(item.get('page'))
-                x = float(item.get('x'))
-                y = float(item.get('y'))
-                width = float(item.get('width'))
-                height = float(item.get('height'))
+                page = int(item.get("page"))
+                x = float(item.get("x"))
+                y = float(item.get("y"))
+                width = float(item.get("width"))
+                height = float(item.get("height"))
             except Exception:
-                raise serializers.ValidationError(f"fields[{i}] numeric fields must be numbers")
+                raise serializers.ValidationError(
+                    f"fields[{i}] numeric fields must be numbers"
+                )
             if page < 1 or x < 0 or y < 0 or width < 0 or height < 0:
-                raise serializers.ValidationError(f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0")
+                raise serializers.ValidationError(
+                    f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0"
+                )
 
-            # Text constraints
             if typ in {"text", "designation"}:
-                max_length = item.get('max_length')
+                max_length = item.get("max_length")
                 if max_length is not None and int(max_length) <= 0:
-                    raise serializers.ValidationError(f"fields[{i}].max_length must be positive when provided")
+                    raise serializers.ValidationError(
+                        f"fields[{i}].max_length must be positive when provided"
+                    )
 
-            # Date value sanity
             if typ == "date":
-                dv = item.get('prefill_value')
+                dv = item.get("prefill_value")
                 if dv is not None and len(str(dv)) > 64:
-                    raise serializers.ValidationError(f"fields[{i}].prefill_value too long for date")
+                    raise serializers.ValidationError(
+                        f"fields[{i}].prefill_value too long for date"
+                    )
 
         return value
+
+    def validate(self, attrs):
+        """Enforce signer membership against resolved UUID signing_order."""
+        signing_order = attrs.get("signing_order")
+        if signing_order is None:
+            signing_order = self.initial_data.get("signing_order", [])
+        signer_ids_in_envelope = {
+            str(s.get("signer_id"))
+            for s in (signing_order or [])
+            if isinstance(s, dict) and s.get("signer_id") is not None
+        }
+
+        documents_with_positions = attrs.get("documents_with_positions") or []
+        for entry in documents_with_positions:
+            doc_id = str(entry["document_id"])
+            for signer_pos in entry.get("signer_document_positions", []):
+                signer_id = str(signer_pos["signer_id"])
+                if signer_id not in signer_ids_in_envelope:
+                    raise serializers.ValidationError(
+                        {
+                            "documents_with_positions": [
+                                f"Signer ID {signer_id} in signer_document_positions "
+                                f"for document {doc_id} is not part of the "
+                                f"envelope's signing_order."
+                            ]
+                        }
+                    )
+
+        fields_data = attrs.get("fields") or []
+        for i, item in enumerate(fields_data):
+            signer_id = str(item.get("assigned_signer"))
+            if signer_id not in signer_ids_in_envelope:
+                raise serializers.ValidationError(
+                    {
+                        "fields": [
+                            f"fields[{i}].assigned_signer {signer_id} not in signing_order"
+                        ]
+                    }
+                )
+
+        return attrs
 
     def create(self, validated_data):
         document_ids = validated_data.pop('document_ids')
