@@ -28,6 +28,7 @@ jobs:
         env:
           SECRET_KEY: test-secret-key-for-ci
           DEBUG: 'True'
+          ENVIRONMENT: development
           ALLOWED_HOSTS: localhost,127.0.0.1
           DATABASE_URL: sqlite:///test_db.sqlite3
           USE_S3: 'False'

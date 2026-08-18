@@ -15,6 +15,8 @@ import sys
 from decouple import config, Csv
 import dj_database_url
 
+from .environment import normalize_environment, resolve_aws_location
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -36,6 +38,11 @@ if SECRET_KEY is None:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', cast=bool, default=True)
 
+# development | staging | production. Defaults from DEBUG so existing production
+# hosts without ENVIRONMENT keep writing under incel-esign-app. Staging hosts
+# MUST set ENVIRONMENT=staging or they inherit the production S3 prefix.
+ENVIRONMENT = normalize_environment(config('ENVIRONMENT', default=None), debug=DEBUG)
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default=None)
 if ALLOWED_HOSTS is None:
     # Sensible default for local development
@@ -55,7 +62,7 @@ if SENTRY_DSN and not DEBUG:
     else:
         sentry_traces_sample_rate = float(sentry_traces_sample_rate)
 
-    sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or 'production'
+    sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or ENVIRONMENT
     sentry_release = config('SENTRY_RELEASE', default=None)
 
     sentry_sdk.init(
@@ -487,8 +494,6 @@ if USE_S3:
         AWS_CLOUDFRONT_KEY = _cloudfront_key_inline.replace('\\n', '\n')
     else:
         AWS_CLOUDFRONT_KEY = None
-    # Prefix all stored objects under this path inside the bucket
-    AWS_LOCATION = config('AWS_LOCATION', default='incel-esign-app')
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
@@ -513,6 +518,10 @@ else:
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
+
+# Prefix all stored objects under this path inside the shared bucket.
+# Derived from ENVIRONMENT unless AWS_LOCATION is set explicitly.
+AWS_LOCATION = resolve_aws_location(ENVIRONMENT, config('AWS_LOCATION', default=None))
 
 # Boto3 S3 client timeouts for Celery signing workers (download/upload helpers).
 AWS_S3_CONNECT_TIMEOUT = config('AWS_S3_CONNECT_TIMEOUT', default=10, cast=int)

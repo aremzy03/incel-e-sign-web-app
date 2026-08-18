@@ -172,13 +172,20 @@ TEMP_UPLOAD_SUBDIR=temp_uploads
 TEMP_SIGNED_SUBDIR=signed_docs
 
 # AWS S3 Configuration (optional, for production)
+# ENVIRONMENT selects the S3 key prefix on the shared bucket unless AWS_LOCATION is set:
+#   development → incel-esign-dev
+#   staging     → incel-esign-staging
+#   production  → incel-esign-app
+# Staging hosts MUST set ENVIRONMENT=staging (DEBUG=False defaults to production).
+# Web and Celery workers on the same host must share ENVIRONMENT.
+ENVIRONMENT=production
 USE_S3=True  # Set to True to enable S3 storage
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 AWS_STORAGE_BUCKET_NAME=your-bucket-name
 AWS_S3_REGION_NAME=us-east-1
 AWS_S3_CUSTOM_DOMAIN=your-cdn-domain.com  # Optional CDN domain
-AWS_LOCATION=incel-esign-app  # S3 key prefix for staging/signing/completed PDFs
+# AWS_LOCATION=incel-esign-app  # Optional override; non-prod cannot use incel-esign-app
 
 # Async signing pipeline
 SIGNING_CUTOVER_AT=2026-08-01T02:00:00+01:00  # ISO 8601; envelopes pending before this are frozen at sign (409)
@@ -214,7 +221,7 @@ MAX_PAGE_SIZE=100  # Maximum items per page
 
 # Error Monitoring (Sentry)
 SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id  # Optional
-SENTRY_ENVIRONMENT=production
+SENTRY_ENVIRONMENT=production  # Defaults to ENVIRONMENT when unset
 SENTRY_TRACES_SAMPLE_RATE=0.1  # 10% of transactions
 SENTRY_RELEASE=1.0.0  # Optional version tag
 ```
@@ -3040,10 +3047,12 @@ Temporary directories (under `MEDIA_ROOT`):
 - `TEMP_SIGNED_SUBDIR` (default: `signed_docs`)
 
 Environment variables (see `.env.example`):
+- ENVIRONMENT (development | staging | production; derives AWS_LOCATION)
 - AWS_ACCESS_KEY_ID
 - AWS_SECRET_ACCESS_KEY
 - AWS_STORAGE_BUCKET_NAME
 - AWS_S3_REGION_NAME
+- AWS_LOCATION (optional override; non-prod cannot use incel-esign-app)
 
 #### Cleanup of temporary PDFs
 
