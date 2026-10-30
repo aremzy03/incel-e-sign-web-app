@@ -18,7 +18,7 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import DestroyAPIView, ListAPIView, RetrieveAPIView
 from rest_framework.parsers import FormParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -819,3 +819,235 @@ class MergeDocumentsView(APIView):
                 'name': new_doc.file_name
             }
         }, status=status.HTTP_201_CREATED)
+
+
+def _stream_document_file_response(document, as_attachment: bool = False, actor=None, request=None, token_email: str | None = None):
+    source_url = (document.signed_file_url or document.file_url or "").strip()
+    if not source_url:
+        return Response(
+            {
+                'status': 'error',
+                'message': 'Document file reference is missing',
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    disposition = "attachment" if as_attachment else "inline"
+
+    if source_url.startswith('http'):
+        try:
+            parsed = urlparse(source_url)
+            encoded_key = parsed.path.lstrip('/')
+            key = unquote(encoded_key)
+
+            first, rest = (key.split('/', 1) + [""])[:2]
+            if first == settings.AWS_STORAGE_BUCKET_NAME and rest:
+                key = rest
+
+            s3_client = get_boto3_s3_client()
+            try:
+                obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
+            except Exception as initial_s3_err:
+                obj = None
+                code = getattr(initial_s3_err, "response", {}).get("Error", {}).get("Code") if getattr(initial_s3_err, "response", None) else None
+                if code in ("NoSuchKey", "404"):
+                    for candidate_prefix in ("incel-esign-app", "incel-esign-staging", "incel-esign-dev"):
+                        if candidate_prefix in key:
+                            continue
+                        alt_key = key
+                        for existing_prefix in ("incel-esign-dev", "incel-esign-staging", "incel-esign-app"):
+                            if existing_prefix in alt_key:
+                                alt_key = alt_key.replace(existing_prefix, candidate_prefix, 1)
+                                break
+                        try:
+                            obj = s3_client.get_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=alt_key)
+                            break
+                        except Exception:
+                            pass
+                if not obj:
+                    raise initial_s3_err
+        except Exception as e:
+            if getattr(getattr(e, "response", {}), "get", None):
+                try:
+                    code = e.response.get("Error", {}).get("Code")
+                except Exception:
+                    code = None
+                if code in ("NoSuchKey", "404"):
+                    return Response(
+                        {
+                            'status': 'error',
+                            'message': 'Document not available from remote storage',
+                        },
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+            return Response(
+                {
+                    'status': 'error',
+                    'message': f'Unable to fetch document from remote storage: {e}',
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        body = obj['Body']
+
+        def iter_stream():
+            for chunk in body.iter_chunks(chunk_size=8192):
+                if chunk:
+                    yield chunk
+
+        content_type = obj.get('ContentType') or 'application/pdf'
+        content_length = obj.get('ContentLength')
+
+        response = StreamingHttpResponse(iter_stream(), content_type=content_type)
+        if content_length is not None:
+            response['Content-Length'] = str(content_length)
+        response['Content-Disposition'] = f'{disposition}; filename="{document.file_name}"'
+
+        from audit.utils import log_action
+        action_name = "DOWNLOAD_DOC" if as_attachment else "PREVIEW_DOC"
+        actor_desc = (
+            actor.full_name or actor.username
+            if actor and hasattr(actor, "username")
+            else (token_email or "Public Recipient")
+        )
+        log_action(
+            actor,
+            action_name,
+            document,
+            f"{actor_desc} {action_name.lower()}ed document '{document.file_name}'.",
+            request=request,
+        )
+        return response
+
+    # Local / media files
+    abs_path = get_media_absolute_path_from_url(source_url)
+    if not os.path.isabs(abs_path):
+        abs_path = os.path.join(str(settings.MEDIA_ROOT), abs_path)
+
+    if not os.path.exists(abs_path):
+        return Response(
+            {
+                'status': 'error',
+                'message': 'Document file not found on server',
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    file_handle = open(abs_path, 'rb')
+    response = FileResponse(
+        file_handle,
+        content_type='application/pdf',
+        as_attachment=as_attachment,
+        filename=document.file_name,
+    )
+    response['Content-Disposition'] = f'{disposition}; filename="{document.file_name}"'
+
+    from audit.utils import log_action
+    action_name = "DOWNLOAD_DOC" if as_attachment else "PREVIEW_DOC"
+    actor_desc = (
+        actor.full_name or actor.username
+        if actor and hasattr(actor, "username")
+        else (token_email or "Public Recipient")
+    )
+    log_action(
+        actor,
+        action_name,
+        document,
+        f"{actor_desc} {action_name.lower()}ed document '{document.file_name}'.",
+        request=request,
+    )
+    return response
+
+
+class DocumentPublicPreviewView(APIView):
+    """
+    Public API view for streaming document preview via a valid SigningToken.
+
+    Endpoint: GET /documents/{pk}/preview-public/?token={token}
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(token_str, allow_used=True)
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                },
+                status=status_code,
+            )
+
+        envelope = signing_token.envelope
+        if not envelope.envelopedocument_set.filter(document_id=pk).exists():
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Document not found in envelope",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        document = get_object_or_404(Document, pk=pk)
+        return _stream_document_file_response(
+            document,
+            as_attachment=False,
+            actor=signing_token.recipient_user,
+            request=request,
+            token_email=signing_token.recipient_email,
+        )
+
+
+class DocumentPublicDownloadView(APIView):
+    """
+    Public API view for downloading a document attachment via a valid SigningToken.
+
+    Endpoint: GET /documents/{pk}/download-public/?token={token}
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(token_str, allow_used=True)
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                },
+                status=status_code,
+            )
+
+        envelope = signing_token.envelope
+        if not envelope.envelopedocument_set.filter(document_id=pk).exists():
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Document not found in envelope",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        document = get_object_or_404(Document, pk=pk)
+        return _stream_document_file_response(
+            document,
+            as_attachment=True,
+            actor=signing_token.recipient_user,
+            request=request,
+            token_email=signing_token.recipient_email,
+        )

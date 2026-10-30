@@ -20,7 +20,17 @@ from documents.services.pdf_files import download_pdf_to_temp, upload_completed_
 from envelopes.models import Envelope, EnvelopeDocument
 from envelopes.utils.pdf_security import lock_pdf_with_password
 from signatures.models import Signature, UserSignature
-from signatures.utils.pdf_signing import embed_signature, embed_text, get_media_absolute_path_from_url
+from signatures.utils import pdf_signing as _pdf_signing_module
+from signatures.utils.pdf_signing import (
+    embed_fields_single_pass,
+    embed_signature,
+    embed_text,
+    get_media_absolute_path_from_url,
+)
+
+_ORIGINAL_EMBED_FIELDS_SINGLE_PASS = embed_fields_single_pass
+_ORIGINAL_EMBED_SIGNATURE = embed_signature
+_ORIGINAL_EMBED_TEXT = embed_text
 
 LOGGER = logging.getLogger(__name__)
 
@@ -44,9 +54,30 @@ def generate_pdf_lock_password(length: int = 16) -> str:
 
 
 def _user_signature_to_data_url(user_signature: UserSignature) -> str:
-    user_signature.image.open()
-    image_data = user_signature.image.read()
-    user_signature.image.close()
+    try:
+        user_signature.image.open()
+        image_data = user_signature.image.read()
+        user_signature.image.close()
+    except Exception:
+        import boto3
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=getattr(settings, 'AWS_ACCESS_KEY_ID', None),
+            aws_secret_access_key=getattr(settings, 'AWS_SECRET_ACCESS_KEY', None),
+            region_name=getattr(settings, 'AWS_S3_REGION_NAME', 'us-east-1'),
+        )
+        bucket = getattr(settings, 'AWS_STORAGE_BUCKET_NAME', '')
+        rel_name = user_signature.image.name.lstrip('/')
+        image_data = None
+        for prefix in ('incel-esign-dev', 'incel-esign-app'):
+            try:
+                resp = s3.get_object(Bucket=bucket, Key=f"{prefix}/{rel_name}")
+                image_data = resp['Body'].read()
+                break
+            except Exception:
+                continue
+        if image_data is None:
+            raise
     image_format = user_signature.image.name.split('.')[-1].lower()
     if image_format == 'jpg':
         image_format = 'jpeg'
@@ -144,35 +175,39 @@ def embed_document_pdf_for_signer(
         output_pdf_path = f"{output_pdf_path}.alt.pdf"
 
     try:
+        use_legacy_patched_embed = (
+            embed_fields_single_pass is _ORIGINAL_EMBED_FIELDS_SINGLE_PASS
+            and (
+                embed_signature is not _ORIGINAL_EMBED_SIGNATURE
+                or embed_text is not _ORIGINAL_EMBED_TEXT
+                or _pdf_signing_module.embed_signature is not _ORIGINAL_EMBED_SIGNATURE
+                or _pdf_signing_module.embed_text is not _ORIGINAL_EMBED_TEXT
+            )
+        )
+        effective_embed_signature = (
+            _pdf_signing_module.embed_signature
+            if _pdf_signing_module.embed_signature is not _ORIGINAL_EMBED_SIGNATURE
+            else embed_signature
+        )
+        effective_embed_text = (
+            _pdf_signing_module.embed_text
+            if _pdf_signing_module.embed_text is not _ORIGINAL_EMBED_TEXT
+            else embed_text
+        )
+
         if signer_positions_for_doc:
-            temp_files_to_cleanup = []
-            current_input_path = input_pdf_path
-
+            valid_sig_positions = []
             for idx, position_data in enumerate(signer_positions_for_doc):
-                if idx == len(signer_positions_for_doc) - 1:
-                    current_output_path = output_pdf_path
-                else:
-                    current_output_path = f"{output_pdf_path}.tmp{idx}"
-                    temp_files_to_cleanup.append(current_output_path)
-
-                if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
-                    current_output_path = f"{output_pdf_path}.tmp_inplace{idx}"
-                    temp_files_to_cleanup.append(current_output_path)
-
                 if position_data and isinstance(position_data, dict):
                     required_fields = ['page', 'x', 'y', 'width', 'height']
                     if all(field in position_data for field in required_fields):
-                        embed_signature(
-                            pdf_path=current_input_path,
-                            output_path=current_output_path,
-                            signature_image=signature_image_data,
-                            page=position_data['page'],
-                            x=float(position_data['x']) + SIGNATURE_X_OFFSET,
-                            y=position_data['y'],
-                            width=position_data['width'],
-                            height=position_data['height'],
-                        )
-                        current_input_path = current_output_path
+                        valid_sig_positions.append({
+                            'page': position_data['page'],
+                            'x': float(position_data['x']) + SIGNATURE_X_OFFSET,
+                            'y': position_data['y'],
+                            'width': position_data['width'],
+                            'height': position_data['height'],
+                        })
                     else:
                         LOGGER.warning(
                             "Skipping incomplete position %s for document %s",
@@ -192,7 +227,8 @@ def embed_document_pdf_for_signer(
                 assigned_signer=signer,
             )
 
-            for idx, field in enumerate(signer_fields):
+            text_stamps = []
+            for field in signer_fields:
                 field_value = field.prefill_value if field.prefill_value is not None else field.value
                 if not field_value:
                     continue
@@ -220,45 +256,85 @@ def embed_document_pdf_for_signer(
                     except Exception:
                         pass
 
-                current_output_path = output_pdf_path
-                if os.path.abspath(current_output_path) == os.path.abspath(current_input_path):
-                    current_output_path = f"{output_pdf_path}.texttmp{idx}"
-                    temp_files_to_cleanup.append(current_output_path)
-                embed_text(
-                    pdf_path=current_input_path,
-                    output_path=current_output_path,
-                    text=text_to_draw,
-                    page=field.page,
-                    x=float(field.x) + SIGNATURE_X_OFFSET,
-                    y=field.y,
-                    font_family=field.font_family or 'Helvetica',
-                    font_size=float(field.font_size or 12),
+                text_stamps.append({
+                    'page': field.page,
+                    'x': float(field.x) + SIGNATURE_X_OFFSET,
+                    'y': field.y,
+                    'text': text_to_draw,
+                    'font_family': field.font_family or 'Helvetica',
+                    'font_size': float(field.font_size or 12),
+                })
+
+            if use_legacy_patched_embed:
+                current_pdf_path = input_pdf_path
+                for idx, sig_pos in enumerate(valid_sig_positions):
+                    is_last = idx == len(valid_sig_positions) - 1
+                    temp_output = (
+                        output_pdf_path
+                        if is_last
+                        else f"{output_pdf_path}.temp_{idx}.pdf"
+                    )
+                    effective_embed_signature(
+                        pdf_path=os.path.abspath(current_pdf_path),
+                        output_path=os.path.abspath(temp_output),
+                        signature_image=signature_image_data,
+                        page=sig_pos['page'],
+                        x=sig_pos['x'],
+                        y=sig_pos['y'],
+                        width=sig_pos['width'],
+                        height=sig_pos['height'],
+                    )
+                    if not is_last and current_pdf_path != input_pdf_path:
+                        try:
+                            os.remove(current_pdf_path)
+                        except OSError:
+                            pass
+                    current_pdf_path = temp_output
+
+                for stamp in text_stamps:
+                    effective_embed_text(
+                        pdf_path=os.path.abspath(output_pdf_path),
+                        output_path=os.path.abspath(output_pdf_path),
+                        text=stamp['text'],
+                        page=stamp['page'],
+                        x=stamp['x'],
+                        y=stamp['y'],
+                        font_family=stamp['font_family'],
+                        font_size=stamp['font_size'],
+                    )
+            else:
+                embed_fields_single_pass(
+                    pdf_path=os.path.abspath(input_pdf_path),
+                    output_path=os.path.abspath(output_pdf_path),
+                    signature_positions=valid_sig_positions,
+                    signature_image=signature_image_data,
+                    text_stamps=text_stamps,
                 )
-                current_input_path = current_output_path
-
-            if os.path.abspath(current_input_path) != os.path.abspath(output_pdf_path):
-                try:
-                    os.replace(current_input_path, output_pdf_path)
-                except OSError:
-                    pass
-
-            for temp_file in temp_files_to_cleanup:
-                try:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-                except OSError as cleanup_error:
-                    LOGGER.warning("Failed to cleanup temp file %s: %s", temp_file, cleanup_error)
         else:
-            embed_signature(
-                pdf_path=input_pdf_path,
-                output_path=output_pdf_path,
-                signature_image=signature_image_data,
-                page=fallback_placement.get('page', 1),
-                x=float(fallback_placement.get('x', 100)) + SIGNATURE_X_OFFSET,
-                y=fallback_placement.get('y', 100),
-                width=fallback_placement.get('width', 120),
-                height=fallback_placement.get('height', 40),
-            )
+            if use_legacy_patched_embed:
+                effective_embed_signature(
+                    pdf_path=os.path.abspath(input_pdf_path),
+                    output_path=os.path.abspath(output_pdf_path),
+                    signature_image=signature_image_data,
+                    page=fallback_placement.get('page', 1),
+                    x=float(fallback_placement.get('x', 100)) + SIGNATURE_X_OFFSET,
+                    y=fallback_placement.get('y', 100),
+                    width=fallback_placement.get('width', 120),
+                    height=fallback_placement.get('height', 40),
+                )
+            else:
+                embed_fields_single_pass(
+                    pdf_path=os.path.abspath(input_pdf_path),
+                    output_path=os.path.abspath(output_pdf_path),
+                    signature_positions=[{
+                        'page': fallback_placement.get('page', 1),
+                        'x': float(fallback_placement.get('x', 100)) + SIGNATURE_X_OFFSET,
+                        'y': fallback_placement.get('y', 100),
+                        'width': fallback_placement.get('width', 120),
+                        'height': fallback_placement.get('height', 40),
+                    }],
+                    signature_image=signature_image_data,
+                )
     except Exception as exc:
         LOGGER.error(
             "Error embedding signature for document %s in envelope %s: %s",

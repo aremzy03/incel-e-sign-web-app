@@ -47,15 +47,44 @@ def send_invite_email_task(email: str, inviter_name: str) -> None:
     email_message.send(fail_silently=True)
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _build_signing_url(envelope_id: str, recipient_email: str, signing_token: str | None = None) -> str:
+    if not signing_token:
+        try:
+            from envelopes.models import Envelope
+            from envelopes.services.signing_token import get_or_create_signing_token
+
+            envelope = Envelope.objects.filter(pk=envelope_id).first()
+            if envelope:
+                token_obj = get_or_create_signing_token(envelope, recipient_email)
+                signing_token = token_obj.token
+        except Exception as exc:
+            logger.warning("Could not generate signing token for email: %s", exc)
+
+    if signing_token:
+        return f"{settings.FRONTEND_BASE_URL}/envelopes/{envelope_id}/sign?token={signing_token}"
+    return f"{settings.FRONTEND_BASE_URL}/envelopes/{envelope_id}/sign"
+
+
 @shared_task
-def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, envelope_name: str, envelope_id: str) -> None:
+def send_envelope_assigned_email_task(
+    recipient_email: str,
+    creator_name: str,
+    envelope_name: str,
+    envelope_id: str,
+    signing_token: str | None = None,
+) -> None:
     subject = "You have a document to sign"
     context = {
         'email_title': subject,
         'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
         'creator_name': creator_name,
         'document_title': envelope_name,
-        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_id}/sign",
+        'sign_document_url': _build_signing_url(envelope_id, recipient_email, signing_token),
         'brand_name': 'Incel E-Sign',
         'year': '2025',
     }
@@ -66,13 +95,18 @@ def send_envelope_assigned_email_task(recipient_email: str, creator_name: str, e
 
 
 @shared_task
-def send_turn_to_sign_email_task(recipient_email: str, envelope_name: str, envelope_id: str) -> None:
+def send_turn_to_sign_email_task(
+    recipient_email: str,
+    envelope_name: str,
+    envelope_id: str,
+    signing_token: str | None = None,
+) -> None:
     subject = "It's your turn to sign"
     context = {
         'email_title': subject,
         'user_name': recipient_email, # Assuming recipient_email can be used as user_name for now
         'document_title': envelope_name,
-        'sign_document_url': f"{settings.FRONTEND_BASE_URL}/dashboard/envelopes/{envelope_id}/sign",
+        'sign_document_url': _build_signing_url(envelope_id, recipient_email, signing_token),
         'brand_name': 'Incel E-Sign',
         'year': '2025',
     }

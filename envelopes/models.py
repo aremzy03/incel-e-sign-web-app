@@ -1,4 +1,5 @@
 import uuid
+import secrets
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.conf import settings
@@ -282,3 +283,87 @@ class EnvelopeDocument(models.Model):
                 # Changed to allow 0 for position values (x, y, width, height) but page must be >= 1
                 if not isinstance(value, (int, float)) or (key == "page" and value < 1) or (key != "page" and value < 0):
                     raise ValidationError({'signer_document_positions': f'Entry {i}: position[{key}] must be a positive number or zero (page must be >= 1).'})
+
+
+def generate_signing_token():
+    return secrets.token_urlsafe(32)
+
+
+def default_signing_token_expiry():
+    return timezone.now() + timezone.timedelta(days=7)
+
+
+class SigningToken(models.Model):
+    """
+    Cryptographic access token allowing recipients to view and sign envelopes
+    without requiring a prior account session in that browser (DocuSign/HelloSign model).
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for the signing token record."
+    )
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        default=generate_signing_token,
+        help_text="Cryptographically secure random token used in the signing URL."
+    )
+    envelope = models.ForeignKey(
+        'Envelope',
+        on_delete=models.CASCADE,
+        related_name='signing_tokens',
+        help_text="The envelope associated with this token."
+    )
+    recipient_email = models.EmailField(
+        db_index=True,
+        help_text="Email address of the recipient intended to sign."
+    )
+    recipient_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='signing_tokens',
+        help_text="The user account linked to this token, if any."
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when the token was created."
+    )
+    expires_at = models.DateTimeField(
+        default=default_signing_token_expiry,
+        help_text="Timestamp when the token expires (default 7 days)."
+    )
+    used_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the token was used to execute a signature."
+    )
+    is_revoked = models.BooleanField(
+        default=False,
+        help_text="Flag indicating if the token was manually revoked or superseded."
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Signing Token"
+        verbose_name_plural = "Signing Tokens"
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['envelope', 'recipient_email']),
+            models.Index(fields=['expires_at', 'is_revoked']),
+        ]
+
+    def __str__(self):
+        return f"SigningToken({self.envelope_id}, {self.recipient_email}, valid={self.is_valid()})"
+
+    def is_valid(self) -> bool:
+        return (
+            not self.is_revoked
+            and self.used_at is None
+            and timezone.now() < self.expires_at
+            and self.envelope.status == "pending"
+        )

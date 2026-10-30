@@ -14,13 +14,17 @@ urlpatterns = [
     # User signature management
     path('user/', views.UserSignatureListCreateView.as_view(), name='user-signatures'),
     path('user/<uuid:id>/', views.UserSignatureDetailView.as_view(), name='user-signature-detail'),
+    path('me/public/', views.PublicUserSignatureListView.as_view(), name='public_user_signatures'),
 
     # Async signing jobs
     path('jobs/<uuid:id>/', views.SigningJobDetailView.as_view(), name='signing-job-detail'),
+    path('jobs/<uuid:id>/public/', views.SigningJobPublicDetailView.as_view(), name='signing-job-public-detail'),
     path('jobs/<uuid:id>/retry/', views.SigningJobRetryView.as_view(), name='signing-job-retry'),
     
     # Document signing
     path('self-sign/', views.SelfSignView.as_view(), name='self_sign'),
     path('<uuid:envelope_id>/sign/', views.SignDocumentView.as_view(), name='sign_document'),
+    path('<uuid:envelope_id>/sign-public/', views.SignDocumentPublicView.as_view(), name='sign_document_public'),
     path('<uuid:envelope_id>/decline/', views.DeclineSignatureView.as_view(), name='decline_signature'),
+    path('<uuid:envelope_id>/decline-public/', views.DeclineSignaturePublicView.as_view(), name='decline_signature_public'),
 ]

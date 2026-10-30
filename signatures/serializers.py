@@ -158,13 +158,19 @@ class SignDocumentSerializer(serializers.Serializer):
             UUID: Validated UUID
         """
         if value:
-            # Check if the UserSignature exists and belongs to the current user
+            # Check if the UserSignature exists and belongs to the signer or current user
+            signer = self.context.get('signer')
             request = self.context.get('request')
-            if request and hasattr(request, 'user'):
+            target_user = signer or (
+                request.user
+                if request and hasattr(request, 'user') and getattr(request.user, 'is_authenticated', False)
+                else None
+            )
+            if target_user:
                 try:
-                    user_signature = UserSignature.objects.get(
+                    UserSignature.objects.get(
                         id=value,
-                        user=request.user
+                        user=target_user
                     )
                 except UserSignature.DoesNotExist:
                     raise serializers.ValidationError(
@@ -644,8 +650,8 @@ class UserSignatureSerializer(serializers.ModelSerializer):
         Returns:
             UserSignature: Created signature instance
         """
-        # Set the user from the request context
-        user = self.context['request'].user
+        # Set the user from explicit context or the request context
+        user = self.context.get('user') or self.context['request'].user
         validated_data['user'] = user
 
         # Apply background removal if an image is provided

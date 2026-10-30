@@ -198,6 +198,139 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
         writer.write(f)
 
 
+def embed_fields_single_pass(
+    pdf_path: str,
+    output_path: str,
+    *,
+    signature_positions: list[dict] | None = None,
+    signature_image: str | None = None,
+    text_stamps: list[dict] | None = None,
+    convert_y_axis: bool = True,
+) -> None:
+    """
+    Embed multiple signature positions and text fields into a PDF in a single read/write pass.
+
+    Args:
+        pdf_path: Absolute path to input PDF.
+        output_path: Absolute path where output PDF will be written.
+        signature_positions: List of dicts with keys 'page', 'x', 'y', 'width', 'height'.
+        signature_image: Base64 PNG/JPEG string (data URL or raw base64) used for signature_positions.
+        text_stamps: List of dicts with keys 'page', 'x', 'y', 'text', 'font_family', 'font_size'.
+        convert_y_axis: Convert Y from top-left to bottom-left if True.
+    """
+    if not os.path.isabs(pdf_path):
+        raise ValueError("pdf_path must be an absolute path")
+    if not os.path.isabs(output_path):
+        raise ValueError("output_path must be an absolute path")
+
+    sig_positions = signature_positions or []
+    txt_stamps = text_stamps or []
+
+    image_bytes = _decode_signature_image(signature_image) if (sig_positions and signature_image) else None
+
+    with PdfReader(pdf_path) as reader:
+        num_pages = len(reader.pages)
+        for pos in sig_positions:
+            p_no = int(pos["page"])
+            if p_no < 1 or p_no > num_pages:
+                raise IndexError(f"page {p_no} is out of bounds for document with {num_pages} pages")
+        for stamp in txt_stamps:
+            p_no = int(stamp["page"])
+            if p_no < 1 or p_no > num_pages:
+                raise IndexError(f"page {p_no} is out of bounds for document with {num_pages} pages")
+
+        # Group operations by 0-based page index
+        sigs_by_page: dict[int, list[dict]] = {}
+        for pos in sig_positions:
+            sigs_by_page.setdefault(int(pos["page"]) - 1, []).append(pos)
+
+        texts_by_page: dict[int, list[dict]] = {}
+        for stamp in txt_stamps:
+            texts_by_page.setdefault(int(stamp["page"]) - 1, []).append(stamp)
+
+        writer = PdfWriter()
+
+        for i, page_obj in enumerate(reader.pages):
+            page_sigs = sigs_by_page.get(i, [])
+            page_texts = texts_by_page.get(i, [])
+
+            if (page_sigs and image_bytes) or page_texts:
+                media_box = page_obj.mediabox
+                page_width = float(media_box.width)
+                page_height = float(media_box.height)
+
+                buffer = io.BytesIO()
+                c = canvas.Canvas(buffer, pagesize=(page_width, page_height))
+
+                if page_sigs and image_bytes:
+                    img = ImageReader(io.BytesIO(image_bytes))
+                    for pos in page_sigs:
+                        x = float(pos["x"])
+                        y = float(pos["y"])
+                        width = float(pos["width"])
+                        height = float(pos["height"])
+                        if convert_y_axis:
+                            pdf_y = page_height - y - height
+                            if pdf_y < 0:
+                                pdf_y = 0
+                            elif pdf_y + height > page_height:
+                                pdf_y = page_height - height
+                        else:
+                            pdf_y = y
+                        c.drawImage(
+                            img,
+                            x,
+                            pdf_y,
+                            width=width,
+                            height=height,
+                            mask="auto",
+                            preserveAspectRatio=True,
+                            anchor="sw",
+                        )
+
+                for stamp in page_texts:
+                    x = float(stamp["x"])
+                    y = float(stamp["y"])
+                    text = str(stamp.get("text") or "")
+                    font_family = stamp.get("font_family") or "Helvetica"
+                    font_size = float(stamp.get("font_size") or 12.0)
+
+                    try:
+                        if font_family and font_family.lower().endswith(".ttf") and os.path.exists(font_family):
+                            font_name = os.path.basename(font_family)
+                            if font_name not in pdfmetrics.getRegisteredFontNames():
+                                pdfmetrics.registerFont(TTFont(font_name, font_family))
+                            c.setFont(font_name, font_size)
+                        else:
+                            c.setFont(font_family or "Helvetica", font_size)
+                    except Exception:
+                        c.setFont("Helvetica", font_size)
+
+                    text_height = font_size * 1.2
+                    if convert_y_axis:
+                        pdf_y = page_height - y - text_height
+                        if pdf_y < 0:
+                            pdf_y = 0
+                        elif pdf_y + text_height > page_height:
+                            pdf_y = page_height - text_height
+                    else:
+                        pdf_y = y
+
+                    c.setFillColor(Color(0, 0, 0))
+                    c.drawString(x, pdf_y, text)
+
+                c.save()
+                buffer.seek(0)
+                with PdfReader(buffer) as overlay_reader:
+                    page_obj.merge_page(overlay_reader.pages[0])
+
+            writer.add_page(page_obj)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "wb") as f:
+        writer.write(f)
+
+
 def get_media_absolute_path_from_url(file_url: str) -> str:
     """
     Convert a MEDIA_URL-based URL (e.g. /media/documents/file.pdf) to an absolute file system path under MEDIA_ROOT.

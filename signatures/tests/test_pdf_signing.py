@@ -7,7 +7,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from PIL import Image
 
-from signatures.utils.pdf_signing import embed_signature
+from signatures.utils.pdf_signing import embed_fields_single_pass, embed_signature
 
 
 class PDFSigningUtilityTest(TestCase):
@@ -57,6 +57,27 @@ class PDFSigningUtilityTest(TestCase):
             y=100,
             width=120,
             height=40,
+        )
+
+        self.assertTrue(os.path.exists(self.output_pdf_path))
+        new_size = os.path.getsize(self.output_pdf_path)
+        self.assertGreater(new_size, original_size)
+
+    def test_embed_fields_single_pass_stamps_signatures_and_text_once(self):
+        original_size = os.path.getsize(self.input_pdf_path)
+
+        embed_fields_single_pass(
+            pdf_path=self.input_pdf_path,
+            output_path=self.output_pdf_path,
+            signature_positions=[
+                {"page": 1, "x": 100, "y": 100, "width": 120, "height": 40},
+                {"page": 1, "x": 300, "y": 100, "width": 120, "height": 40},
+            ],
+            signature_image=self.signature_b64,
+            text_stamps=[
+                {"page": 1, "x": 100, "y": 200, "text": "2026-10-30", "font_family": "Helvetica", "font_size": 12},
+                {"page": 1, "x": 100, "y": 250, "text": "JD", "font_family": "Helvetica", "font_size": 12},
+            ],
         )
 
         self.assertTrue(os.path.exists(self.output_pdf_path))

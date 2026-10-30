@@ -429,16 +429,18 @@ def _get_envelope_current_signer(envelope):
     """
     Return the signer who must act next for a pending envelope, or None.
 
-    The current signer is the pending signature with the lowest signing order.
+    The current signer is the pending or processing signature with the lowest signing order.
     """
     if envelope.status != 'pending':
         return None
 
-    pending_signatures = [s for s in envelope.signatures.all() if s.status == 'pending']
-    if not pending_signatures:
+    active_signatures = [
+        s for s in envelope.signatures.all() if s.status in ('pending', 'processing')
+    ]
+    if not active_signatures:
         return None
 
-    current_signature = min(pending_signatures, key=lambda signature: signature.get_signing_order())
+    current_signature = min(active_signatures, key=lambda signature: signature.get_signing_order())
     signer = current_signature.signer
     return {
         'id': str(signer.id),
