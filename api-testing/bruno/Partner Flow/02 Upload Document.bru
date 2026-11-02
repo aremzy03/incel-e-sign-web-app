@@ -1,0 +1,70 @@
+meta {
+  name: 02 Upload Document
+  type: http
+  seq: 2
+  tags: [
+    partner-flow
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/documents/upload/
+  body: multipart-form
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+headers {
+  Accept: application/json
+}
+
+body:multipart-form {
+  file: @file(fixtures/sample.pdf)
+}
+
+script:pre-request {
+  // Bruno CLI 4.0 maps http body mode as "multipart-form", but the runner only
+  // builds FormData when mode === "multipartForm". Without this, the request is
+  // sent as empty application/x-www-form-urlencoded and Django returns
+  // "No file was submitted." Requires: bru run --sandbox=developer
+  const fs = require("fs");
+  const path = require("path");
+  const FormData = require("form-data");
+
+  const token = bru.getVar("accessToken") || bru.getEnvVar("accessToken");
+  if (!token) {
+    throw new Error("accessToken missing — run 01 Token Exchange first in this session");
+  }
+
+  const collectionRoot = bru.cwd ? bru.cwd() : process.cwd();
+  const filePath = path.join(collectionRoot, "fixtures", "sample.pdf");
+  if (!fs.existsSync(filePath)) {
+    throw new Error("Missing fixtures/sample.pdf at " + filePath);
+  }
+
+  const form = new FormData();
+  form.append("file", fs.createReadStream(filePath), {
+    filename: "sample.pdf",
+    contentType: "application/pdf"
+  });
+  req.setBody(form);
+  const headers = form.getHeaders();
+  Object.keys(headers).forEach((key) => req.setHeader(key, headers[key]));
+}
+
+script:post-response {
+  if (res.status === 201 && res.body && res.body.data && res.body.data.id) {
+    bru.setVar("documentId", res.body.data.id);
+    bru.setEnvVar("documentId", res.body.data.id);
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.status: eq success
+  res.body.data.id: isDefined
+}

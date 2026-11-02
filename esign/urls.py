@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/notifications/', include('notifications.urls')),
     path('api/audit/', include('audit.urls')),
     path('api/contacts/', include('contacts.urls')),
+    path('api/v1/integrations/', include('integrations.urls')),
 ]
 
 # Serve media files during development only

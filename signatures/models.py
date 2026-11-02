@@ -137,35 +137,30 @@ class Signature(models.Model):
     
     def is_current_signer(self) -> bool:
         """
-        Check if this signer is the current signer (lowest pending order).
+        Check if this signer is the current signer (lowest pending or processing order).
         
         Returns:
             bool: True if this is the current signer who can act
         """
         if self.is_processing:
             return True
-        if not self.is_pending and not self.is_processing:
+        if not self.is_pending:
             return False
         
-        # Get all pending signatures for this envelope, ordered by signing order
-        pending_signatures = Signature.objects.filter(
-            envelope=self.envelope,
-            status='pending'
-        ).select_related('signer')
+        # Get all pending/processing signatures for this envelope, ordered by signing order
+        active_signatures = list(
+            Signature.objects.filter(
+                envelope=self.envelope,
+                status__in=['pending', 'processing'],
+            ).select_related('signer')
+        )
         
-        if not pending_signatures.exists():
+        if not active_signatures:
             return False
-        
-        # Convert to list to avoid QuerySet iteration issues
-        pending_signatures_list = list(pending_signatures)
-        
-        if not pending_signatures_list:
-            # Current signer may be in processing state
-            return self.is_processing
         
         # Find the signature with the lowest signing order
         current_signature = min(
-            pending_signatures_list,
+            active_signatures,
             key=lambda sig: sig.get_signing_order()
         )
         

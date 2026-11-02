@@ -10,6 +10,7 @@ import pytest
 from documents.serializers import DocumentSerializer
 from documents.storage import (
     TimezoneAwareS3Boto3Storage,
+    absolute_s3_key,
     persistable_storage_url,
     refresh_remote_file_url,
     storage_relative_key,
@@ -101,6 +102,23 @@ def test_storage_relative_key_strips_aws_location(settings):
     settings.AWS_LOCATION = "incel-esign-app"
     key = "incel-esign-app/completed/env/doc.pdf"
     assert storage_relative_key(key) == "completed/env/doc.pdf"
+
+
+def test_storage_relative_key_strips_non_prod_aws_location(settings):
+    settings.AWS_LOCATION = "incel-esign-staging"
+    key = "incel-esign-staging/completed/env/doc.pdf"
+    assert storage_relative_key(key) == "completed/env/doc.pdf"
+
+
+def test_absolute_s3_key_prefixes_relative_keys(settings):
+    settings.AWS_LOCATION = "incel-esign-dev"
+    assert absolute_s3_key("signing/env/doc/v1.pdf") == "incel-esign-dev/signing/env/doc/v1.pdf"
+
+
+def test_absolute_s3_key_does_not_double_prefix(settings):
+    settings.AWS_LOCATION = "incel-esign-dev"
+    key = "incel-esign-dev/signing/env/doc/v1.pdf"
+    assert absolute_s3_key(key) == key
 
 
 def test_storage_relative_key_leaves_relative_keys_unchanged(settings):

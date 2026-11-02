@@ -15,12 +15,13 @@ import os
 import shutil
 from dataclasses import dataclass
 
-import boto3
 from django.conf import settings
 from django.db import transaction
 
 from documents.services.pdf_files import build_signing_key, build_staging_key
+from documents.services.s3_client import get_boto3_s3_client
 from documents.storage import (
+    absolute_s3_key,
     get_permanent_s3_storage,
     get_temp_local_storage,
     persistable_storage_url,
@@ -59,20 +60,16 @@ def _delete_signing_artifacts_for_document(*, envelope_id, document_id) -> int:
     Returns number of deleted objects/files (best-effort count).
     """
     deleted = 0
-    prefix = os.path.dirname(build_signing_key(envelope_id, document_id, 1)) + "/"
+    relative_prefix = os.path.dirname(build_signing_key(envelope_id, document_id, 1)) + "/"
 
     if _use_s3_storage():
         bucket = getattr(settings, "AWS_STORAGE_BUCKET_NAME", None)
         if not bucket:
             return 0
 
+        prefix = absolute_s3_key(relative_prefix)
         try:
-            s3_client = boto3.client(
-                "s3",
-                region_name=settings.AWS_S3_REGION_NAME,
-                aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            )
+            s3_client = get_boto3_s3_client()
 
             continuation_token = None
             while True:
@@ -103,14 +100,14 @@ def _delete_signing_artifacts_for_document(*, envelope_id, document_id) -> int:
 
     # Local storage cleanup (MEDIA_ROOT/signing/<envelope_id>/<document_id>/)
     try:
-        base_dir = os.path.join(str(settings.MEDIA_ROOT), prefix)
+        base_dir = os.path.join(str(settings.MEDIA_ROOT), relative_prefix)
         if os.path.isdir(base_dir):
             # Count files before deleting for a best-effort metric.
             for root, _dirs, files in os.walk(base_dir):
                 deleted += len(files)
             shutil.rmtree(base_dir, ignore_errors=True)
     except Exception as exc:
-        LOGGER.warning("Failed to delete local signing artifacts at %s: %s", prefix, exc)
+        LOGGER.warning("Failed to delete local signing artifacts at %s: %s", relative_prefix, exc)
     return deleted
 
 

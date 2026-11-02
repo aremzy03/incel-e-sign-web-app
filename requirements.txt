@@ -23,6 +23,7 @@ pillow
 django-celery-results
 sentry-sdk
 gunicorn
+whitenoise
 moto[s3]
 rembg
 #

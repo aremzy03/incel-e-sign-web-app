@@ -14,7 +14,7 @@ import logging
 
 from django.db import transaction
 from documents.models import Document
-from envelopes.models import Envelope, EnvelopeDocument
+from envelopes.models import Envelope, EnvelopeDocument, default_envelope_name
 from fields.models import Field as FieldModel
 
 logger = logging.getLogger(__name__)
@@ -158,13 +158,19 @@ class SignDocumentSerializer(serializers.Serializer):
             UUID: Validated UUID
         """
         if value:
-            # Check if the UserSignature exists and belongs to the current user
+            # Check if the UserSignature exists and belongs to the signer or current user
+            signer = self.context.get('signer')
             request = self.context.get('request')
-            if request and hasattr(request, 'user'):
+            target_user = signer or (
+                request.user
+                if request and hasattr(request, 'user') and getattr(request.user, 'is_authenticated', False)
+                else None
+            )
+            if target_user:
                 try:
-                    user_signature = UserSignature.objects.get(
+                    UserSignature.objects.get(
                         id=value,
-                        user=request.user
+                        user=target_user
                     )
                 except UserSignature.DoesNotExist:
                     raise serializers.ValidationError(
@@ -406,9 +412,14 @@ class SelfSignSerializer(serializers.Serializer):
         fields_data = validated_data.get('fields', [])
 
         with transaction.atomic():
+            raw_name = (envelope_data.get('name') or '').strip()
+            if not raw_name:
+                first_document = Document.objects.get(id=document_ids[0])
+                raw_name = default_envelope_name(first_document.file_name, len(document_ids))
+
             envelope = Envelope.objects.create(
                 creator=user,
-                name=envelope_data.get('name') or None,
+                name=raw_name,
                 description=envelope_data.get('description'),
                 status="draft",
                 signing_order=[{'signer_id': str(user.id), 'order': 1}],
@@ -644,8 +655,8 @@ class UserSignatureSerializer(serializers.ModelSerializer):
         Returns:
             UserSignature: Created signature instance
         """
-        # Set the user from the request context
-        user = self.context['request'].user
+        # Set the user from explicit context or the request context
+        user = self.context.get('user') or self.context['request'].user
         validated_data['user'] = user
 
         # Apply background removal if an image is provided

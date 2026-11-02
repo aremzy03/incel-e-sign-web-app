@@ -15,6 +15,8 @@ import sys
 from decouple import config, Csv
 import dj_database_url
 
+from .environment import normalize_environment, resolve_aws_location
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -36,6 +38,11 @@ if SECRET_KEY is None:
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', cast=bool, default=True)
 
+# development | staging | production. Defaults from DEBUG so existing production
+# hosts without ENVIRONMENT keep writing under incel-esign-app. Staging hosts
+# MUST set ENVIRONMENT=staging or they inherit the production S3 prefix.
+ENVIRONMENT = normalize_environment(config('ENVIRONMENT', default=None), debug=DEBUG)
+
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv(), default=None)
 if ALLOWED_HOSTS is None:
     # Sensible default for local development
@@ -55,7 +62,7 @@ if SENTRY_DSN and not DEBUG:
     else:
         sentry_traces_sample_rate = float(sentry_traces_sample_rate)
 
-    sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or 'production'
+    sentry_environment = config('SENTRY_ENVIRONMENT', default=None) or ENVIRONMENT
     sentry_release = config('SENTRY_RELEASE', default=None)
 
     sentry_sdk.init(
@@ -149,6 +156,7 @@ INSTALLED_APPS = [
     'notifications',
     'audit',
     'contacts',
+    'integrations',
     'django_celery_results',
 ]
 
@@ -159,6 +167,9 @@ AUTHENTICATION_BACKENDS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Serve Django/admin static files from STATIC_ROOT (gunicorn has no nginx).
+    # Must sit directly after SecurityMiddleware. Media/uploads stay on S3 when USE_S3.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -286,6 +297,9 @@ THROTTLE_RATE_ANON = config('THROTTLE_RATE_ANON', default=None) or '100/hour'
 THROTTLE_RATE_USER = config('THROTTLE_RATE_USER', default=None) or '1000/hour'
 THROTTLE_RATE_AUTH = config('THROTTLE_RATE_AUTH', default=None) or '10/minute'
 THROTTLE_RATE_UPLOAD = config('THROTTLE_RATE_UPLOAD', default=None) or '20/hour'
+THROTTLE_RATE_INTEGRATION_TOKEN = (
+    config('THROTTLE_RATE_INTEGRATION_TOKEN', default=None) or THROTTLE_RATE_AUTH
+)
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -311,6 +325,7 @@ REST_FRAMEWORK = {
         'user': THROTTLE_RATE_USER,
         'auth': THROTTLE_RATE_AUTH,    # For login/register
         'upload': THROTTLE_RATE_UPLOAD,  # For file uploads
+        'integration_token': THROTTLE_RATE_INTEGRATION_TOKEN,  # Token exchange
     },
 }
 
@@ -436,8 +451,13 @@ if _signing_cutover_raw:
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # File storage
-# Use S3 in production if configured, otherwise use local storage
+# Use S3 for media/uploads when configured. Django/admin static files are always
+# served locally via WhiteNoise (not private S3/CloudFront), so admin CSS/JS work
+# behind gunicorn without nginx and without weakening SECURE_* settings.
 USE_S3 = config('USE_S3', cast=bool, default=False)
+
+# Compressed + hashed filenames for long-lived cache headers under WhiteNoise.
+_STATICFILES_BACKEND = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 if USE_S3:
     # Django 5+ uses STORAGES for backend configuration; keep DEFAULT_FILE_STORAGE
@@ -447,11 +467,11 @@ if USE_S3:
             "BACKEND": "documents.storage.TimezoneAwareS3Boto3Storage",
         },
         "staticfiles": {
-            "BACKEND": "storages.backends.s3boto3.S3StaticStorage",
+            "BACKEND": _STATICFILES_BACKEND,
         },
     }
     DEFAULT_FILE_STORAGE = 'documents.storage.TimezoneAwareS3Boto3Storage'
-    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
+    STATICFILES_STORAGE = _STATICFILES_BACKEND
 
     # AWS S3 configuration
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
@@ -474,8 +494,6 @@ if USE_S3:
         AWS_CLOUDFRONT_KEY = _cloudfront_key_inline.replace('\\n', '\n')
     else:
         AWS_CLOUDFRONT_KEY = None
-    # Prefix all stored objects under this path inside the bucket
-    AWS_LOCATION = config('AWS_LOCATION', default='incel-esign-app')
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
@@ -484,21 +502,26 @@ if USE_S3:
     AWS_QUERYSTRING_AUTH = True
     AWS_QUERYSTRING_EXPIRE = config('AWS_QUERYSTRING_EXPIRE', default=3600, cast=int)
 else:
-    # Development: use local file system storage (default)
+    # Development: local filesystem for media; WhiteNoise for static/admin assets
     STORAGES = {
         "default": {
             "BACKEND": "django.core.files.storage.FileSystemStorage",
         },
         "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+            "BACKEND": _STATICFILES_BACKEND,
         },
     }
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    STATICFILES_STORAGE = _STATICFILES_BACKEND
     # AWS variables still available for optional use
     AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
     AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
     AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=None)
+
+# Prefix all stored objects under this path inside the shared bucket.
+# Derived from ENVIRONMENT unless AWS_LOCATION is set explicitly.
+AWS_LOCATION = resolve_aws_location(ENVIRONMENT, config('AWS_LOCATION', default=None))
 
 # Boto3 S3 client timeouts for Celery signing workers (download/upload helpers).
 AWS_S3_CONNECT_TIMEOUT = config('AWS_S3_CONNECT_TIMEOUT', default=10, cast=int)
@@ -522,6 +545,12 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Shorter access lifetime for tokens minted via integration token exchange
+# (auth_via=integration). Refresh tokens still use SIMPLE_JWT defaults.
+INTEGRATION_ACCESS_TOKEN_LIFETIME = timedelta(
+    minutes=int(config('INTEGRATION_ACCESS_TOKEN_LIFETIME_MINUTES', default='30'))
+)
+
 # Google OAuth settings
 GOOGLE_OAUTH_CLIENT_ID = config('GOOGLE_OAUTH_CLIENT_ID', default=None)
 GOOGLE_OAUTH_CLIENT_SECRET = config('GOOGLE_OAUTH_CLIENT_SECRET', default=None)
@@ -534,11 +563,12 @@ CELERY_RESULT_BACKEND = config('CELERY_RESULT_BACKEND', default='redis://localho
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks',)
+CELERY_IMPORTS = ('notifications.tasks', 'signatures.tasks', 'integrations.tasks',)
 
 CELERY_TASK_ROUTES = {
     'signatures.tasks.*': {'queue': 'signing'},
     'notifications.tasks.*': {'queue': 'notifications'},
+    'integrations.tasks.*': {'queue': 'notifications'},
 }
 
 # Celery task settings
@@ -548,7 +578,8 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
-CELERY_WORKER_CONCURRENCY = config('CELERY_WORKER_CONCURRENCY', default=2, cast=int)
+CELERY_WORKER_CONCURRENCY = config('CELERY_WORKER_CONCURRENCY', default=4, cast=int)
+CELERY_TASK_DEFAULT_QUEUE = 'default'
 
 # Email configuration
 EMAIL_BACKEND = config('EMAIL_BACKEND', default=None) or 'django.core.mail.backends.smtp.EmailBackend'

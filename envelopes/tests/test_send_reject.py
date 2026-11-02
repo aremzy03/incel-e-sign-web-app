@@ -139,13 +139,27 @@ class EnvelopeSendRejectTestCase(APITestCase):
         
         other_refresh = RefreshToken.for_user(self.other_user)
         self.other_token = str(other_refresh.access_token)
-    
+
+        # Clear any leftover client auth from other tests in the suite.
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+
+    def tearDown(self):
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+        super().tearDown()
+
+    def authenticate_as(self, user):
+        """Authenticate via force_authenticate to avoid suite JWT pollution."""
+        self.client.credentials()
+        self.client.force_authenticate(user=user)
+
     def test_creator_can_successfully_send_draft_envelope(self):
         """Test that creator can successfully send a draft envelope."""
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -164,7 +178,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         # Verify initial status
         self.assertEqual(self.draft_envelope.status, 'draft')
@@ -182,7 +196,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -201,7 +215,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         # Verify initial status
         self.assertEqual(self.draft_envelope.status, 'draft')
@@ -219,7 +233,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for other user
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_token}')
+        self.authenticate_as(self.other_user)
         
         response = self.client.post(url)
         
@@ -236,7 +250,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for other user
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.other_token}')
+        self.authenticate_as(self.other_user)
         
         response = self.client.post(url)
         
@@ -254,7 +268,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.sent_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -272,7 +286,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.completed_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -288,15 +302,14 @@ class EnvelopeSendRejectTestCase(APITestCase):
     def test_sending_rejected_envelope_can_be_resent(self):
         """Test that a rejected envelope can be successfully resent."""
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.rejected_envelope.id})
-        
-        # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
-        
+
+        self.authenticate_as(self.creator)
+
         # Verify initial status
         self.assertEqual(self.rejected_envelope.status, 'rejected')
-        
+
         response = self.client.post(url)
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['message'], 'Envelope sent successfully')
@@ -312,7 +325,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.sent_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -329,7 +342,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.completed_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -346,6 +359,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Remove authentication
+        self.client.force_authenticate(user=None)
         self.client.credentials()
         
         response = self.client.post(url)
@@ -361,6 +375,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Remove authentication
+        self.client.force_authenticate(user=None)
         self.client.credentials()
         
         response = self.client.post(url)
@@ -377,7 +392,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': nonexistent_id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -389,7 +404,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': nonexistent_id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -400,7 +415,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_send', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         
@@ -440,7 +455,7 @@ class EnvelopeSendRejectTestCase(APITestCase):
         url = reverse('envelopes:envelope_reject', kwargs={'pk': self.draft_envelope.id})
         
         # Set authentication header for creator
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.creator_token}')
+        self.authenticate_as(self.creator)
         
         response = self.client.post(url)
         

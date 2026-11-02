@@ -56,6 +56,10 @@ class UserSignaturesIntegrationTestCase(APITestCase):
     
     def setUp(self):
         """Set up test data and authentication."""
+        # Clear leftover client auth from other suite tests.
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+
         # Create test users
         self.creator = User.objects.create_user(
             email='creator@test.com',
@@ -82,7 +86,7 @@ class UserSignaturesIntegrationTestCase(APITestCase):
         self.creator_token = str(RefreshToken.for_user(self.creator).access_token)
         self.signer1_token = str(RefreshToken.for_user(self.signer1).access_token)
         self.signer2_token = str(RefreshToken.for_user(self.signer2).access_token)
-        
+
         # Create test signature images
         self.test_signature_image = self._create_test_image('red')
         self.test_signature_image2 = self._create_test_image('blue')
@@ -90,6 +94,16 @@ class UserSignaturesIntegrationTestCase(APITestCase):
         
         # Create test PDF content
         self.test_pdf_content = b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/MediaBox [0 0 612 792]\n>>\nendobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \ntrailer\n<<\n/Size 4\n/Root 1 0 R\n>>\nstartxref\n174\n%%EOF"
+
+    def tearDown(self):
+        self.client.force_authenticate(user=None)
+        self.client.credentials()
+        super().tearDown()
+
+    def authenticate_as(self, user):
+        """Authenticate via force_authenticate to avoid suite JWT pollution."""
+        self.client.credentials()
+        self.client.force_authenticate(user=user)
     
     def _create_test_image(self, color='red'):
         """Create a test image with specified color."""
@@ -101,23 +115,29 @@ class UserSignaturesIntegrationTestCase(APITestCase):
     
     def _create_test_envelope(self, creator_token, signer):
         """Helper method to create a test envelope."""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {creator_token}')
-        
+        # creator_token kept for call-site compatibility; prefer force_authenticate.
+        self.authenticate_as(self.creator)
+
         # Upload document
         test_file = SimpleUploadedFile(
             "test_document.pdf",
             self.test_pdf_content,
             content_type="application/pdf"
         )
-        
+
         upload_response = self.client.post(
             reverse('documents:document_upload'),
             {'file': test_file},
             format='multipart'
         )
-        
+        self.assertEqual(
+            upload_response.status_code,
+            status.HTTP_201_CREATED,
+            f"Document upload failed: {upload_response.status_code} {upload_response.data}",
+        )
+
         document_id = upload_response.data['data']['id']
-        
+
         # Create envelope
         envelope_data = {
             'document_ids': [document_id],
@@ -125,64 +145,89 @@ class UserSignaturesIntegrationTestCase(APITestCase):
                 {'signer_id': str(signer.id), 'order': 1}
             ]
         }
-        
+
         create_response = self.client.post(
             reverse('envelopes:envelope_create'),
             envelope_data,
             format='json'
         )
-        
+        self.assertEqual(
+            create_response.status_code,
+            status.HTTP_201_CREATED,
+            f"Envelope create failed: {create_response.status_code} {create_response.data}",
+        )
+
         envelope_id = create_response.data['data']['id']
-        
+
         # Send envelope
         send_response = self.client.post(
             reverse('envelopes:envelope_send', kwargs={'pk': envelope_id})
         )
-        
+        self.assertEqual(
+            send_response.status_code,
+            status.HTTP_200_OK,
+            f"Envelope send failed: {send_response.status_code} {send_response.data}",
+        )
+
         return envelope_id
-    
+
     def _create_test_envelope_with_multiple_signers(self, creator_token, signers):
         """Helper method to create a test envelope with multiple signers."""
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {creator_token}')
-        
+        self.authenticate_as(self.creator)
+
         # Upload document
         test_file = SimpleUploadedFile(
             "test_document.pdf",
             self.test_pdf_content,
             content_type="application/pdf"
         )
-        
+
         upload_response = self.client.post(
             reverse('documents:document_upload'),
             {'file': test_file},
             format='multipart'
         )
-        
+        self.assertEqual(
+            upload_response.status_code,
+            status.HTTP_201_CREATED,
+            f"Document upload failed: {upload_response.status_code} {upload_response.data}",
+        )
+
         document_id = upload_response.data['data']['id']
-        
+
         # Create envelope with multiple signers
         signing_order = []
         for i, signer in enumerate(signers, 1):
             signing_order.append({'signer_id': str(signer.id), 'order': i})
-        
+
         envelope_data = {
             'document_ids': [document_id],
             'signing_order': signing_order
         }
-        
+
         create_response = self.client.post(
             reverse('envelopes:envelope_create'),
             envelope_data,
             format='json'
         )
-        
+        self.assertEqual(
+            create_response.status_code,
+            status.HTTP_201_CREATED,
+            f"Envelope create failed: {create_response.status_code} {create_response.data}",
+        )
+
         envelope_id = create_response.data['data']['id']
-        
+
         # Send envelope
         send_response = self.client.post(
             reverse('envelopes:envelope_send', kwargs={'pk': envelope_id})
         )
-        
+        self.assertEqual(
+            send_response.status_code,
+            status.HTTP_200_OK,
+            f"Envelope send failed: {send_response.status_code} {send_response.data}",
+        )
+
         return envelope_id
 
 
@@ -200,7 +245,7 @@ class UploadReusableSignatureTest(UserSignaturesIntegrationTestCase):
         2. Assert signature is saved and belongs to user
         3. Assert signature appears in GET /signatures/user/
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         # Upload signature
         signature_data = {
@@ -271,7 +316,7 @@ class UploadReusableSignatureTest(UserSignaturesIntegrationTestCase):
         """
         Test uploading invalid file format.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         # Upload invalid file (text file)
         signature_data = {
@@ -306,7 +351,7 @@ class SetDefaultSignatureTest(UserSignaturesIntegrationTestCase):
         2. Set one as default
         3. Assert only one is_default at a time
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         # Upload first signature
         signature1_data = {
@@ -420,7 +465,7 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
         
         # Signer1 uploads reusable signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -480,7 +525,7 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
         
         # Signer1 tries to sign with non-existent signature_id
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         sign_data = {
             'signature_id': str(uuid.uuid4())  # Non-existent ID
@@ -504,7 +549,7 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
         
         # Signer2 uploads a signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -523,7 +568,7 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
         other_user_signature_id = upload_response.data['data']['id']
         
         # Signer1 tries to sign with signer2's signature_id
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         sign_data = {
             'signature_id': other_user_signature_id
@@ -556,8 +601,8 @@ class SignWithAutoDefaultTest(UserSignaturesIntegrationTestCase):
         4. Assert default signature is used automatically
         """
         # Signer1 uploads default signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        
+        self.authenticate_as(self.signer1)
+
         signature_data = {
             'image': SimpleUploadedFile(
                 'test_signature.png',
@@ -566,32 +611,41 @@ class SignWithAutoDefaultTest(UserSignaturesIntegrationTestCase):
             ),
             'is_default': True
         }
-        
+
         upload_response = self.client.post(
             reverse('signatures:user-signatures'),
             signature_data,
             format='multipart'
         )
-        
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+
         user_signature_id = upload_response.data['data']['id']
-        
+
         # Create envelope
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+
+        # Re-auth as signer1 after envelope helper authenticates as creator.
+        self.authenticate_as(self.signer1)
+
         # Signer1 signs without providing signature (should use default)
         sign_data = {}  # No signature provided
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope_id}),
             sign_data,
             format='json'
         )
-        
-        # For now, accept 403 as the expected response since there seems to be an issue with the signing process
-        # TODO: Investigate and fix the signing authorization issue
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
+
+        self.assertEqual(sign_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(sign_response.data['status'], 'success')
+        self.assertIn('job_id', sign_response.data['data'])
+
+        signature = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
+        self.assertEqual(signature.status, 'signed')
+        self.assertIsNotNone(signature.signature_image)
+        self.assertIsNotNone(signature.signed_at)
+        self.assertTrue(signature.signature_image.startswith('data:image/'))
+        self.assertIn('base64,', signature.signature_image)
     
     def test_sign_with_no_default_signature(self):
         """
@@ -601,7 +655,7 @@ class SignWithAutoDefaultTest(UserSignaturesIntegrationTestCase):
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
         
         # Signer1 tries to sign without providing signature and no default
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         sign_data = {}  # No signature provided
         
@@ -636,7 +690,7 @@ class DeleteReusableSignatureTest(UserSignaturesIntegrationTestCase):
         4. Attempt to sign with deleted ID → 400 BAD REQUEST
         """
         # Upload signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -671,26 +725,26 @@ class DeleteReusableSignatureTest(UserSignaturesIntegrationTestCase):
         
         # Create envelope and attempt to sign with deleted signature_id
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+        self.authenticate_as(self.signer1)
+
         # Verify signature record exists and is pending
         signature_record = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
         self.assertEqual(signature_record.status, 'pending')
-        
+
         sign_data = {
             'signature_id': signature_id  # Deleted signature ID
         }
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope_id}),
             sign_data,
             format='json'
         )
-        
-        # TODO: Fix signing authorization issue - currently returns 403 instead of 400
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
-        
+
+        self.assertEqual(sign_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Validation failed', sign_response.data['message'])
+        self.assertIn('UserSignature not found', str(sign_response.data.get('data', {})))
+
         # Verify audit log was created for deletion
         audit_log = AuditLog.objects.filter(
             actor=self.signer1,
@@ -704,7 +758,7 @@ class DeleteReusableSignatureTest(UserSignaturesIntegrationTestCase):
         Test deleting another user's signature.
         """
         # Signer1 uploads signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -723,7 +777,7 @@ class DeleteReusableSignatureTest(UserSignaturesIntegrationTestCase):
         signature_id = upload_response.data['data']['id']
         
         # Signer2 tries to delete signer1's signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         
         delete_response = self.client.delete(
             reverse('signatures:user-signature-detail', kwargs={'id': signature_id})
@@ -750,7 +804,7 @@ class PermissionEnforcementTest(UserSignaturesIntegrationTestCase):
         3. Assert 403 FORBIDDEN or empty result
         """
         # Signer1 uploads signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -769,7 +823,7 @@ class PermissionEnforcementTest(UserSignaturesIntegrationTestCase):
         signature_id = upload_response.data['data']['id']
         
         # Signer2 tries to GET signer1's signatures
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         
         get_response = self.client.get(reverse('signatures:user-signatures'))
         
@@ -790,7 +844,7 @@ class PermissionEnforcementTest(UserSignaturesIntegrationTestCase):
         Test that users cannot update another user's signature.
         """
         # Signer1 uploads signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -809,7 +863,7 @@ class PermissionEnforcementTest(UserSignaturesIntegrationTestCase):
         signature_id = upload_response.data['data']['id']
         
         # Signer2 tries to update signer1's signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.authenticate_as(self.signer2)
         
         update_data = {'is_default': True}
         update_response = self.client.patch(
@@ -821,7 +875,7 @@ class PermissionEnforcementTest(UserSignaturesIntegrationTestCase):
         self.assertEqual(update_response.status_code, status.HTTP_404_NOT_FOUND)
         
         # Verify signature was not modified
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         detail_response = self.client.get(
             reverse('signatures:user-signature-detail', kwargs={'id': signature_id})
         )
@@ -846,7 +900,7 @@ class UserSignatureWorkflowIntegrationTest(UserSignaturesIntegrationTestCase):
         4. Create another envelope and sign using default
         5. Delete signature and verify it can't be used
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         # Step 1: Upload multiple signatures
         signature1_data = {
@@ -895,86 +949,88 @@ class UserSignatureWorkflowIntegrationTest(UserSignaturesIntegrationTestCase):
         
         # Step 2: Create envelope and sign using explicit signature_id (signature1)
         envelope1_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+        self.authenticate_as(self.signer1)
+
         # Verify signature record exists and is pending
         signature_record = Signature.objects.get(envelope_id=envelope1_id, signer=self.signer1)
         self.assertEqual(signature_record.status, 'pending')
-        
+
         sign_data = {
             'signature_id': signature1_id
         }
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope1_id}),
             sign_data,
             format='json'
         )
-        
-        # TODO: Fix signing authorization issue - currently returns 403 instead of 200
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
-        
+
+        self.assertEqual(sign_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(sign_response.data['status'], 'success')
+        self.assertIn('job_id', sign_response.data['data'])
+
+        signature_record.refresh_from_db()
+        self.assertEqual(signature_record.status, 'signed')
+
         # Step 3: Create another envelope and sign using default signature
         envelope2_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+        self.authenticate_as(self.signer1)
+
         # Verify signature record exists and is pending
         signature_record2 = Signature.objects.get(envelope_id=envelope2_id, signer=self.signer1)
         self.assertEqual(signature_record2.status, 'pending')
-        
+
         sign_data = {}  # No signature provided, should use default
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope2_id}),
             sign_data,
             format='json'
         )
-        
-        # TODO: Fix signing authorization issue - currently returns 403 instead of 200
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
-        
+
+        self.assertEqual(sign_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(sign_response.data['status'], 'success')
+        self.assertIn('job_id', sign_response.data['data'])
+
+        signature_record2.refresh_from_db()
+        self.assertEqual(signature_record2.status, 'signed')
+
         # Step 4: Delete signature1 and verify it can't be used
         delete_response = self.client.delete(
             reverse('signatures:user-signature-detail', kwargs={'id': signature1_id})
         )
-        
-        # TODO: Fix delete operation - currently returns 404 instead of 204
-        self.assertEqual(delete_response.status_code, status.HTTP_404_NOT_FOUND)
-        
-        # Note: Due to the delete issue, signature1 may still exist
+
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(UserSignature.objects.filter(id=signature1_id).exists())
+
         # Verify signature2 still exists and is default
         self.assertTrue(UserSignature.objects.filter(id=signature2_id, is_default=True).exists())
-        
+
         # Step 5: Create another envelope and try to use deleted signature
         envelope3_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+        self.authenticate_as(self.signer1)
+
         sign_data = {
             'signature_id': signature1_id  # Deleted signature
         }
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope3_id}),
             sign_data,
             format='json'
         )
-        
-        # TODO: Fix signing authorization issue - currently returns 403 instead of 400
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
-        
-        # Verify audit logs for successful operations only
-        # (SIGN_DOC logs won't be created due to 403 errors)
+
+        self.assertEqual(sign_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Validation failed', sign_response.data['message'])
+        self.assertIn('UserSignature not found', str(sign_response.data.get('data', {})))
+
+        # Verify audit logs for successful operations
         audit_actions = [
             'CREATE_USER_SIGNATURE',
-            'CREATE_USER_SIGNATURE', 
-            # 'SIGN_DOC',  # Not created due to 403 errors
-            # 'SIGN_DOC',  # Not created due to 403 errors
-            # 'DELETE_USER_SIGNATURE'  # Not created due to 404 errors
+            'CREATE_USER_SIGNATURE',
+            'DELETE_USER_SIGNATURE',
         ]
-        
+
         for action in audit_actions:
             audit_log = AuditLog.objects.filter(
                 actor=self.signer1,
@@ -993,7 +1049,7 @@ class UserSignatureEdgeCasesTest(UserSignaturesIntegrationTestCase):
         Test signing with both signature_image and signature_id provided.
         """
         # Upload signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         signature_data = {
             'image': SimpleUploadedFile(
@@ -1013,33 +1069,40 @@ class UserSignatureEdgeCasesTest(UserSignaturesIntegrationTestCase):
         
         # Create envelope
         envelope_id = self._create_test_envelope(self.creator_token, self.signer1)
-        
+        self.authenticate_as(self.signer1)
+
         # Verify signature record exists and is pending
         signature_record = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
         self.assertEqual(signature_record.status, 'pending')
-        
+
         # Try to sign with both signature_image and signature_id
         sign_data = {
             'signature_image': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
             'signature_id': user_signature_id
         }
-        
+
         sign_response = self.client.post(
             reverse('signatures:sign_document', kwargs={'envelope_id': envelope_id}),
             sign_data,
             format='json'
         )
-        
-        # TODO: Fix signing authorization issue - currently returns 403 instead of 400
-        self.assertEqual(sign_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertEqual(sign_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(sign_response.data['status'], 'error')
-        self.assertIn('You are not authorized to sign this document', sign_response.data['message'])
+        response_message = str(sign_response.data.get('message', ''))
+        response_data = str(sign_response.data.get('data', ''))
+        self.assertTrue(
+            'not both' in response_message.lower()
+            or 'not both' in response_data.lower()
+            or 'Validation failed' in response_message,
+            f"Expected mutual-exclusion validation error, got: {sign_response.data}",
+        )
     
     def test_upload_signature_with_large_file(self):
         """
         Test uploading signature with file size exceeding limit.
         """
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         
         # Create a file larger than 1MB
         large_data = b'x' * (1024 * 1024 + 1)  # 1MB + 1 byte
@@ -1069,8 +1132,8 @@ class UserSignatureEdgeCasesTest(UserSignaturesIntegrationTestCase):
         Test that users' signatures are properly isolated.
         """
         # Signer1 uploads signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
-        
+        self.authenticate_as(self.signer1)
+
         signature1_data = {
             'image': SimpleUploadedFile(
                 'test_signature1.png',
@@ -1079,16 +1142,17 @@ class UserSignatureEdgeCasesTest(UserSignaturesIntegrationTestCase):
             ),
             'is_default': True
         }
-        
+
         upload1_response = self.client.post(
             reverse('signatures:user-signatures'),
             signature1_data,
             format='multipart'
         )
-        
+        self.assertEqual(upload1_response.status_code, status.HTTP_201_CREATED)
+
         # Signer2 uploads signature
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
-        
+        self.authenticate_as(self.signer2)
+
         signature2_data = {
             'image': SimpleUploadedFile(
                 'test_signature2.png',
@@ -1097,20 +1161,23 @@ class UserSignatureEdgeCasesTest(UserSignaturesIntegrationTestCase):
             ),
             'is_default': True
         }
-        
+
         upload2_response = self.client.post(
             reverse('signatures:user-signatures'),
             signature2_data,
             format='multipart'
         )
-        
+        self.assertEqual(upload2_response.status_code, status.HTTP_201_CREATED)
+
         # Verify both users can have default signatures
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer1_token}')
+        self.authenticate_as(self.signer1)
         list1_response = self.client.get(reverse('signatures:user-signatures'))
-        
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.signer2_token}')
+        self.assertEqual(list1_response.status_code, status.HTTP_200_OK)
+
+        self.authenticate_as(self.signer2)
         list2_response = self.client.get(reverse('signatures:user-signatures'))
-        
+        self.assertEqual(list2_response.status_code, status.HTTP_200_OK)
+
         # Both should have 1 signature each, both default
         list1_data = list1_response.data.get('results', list1_response.data)
         list2_data = list2_response.data.get('results', list2_response.data)

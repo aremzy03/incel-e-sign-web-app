@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from .models import Field
 from .serializers import FieldSerializer, FieldValueSerializer
@@ -104,4 +104,74 @@ class SigningFieldsValueSaveView(APIView):
             updated.append(str(f.id))
 
         return Response({"status": "success", "data": {"updated": updated}})
+
+
+class SigningFieldsValueSavePublicView(APIView):
+    """
+    Public API view for saving signer field values via SigningToken.
+
+    Endpoint: POST /fields/signing/{envelope_id}/values-public/?token={token}
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, envelope_id):
+        from envelopes.models import Envelope
+        from envelopes.services.signing_token import validate_signing_token
+
+        token_str = (
+            request.data.get("token")
+            or request.query_params.get("token")
+            or request.headers.get("X-Signing-Token")
+        )
+        signing_token, error_code, error_message = validate_signing_token(
+            token_str, envelope_id=str(envelope_id)
+        )
+        if error_code:
+            status_code = (
+                status.HTTP_410_GONE
+                if error_code == "TOKEN_EXPIRED"
+                else status.HTTP_403_FORBIDDEN
+            )
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                },
+                status=status_code,
+            )
+
+        envelope = get_object_or_404(Envelope, pk=envelope_id)
+        items = request.data if isinstance(request.data, list) else request.data.get('items')
+        if not isinstance(items, list):
+            return Response(
+                {"status": "error", "message": "Expected a list of {id, value}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        signer_user = signing_token.recipient_user
+        if not signer_user:
+            sig = envelope.signatures.filter(
+                signer__email__iexact=signing_token.recipient_email
+            ).first()
+            signer_user = sig.signer if sig else None
+
+        updated = []
+        for item in items:
+            ser = FieldValueSerializer(data=item)
+            ser.is_valid(raise_exception=True)
+            field_filter = {"pk": ser.validated_data['id'], "envelope": envelope}
+            if signer_user:
+                field_filter["assigned_signer"] = signer_user
+            f = get_object_or_404(Field, **field_filter)
+            if f.prefill_value is None:
+                f.value = ser.validated_data.get('value')
+                f.save(update_fields=['value', 'updated_at'])
+            updated.append(str(f.id))
+
+        return Response({"status": "success", "data": {"updated": updated}})
+
 

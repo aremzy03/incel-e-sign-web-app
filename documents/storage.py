@@ -102,6 +102,31 @@ def storage_relative_key(key: str) -> str:
     return key
 
 
+def absolute_s3_key(relative_key: str) -> str:
+    """
+    Prefix a storage-relative key with AWS_LOCATION for raw boto3 calls.
+
+    django-storages prepends AWS_LOCATION automatically; boto3 list/get/delete
+    operate on full object keys and must include the environment prefix.
+
+    Args:
+        relative_key (str): Storage-relative key or prefix (e.g. signing/<id>/).
+
+    Returns:
+        str: Full S3 object key including AWS_LOCATION when configured.
+    """
+    if not relative_key:
+        return relative_key
+
+    location = getattr(settings, "AWS_LOCATION", "").strip("/")
+    key = relative_key.lstrip("/")
+    if not location:
+        return key
+    if key == location or key.startswith(f"{location}/"):
+        return key
+    return f"{location}/{key}"
+
+
 def persistable_storage_url(url: str) -> str:
     """
     Return a stable URL or path suitable for persisting on Document.

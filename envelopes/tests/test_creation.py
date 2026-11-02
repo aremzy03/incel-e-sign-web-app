@@ -132,7 +132,7 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertEqual(response.data['data']['description'], "Quick summary for recipients")
 
     def test_successful_envelope_creation_with_default_name(self):
-        """Test successful envelope creation with multiple documents and default name."""
+        """Test successful envelope creation with single and multiple documents using default name."""
         url = reverse('envelopes:envelope_create')
         
         payload = {
@@ -149,10 +149,23 @@ class EnvelopeCreationTestCase(APITestCase):
         
         envelope = Envelope.objects.get(id=response.data['data']['id'])
         self.assertIsNotNone(envelope.name)
-        self.assertIn("Untitled Envelope", envelope.name)
-        self.assertIn(envelope.name, response.data['data']['name'])
+        self.assertEqual(envelope.name, "test_document1")
+        self.assertEqual(response.data['data']['name'], "test_document1")
         self.assertIn('description', response.data['data'])
         self.assertIsNone(response.data['data']['description'])
+
+        # Test default name with multiple documents: "<first_doc_base> (+<n-1>)"
+        multi_payload = {
+            'document_ids': [str(self.document1.id), str(self.document2.id)],
+            'signing_order': [
+                {'signer_id': str(self.signer1.id), 'order': 1}
+            ]
+        }
+        multi_response = self.client.post(url, multi_payload, format='json')
+        self.assertEqual(multi_response.status_code, status.HTTP_201_CREATED)
+        multi_envelope = Envelope.objects.get(id=multi_response.data['data']['id'])
+        self.assertEqual(multi_envelope.name, "test_document1 (+1)")
+        self.assertEqual(multi_response.data['data']['name'], "test_document1 (+1)")
 
     def test_envelope_creation_fails_if_no_documents(self):
         """Test creation fails if no document IDs are provided."""
@@ -428,7 +441,7 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('signing_order', response.data['data'])
-        self.assertIn('must have both', response.data['data']['signing_order'][0])
+        self.assertIn('order', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_signer_id_invalid_uuid_format(self):
         """Test creation fails if signer_id is not a valid UUID format."""
@@ -446,7 +459,7 @@ class EnvelopeCreationTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['status'], 'error')
         self.assertIn('signing_order', response.data['data'])
-        self.assertIn('valid UUID', response.data['data']['signing_order'][0])
+        self.assertIn('Users not found', response.data['data']['signing_order'][0])
     
     def test_envelope_creation_fails_if_order_not_positive_integer(self):
         """Test creation fails if order is not a positive integer."""

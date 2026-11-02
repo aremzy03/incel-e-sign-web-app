@@ -117,10 +117,13 @@ def _notify_next_signer(envelope):
     recipient_email = getattr(next_signature.signer, 'email', None)
     if recipient_email:
         try:
+            from envelopes.services.signing_token import get_or_create_signing_token
+            token_obj = get_or_create_signing_token(envelope, recipient_email, next_signature.signer)
             send_turn_to_sign_email_task.delay(
                 recipient_email,
                 envelope.name,
                 str(envelope.id),
+                token_obj.token,
             )
         except Exception as exc:
             LOGGER.error("Error sending turn-to-sign email: %s", exc)

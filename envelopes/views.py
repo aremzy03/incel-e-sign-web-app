@@ -10,7 +10,7 @@ from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.http import Http404 # Import Http404
@@ -49,8 +49,9 @@ class EnvelopeCreateView(APIView):
     
     Endpoint: POST /envelopes/create/
     Requires authentication.
-    Accepts payload: {document_id, signing_order}
-    Returns created envelope details.
+    Accepts payload: {document_ids, signing_order} where signing_order entries
+    may use signer_id and/or email (find-or-invite).
+    Supports Idempotency-Key for safe retries.
     """
     
     permission_classes = [IsAuthenticated]
@@ -60,11 +61,28 @@ class EnvelopeCreateView(APIView):
         Create a new envelope for a document.
         
         Args:
-            request: HTTP request containing document_id and signing_order
+            request: HTTP request containing document_ids and signing_order
             
         Returns:
             Response with created envelope details or error message
         """
+        from integrations.services.idempotency import (
+            SCOPE_ENVELOPE_CREATE,
+            get_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+
+        idem_key = get_idempotency_key(request)
+        if idem_key:
+            cached = lookup_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=SCOPE_ENVELOPE_CREATE,
+            )
+            if cached is not None:
+                return cached
+
         serializer = EnvelopeCreateSerializer(
             data=request.data,
             context={'request': request}
@@ -75,22 +93,42 @@ class EnvelopeCreateView(APIView):
             
             # Log the envelope creation action
             from audit.utils import log_action
-            log_action(
-                request.user, 
-                "CREATE_ENVELOPE", 
-                envelope, 
-                f"User {request.user.full_name or request.user.username} created envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
-                request=request
+            from integrations.services.envelope_origin import (
+                record_envelope_integration_origin,
             )
+            from integrations.services.jwt_claims import enrich_message_with_client_id
+
+            create_message = (
+                f"User {request.user.full_name or request.user.username} "
+                f"created envelope '{envelope.name}' with "
+                f"{envelope.envelopedocument_set.count()} documents."
+            )
+            log_action(
+                request.user,
+                "CREATE_ENVELOPE",
+                envelope,
+                enrich_message_with_client_id(create_message, request),
+                request=request,
+            )
+            record_envelope_integration_origin(envelope, request=request)
             
             # Return envelope details using the detail serializer
             detail_serializer = EnvelopeDetailSerializer(envelope)
-            
-            return Response({
+            body = {
                 "status": "success",
                 "message": "Envelope created successfully",
-                "data": detail_serializer.data
-            }, status=status.HTTP_201_CREATED)
+                "data": detail_serializer.data,
+            }
+            if idem_key:
+                store_idempotent_response(
+                    user=request.user,
+                    key=idem_key,
+                    scope=SCOPE_ENVELOPE_CREATE,
+                    response_status=status.HTTP_201_CREATED,
+                    response_body=body,
+                    envelope_id=envelope.id,
+                )
+            return Response(body, status=status.HTTP_201_CREATED)
         
         return Response({
             "status": "error",
@@ -107,6 +145,7 @@ class EnvelopeSendView(APIView):
     Requires authentication.
     Only the envelope creator can send.
     Changes status from "draft" to "pending".
+    Supports Idempotency-Key for safe retries.
     """
     
     permission_classes = [IsAuthenticated]
@@ -122,113 +161,59 @@ class EnvelopeSendView(APIView):
         Returns:
             Response with updated envelope details or error message
         """
+        from envelopes.services.send import EnvelopeSendError, send_envelope
+        from integrations.services.idempotency import (
+            SCOPE_ENVELOPE_SEND,
+            get_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+        from signatures.services.reset_workflow import SigningWorkflowInProgressError
+
+        idem_key = get_idempotency_key(request)
+        # Scope send idempotency per envelope so the same key can be reused
+        # across different envelopes if needed; key+scope still unique per user.
+        send_scope = f"{SCOPE_ENVELOPE_SEND}:{pk}"
+        if idem_key:
+            cached = lookup_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=send_scope,
+            )
+            if cached is not None:
+                return cached
+
         envelope = get_object_or_404(Envelope, pk=pk)
 
-        # Block sends while async signing is in-flight for this envelope.
-        from signatures.services.reset_workflow import (
-            SigningWorkflowInProgressError,
-            assert_no_inflight_signing_jobs,
-            reset_signing_workflow,
-        )
         try:
-            assert_no_inflight_signing_jobs(envelope)
+            envelope = send_envelope(envelope, user=request.user, request=request)
         except SigningWorkflowInProgressError as exc:
             return Response({
                 "status": "error",
                 "message": str(exc),
             }, status=status.HTTP_409_CONFLICT)
-        
-        # Check if user is the creator
-        if envelope.creator != request.user:
+        except EnvelopeSendError as exc:
             return Response({
                 "status": "error",
-                "message": "You can only send envelopes you created."
-            }, status=status.HTTP_403_FORBIDDEN)
+                "message": exc.message,
+            }, status=exc.status_code)
 
-        if envelope.is_self_sign:
-            return Response({
-                "status": "error",
-                "message": "Self-signed envelopes cannot be sent to recipients."
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check if envelope is in draft or rejected status
-        if envelope.status not in ["draft", "rejected"]:
-            return Response({
-                "status": "error",
-                "message": f"Only draft or rejected envelopes can be sent. Current status: {envelope.status}"
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # If the envelope was rejected, reset it to draft before sending
-        if envelope.status == "rejected":
-            envelope.status = "draft"
-            envelope.save()
-
-        # Update envelope status to pending
-        envelope.status = "pending"
-        envelope.save()
-
-        # Update the status of all documents in this envelope to 'sent'
-        for envelope_document in envelope.envelopedocument_set.all():
-            document = envelope_document.document
-            document.status = "sent"
-            document.save()
-            
-        # Log the envelope send action
-        from audit.utils import log_action
-        log_action(
-            request.user, 
-            "SEND_ENVELOPE", 
-            envelope, 
-            f"User {request.user.full_name or request.user.username} sent envelope '{envelope.name}' with {envelope.envelopedocument_set.count()} documents.", 
-            request=request
-        )
-        
-        # Reset PDF/signature workflow state and rebuild signature rows.
-        # This guarantees current_signer starts at the first signer after resend.
-        reset_signing_workflow(envelope)
-
-        from django.contrib.auth import get_user_model
-        from notifications.utils import create_notification, create_envelope_sent_notification
-        from notifications.tasks import send_envelope_assigned_email_task
-        
-        User = get_user_model()
-        
-        # Notify first signer
-        if envelope.signing_order:
-            first_signer_id = envelope.signing_order[0]['signer_id']
-            try:
-                first_signer = User.objects.get(id=first_signer_id)
-                message = create_envelope_sent_notification(envelope)
-                # utils.create_notification proxies to Celery task; no need to call .delay here
-                create_notification(str(first_signer.id), message)
-                # Send assignment email to first signer
-                try:
-                    recipient_email = getattr(first_signer, 'email', None)
-                    if recipient_email:
-                        send_envelope_assigned_email_task.delay(
-                            recipient_email,
-                            request.user.full_name or request.user.username,
-                            envelope.name,
-                            str(envelope.id) # Pass envelope ID instead of URL
-                        )
-                except Exception as e:
-                    # Log email sending error but don't block the main process
-                    print(f"Error sending envelope assigned email: {e}")
-                    # TODO: Add proper logging here. (AR 2025-10-17)
-            except User.DoesNotExist:
-                # This case should ideally not happen if signing_order is well-formed
-                pass
-        
-        # Signature rows are rebuilt by reset_signing_workflow; nothing else to do here.
-        
-        # Return updated envelope details
         detail_serializer = EnvelopeDetailSerializer(envelope)
-        
-        return Response({
+        body = {
             "status": "success",
             "message": "Envelope sent successfully",
-            "data": detail_serializer.data
-        }, status=status.HTTP_200_OK)
+            "data": detail_serializer.data,
+        }
+        if idem_key:
+            store_idempotent_response(
+                user=request.user,
+                key=idem_key,
+                scope=send_scope,
+                response_status=status.HTTP_200_OK,
+                response_body=body,
+                envelope_id=envelope.id,
+            )
+        return Response(body, status=status.HTTP_200_OK)
 
 
 class EnvelopeRejectView(APIView):
@@ -772,3 +757,145 @@ class EnvelopeDashboardView(APIView):
                 "recent_activity": recent_activity,
             },
         }, status=status.HTTP_200_OK)
+
+
+class EnvelopePublicDetailView(APIView):
+    """
+    Public API view for retrieving envelope details using a valid SigningToken.
+
+    Endpoint: GET /envelopes/{id}/public/?token={token}
+    Allows recipients to view envelope, documents, fields, and saved signatures
+    without being previously logged in.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+        from signatures.models import UserSignature
+        from signatures.serializers import UserSignatureSerializer
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(
+            token_str,
+            envelope_id=str(pk),
+            allow_used=True,
+        )
+
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                    "recipient_email": signing_token.recipient_email if signing_token else None,
+                },
+                status=status_code,
+            )
+
+        envelope = prefetch_envelope_detail(Envelope.objects.filter(pk=pk)).first()
+        if not envelope:
+            return Response(
+                {
+                    "status": "error",
+                    "code": "ENVELOPE_NOT_FOUND",
+                    "message": "Envelope not found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        detail_serializer = EnvelopeDetailSerializer(envelope)
+        documents_in_envelope = envelope.envelopedocument_set.all()
+        doc_serializer = EnvelopeDocumentSerializer(documents_in_envelope, many=True)
+
+        matching_sig = envelope.signatures.filter(
+            signer__email__iexact=signing_token.recipient_email
+        ).select_related("signer").first()
+
+        recipient_user = signing_token.recipient_user or (matching_sig.signer if matching_sig else None)
+        if not recipient_user and signing_token.recipient_email:
+            recipient_user = User.objects.filter(email__iexact=signing_token.recipient_email).first()
+
+        saved_signatures_data = []
+        if recipient_user:
+            user_sigs = UserSignature.objects.filter(user=recipient_user).order_by("-is_default", "-created_at")
+            saved_signatures_data = UserSignatureSerializer(user_sigs, many=True).data
+
+        has_already_signed = bool(
+            signing_token.used_at is not None
+            or (matching_sig and (matching_sig.is_signed or matching_sig.status in ("signed", "processing")))
+        )
+        is_current_signer = bool(
+            not has_already_signed and matching_sig and matching_sig.is_current_signer()
+        )
+
+        response_payload = {
+            **detail_serializer.data,
+            "documents": doc_serializer.data,
+            "recipient": {
+                "email": signing_token.recipient_email,
+                "full_name": getattr(recipient_user, "full_name", None) or signing_token.recipient_email,
+                "user_id": str(recipient_user.id) if recipient_user else None,
+                "is_current_signer": is_current_signer,
+                "has_already_signed": has_already_signed,
+            },
+            "saved_signatures": saved_signatures_data,
+        }
+
+        return Response(
+            {
+                "status": "success",
+                "message": "Envelope retrieved successfully via token",
+                "data": response_payload,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class EnvelopePublicDocumentView(APIView):
+    """
+    Public API view for retrieving envelope documents via signing token.
+
+    Endpoint: GET /envelopes/{id}/documents/public/?token={token}
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(
+            token_str,
+            envelope_id=str(pk),
+            allow_used=True,
+        )
+
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                    "recipient_email": signing_token.recipient_email if signing_token else None,
+                },
+                status=status_code,
+            )
+
+        envelope = get_object_or_404(Envelope, pk=pk)
+        documents_in_envelope = envelope.envelopedocument_set.all()
+        doc_serializer = EnvelopeDocumentSerializer(documents_in_envelope, many=True)
+        return Response(
+            {
+                "status": "success",
+                "data": doc_serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+

@@ -1,0 +1,43 @@
+meta {
+  name: Login
+  type: http
+  seq: 1
+  tags: [
+    auth
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/auth/login/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "email": "{{process.env.LOGIN_EMAIL}}",
+    "password": "{{process.env.LOGIN_PASSWORD}}"
+  }
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.data) {
+    bru.setVar("accessToken", res.body.data.access);
+    bru.setVar("refreshToken", res.body.data.refresh);
+    bru.setEnvVar("accessToken", res.body.data.access);
+    bru.setEnvVar("refreshToken", res.body.data.refresh);
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq success
+  res.body.data.access: isDefined
+  res.body.data.refresh: isDefined
+}

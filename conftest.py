@@ -36,3 +36,16 @@ def _patch_signing_embed_for_tests():
         side_effect=_embed_signature_side_effect,
     ):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _clear_django_cache_between_tests():
+    """
+    Reset LocMem throttle/cache keys so scoped throttles do not accumulate
+    across tests in a long suite run.
+    """
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()

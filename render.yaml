@@ -18,6 +18,8 @@ services:
         generateValue: true
       - key: DEBUG
         value: False
+      - key: ENVIRONMENT
+        value: production
       - key: ALLOWED_HOSTS
         value: your-app-name.onrender.com  # Update with your actual Render domain
       - key: CORS_ALLOWED_ORIGINS
@@ -54,7 +56,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: ./build.sh
-    startCommand: celery -A esign worker -l info
+    startCommand: celery -A esign worker -l info -Q default,signing --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
@@ -81,6 +83,8 @@ services:
           property: SECRET_KEY
       - key: DEBUG
         value: False
+      - key: ENVIRONMENT
+        value: production
       - key: ALLOWED_HOSTS
         fromService:
           type: web

@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from .models import Signature, UserSignature, SigningJob
 from .serializers import (
@@ -94,7 +94,10 @@ class SignDocumentView(APIView):
                 "message": "You have already signed this document."
             }, status=status.HTTP_403_FORBIDDEN)
         
-        serializer = SignDocumentSerializer(data=request.data, context={'request': request})
+        serializer = SignDocumentSerializer(
+            data=request.data,
+            context={'request': request, 'signer': signature.signer},
+        )
         if not serializer.is_valid():
             return Response({
                 "status": "error",
@@ -200,11 +203,26 @@ class SigningJobDetailView(APIView):
 class SigningJobRetryView(APIView):
     """POST /api/signatures/jobs/{id}/retry/ — retry a failed signing job."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request, id):
         job = get_object_or_404(SigningJob.objects.select_related("envelope", "signer", "signature"), pk=id)
-        if job.signer_id != request.user.id:
+        token_str = (
+            request.query_params.get("token")
+            or request.headers.get("X-Signing-Token")
+            or request.data.get("token")
+        )
+        authorized = False
+        if request.user and request.user.is_authenticated and job.signer_id == request.user.id:
+            authorized = True
+        elif token_str:
+            from envelopes.services.signing_token import validate_signing_token
+
+            signing_token, _, _ = validate_signing_token(token_str, allow_used=True)
+            if signing_token and str(signing_token.envelope_id) == str(job.envelope_id):
+                authorized = True
+
+        if not authorized:
             return Response({
                 "status": "error",
                 "message": "You are not authorized to retry this signing job.",
@@ -593,3 +611,322 @@ class UserSignatureDetailView(RetrieveUpdateDestroyAPIView):
             'status': 'success',
             'message': 'Signature deleted successfully'
         }, status=status.HTTP_204_NO_CONTENT)
+
+
+class SignDocumentPublicView(APIView):
+    """
+    Public API view for signing an envelope using a SigningToken.
+
+    Endpoint: POST /signatures/{envelope_id}/sign-public/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, envelope_id):
+        from envelopes.models import Envelope
+        from envelopes.services.signing_token import validate_signing_token, mark_token_used
+        from fields.models import Field
+        from django.db import transaction
+
+        token_str = (
+            request.data.get("token")
+            or request.query_params.get("token")
+            or request.headers.get("X-Signing-Token")
+        )
+        signing_token, error_code, error_message = validate_signing_token(token_str, envelope_id=str(envelope_id))
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response({"status": "error", "code": error_code, "message": error_message}, status=status_code)
+
+        envelope = get_object_or_404(Envelope, pk=envelope_id)
+
+        if is_envelope_frozen(envelope):
+            return Response({
+                "status": "error",
+                "message": FROZEN_ENVELOPE_MESSAGE,
+            }, status=status.HTTP_409_CONFLICT)
+
+        if envelope.status != "pending":
+            return Response({
+                "status": "error",
+                "message": f"Envelope must be in 'pending' status to sign. Current status: {envelope.status}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        signature = envelope.signatures.filter(
+            signer__email__iexact=signing_token.recipient_email
+        ).first()
+
+        if not signature:
+            return Response({
+                "status": "error",
+                "message": f"No signature assignment found for recipient {signing_token.recipient_email}."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if not signature.is_current_signer():
+            return Response({
+                "status": "error",
+                "message": "It's not your turn to sign yet. Please wait for your turn."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if signature.is_signed:
+            return Response({
+                "status": "error",
+                "message": "You have already signed this document."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = SignDocumentSerializer(
+            data=request.data,
+            context={'request': request, 'signer': signature.signer},
+        )
+        if not serializer.is_valid():
+            return Response({
+                "status": "error",
+                "message": "Validation failed",
+                "data": serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        validated_data = serializer.validated_data
+        signature_image_data = validated_data.get('signature_image', '')
+        user_signature_id = validated_data.get('signature_id')
+
+        field_values = request.data.get('field_values')
+        if isinstance(field_values, dict):
+            for field_id, val in field_values.items():
+                Field.objects.filter(envelope=envelope, id=field_id, assigned_signer=signature.signer).update(value=val)
+        elif isinstance(field_values, list):
+            for item in field_values:
+                if isinstance(item, dict) and 'id' in item and 'value' in item:
+                    Field.objects.filter(envelope=envelope, id=item['id'], assigned_signer=signature.signer).update(value=item['value'])
+
+        fallback_placement = {
+            'page': validated_data.get('page', 1),
+            'x': validated_data.get('x', 100),
+            'y': validated_data.get('y', 100),
+            'width': validated_data.get('width', 120),
+            'height': validated_data.get('height', 40),
+        }
+
+        with transaction.atomic():
+            signature = Signature.objects.select_for_update().get(pk=signature.pk)
+            if signature.is_signed:
+                return Response({
+                    "status": "success",
+                    "message": "Document signed successfully",
+                    "data": SignatureSerializer(signature).data
+                }, status=status.HTTP_200_OK)
+
+            job = create_and_enqueue_signing_job(
+                envelope=envelope,
+                signer=signature.signer,
+                signature=signature,
+                signature_image_data=signature_image_data,
+                user_signature_id=user_signature_id,
+                fallback_placement=fallback_placement,
+                request=request,
+            )
+            mark_token_used(signing_token)
+
+        from audit.utils import log_action
+        log_action(
+            signature.signer,
+            "SIGN_ENVELOPE_PUBLIC",
+            envelope,
+            f"Signer {signing_token.recipient_email} executed signature via token {signing_token.id} (job={job.id}).",
+            request=request,
+        )
+
+        return Response({
+            "status": "success",
+            "message": "Signing job queued",
+            "data": signing_job_response_data(job),
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+class DeclineSignaturePublicView(APIView):
+    """
+    Public API view for declining to sign an envelope using a SigningToken.
+
+    Endpoint: POST /signatures/{envelope_id}/decline-public/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request, envelope_id):
+        from envelopes.models import Envelope
+        from envelopes.services.signing_token import validate_signing_token, revoke_envelope_tokens
+
+        token_str = (
+            request.data.get("token")
+            or request.query_params.get("token")
+            or request.headers.get("X-Signing-Token")
+        )
+        signing_token, error_code, error_message = validate_signing_token(token_str, envelope_id=str(envelope_id))
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response({"status": "error", "code": error_code, "message": error_message}, status=status_code)
+
+        envelope = get_object_or_404(Envelope, pk=envelope_id)
+        if envelope.status != "pending":
+            return Response({
+                "status": "error",
+                "message": f"Only pending envelopes can be declined. Current status: {envelope.status}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        signature = envelope.signatures.filter(
+            signer__email__iexact=signing_token.recipient_email
+        ).first()
+
+        if not signature:
+            return Response({
+                "status": "error",
+                "message": "No signature assignment found for this recipient."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        decline_message = request.data.get('decline_message', 'Declined via public signing link.')
+        signature.status = "declined"
+        signature.save(update_fields=['status'])
+
+        envelope.status = "rejected"
+        envelope.save(update_fields=['status', 'updated_at'])
+
+        revoke_envelope_tokens(envelope)
+
+        from audit.utils import log_action
+        log_action(
+            signature.signer,
+            "DECLINE_ENVELOPE_PUBLIC",
+            envelope,
+            f"Signer {signing_token.recipient_email} declined envelope '{envelope.name}' via token {signing_token.id}. Reason: {decline_message}",
+            request=request,
+        )
+
+        return Response({
+            "status": "success",
+            "message": "Envelope declined successfully",
+            "data": {
+                "envelope_id": str(envelope.id),
+                "status": envelope.status,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class SigningJobPublicDetailView(APIView):
+    """
+    Public API view for polling an async signing job via SigningToken.
+
+    Endpoint: GET /signatures/jobs/{id}/public/?token={token}
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, id):
+        from envelopes.services.signing_token import validate_signing_token
+
+        job = get_object_or_404(
+            SigningJob.objects.select_related("envelope", "signer", "signature"),
+            pk=id,
+        )
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(token_str, allow_used=True)
+
+        if not signing_token or str(signing_token.envelope_id) != str(job.envelope_id):
+            return Response({
+                "status": "error",
+                "message": "Valid signing token required for this job.",
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = SigningJobSerializer(job)
+        return Response({
+            "status": "success",
+            "data": serializer.data,
+        })
+
+
+class PublicUserSignatureListView(APIView):
+    """
+    Public API view for loading and creating saved signatures for the recipient linked to a SigningToken.
+
+    Endpoint: GET/POST /signatures/me/public/?token={token}
+    """
+    permission_classes = [AllowAny]
+
+    def _resolve_token_and_user(self, request, *, allow_used: bool = False):
+        from envelopes.services.signing_token import validate_signing_token
+        from django.contrib.auth import get_user_model
+
+        token_str = (
+            request.query_params.get("token")
+            or request.headers.get("X-Signing-Token")
+            or request.data.get("token")
+        )
+        signing_token, error_code, error_message = validate_signing_token(token_str, allow_used=allow_used)
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return None, None, Response(
+                {"status": "error", "code": error_code, "message": error_message},
+                status=status_code,
+            )
+
+        user = signing_token.recipient_user
+        if not user and signing_token.recipient_email:
+            User = get_user_model()
+            user = User.objects.filter(email__iexact=signing_token.recipient_email).first()
+            if user and not signing_token.recipient_user_id:
+                signing_token.recipient_user = user
+                signing_token.save(update_fields=["recipient_user"])
+
+        return signing_token, user, None
+
+    def get(self, request):
+        _, recipient_user, error_response = self._resolve_token_and_user(request, allow_used=True)
+        if error_response:
+            return error_response
+
+        if not recipient_user:
+            return Response({"status": "success", "data": []}, status=status.HTTP_200_OK)
+
+        signatures = UserSignature.objects.filter(user=recipient_user).order_by("-is_default", "-created_at")
+        serializer = UserSignatureSerializer(signatures, many=True)
+        return Response({"status": "success", "data": serializer.data}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        signing_token, recipient_user, error_response = self._resolve_token_and_user(request)
+        if error_response:
+            return error_response
+
+        if not recipient_user:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Unable to associate signature with recipient user account.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = UserSignatureSerializer(
+            data=request.data,
+            context={"request": request, "user": recipient_user},
+        )
+        serializer.is_valid(raise_exception=True)
+        signature = serializer.save()
+
+        from audit.utils import log_action
+        log_action(
+            recipient_user,
+            "CREATE_USER_SIGNATURE",
+            signature,
+            f"User {recipient_user.full_name or recipient_user.email} uploaded a signature via signing token {signing_token.id}.",
+            request=request,
+        )
+
+        return Response(
+            {
+                "status": "success",
+                "message": "Signature created successfully",
+                "data": serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+        )

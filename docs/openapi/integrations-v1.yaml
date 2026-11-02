@@ -1,0 +1,710 @@
+openapi: 3.1.0
+info:
+  title: Incel E-Sign First-Party Integrations API
+  version: 1.0.0
+  summary: Server-to-server token exchange and partner envelope orchestration
+  description: |
+    Trusted first-party applications exchange `client_id` + `client_secret` plus a
+    user email for a user-scoped SimpleJWT pair, then call existing document and
+    envelope endpoints (or the composite send path) so `Envelope.creator` is that
+    real user (UI parity). Phase 4 adds email find-or-invite signers, Idempotency-Key,
+    composite send, and outbound webhooks. Admin registration only (no public portal).
+
+    Human guide: `docs/integrations-api-guide.md`
+  contact:
+    name: E-Sign Engineering
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.example.com
+    description: Production (replace with real host)
+
+tags:
+  - name: Integrations
+    description: Machine credential → user JWT exchange and composite envelope send
+  - name: Documents
+    description: Document upload (JWT user owns the file)
+  - name: Envelopes
+    description: Create, send, and retrieve envelopes
+  - name: Webhooks
+    description: Outbound partner webhooks (admin-registered; documented for implementers)
+
+security: []
+
+paths:
+  /api/v1/integrations/token/:
+    post:
+      tags: [Integrations]
+      operationId: exchangeIntegrationToken
+      summary: Exchange client credentials for a user-scoped JWT
+      description: |
+        Authenticates the integration, optionally enforces IP allowlist, resolves
+        or JIT-creates the user by email, optionally upserts IntegrationUserLink,
+        and returns access/refresh tokens with claims `client_id` and
+        `auth_via=integration`. Access lifetime defaults to 30 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenExchangeRequest'
+            examples:
+              standard:
+                summary: Existing or JIT user
+                value:
+                  client_id: int_A16vncjs4BNfVP638CICsA
+                  client_secret: replace-me
+                  email: ada@example.com
+                  full_name: Ada Lovelace
+                  external_user_id: hr-user-123
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenExchangeSuccessResponse'
+              example:
+                status: success
+                message: Token issued successfully
+                data:
+                  access: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refresh: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    id: 657c99e4-5658-42cc-9c3c-5e0d2700104b
+                    email: ada@example.com
+                    full_name: Ada Lovelace
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseWithData'
+        '401':
+          description: Invalid or inactive client credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: Invalid client credentials
+        '403':
+          description: IP not allowed, or user inactive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found and JIT create disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                message: User not found
+        '429':
+          description: Throttled (integration_token scope)
+        '500':
+          description: Unexpected failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/documents/upload/:
+    post:
+      tags: [Documents]
+      operationId: uploadDocument
+      summary: Upload a PDF or Word document
+      description: |
+        Multipart upload. Field name must be `file`. Owner is the authenticated user.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF or Word file (.pdf, .doc, .docx), max 20MB
+      responses:
+        '201':
+          description: Document created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadSuccessResponse'
+        '400':
+          description: Invalid or missing file
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadErrorResponse'
+        '401':
+          description: Missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleJWTUnauthorized'
+
+  /api/envelopes/create/:
+    post:
+      tags: [Envelopes]
+      operationId: createEnvelope
+      summary: Create a draft envelope
+      description: |
+        Documents must be owned by the JWT user. Each signing_order entry needs
+        `order` plus `signer_id` (UUID) and/or `email` (find-or-invite). Stored
+        signing_order uses resolved UUIDs. Status is `draft` until send.
+        Supports `Idempotency-Key`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvelopeCreateRequest'
+            examples:
+              bySignerId:
+                summary: Existing user UUID
+                value:
+                  name: Offer letter
+                  document_ids:
+                    - aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+                  signing_order:
+                    - signer_id: b7bd2f39-b697-4089-bf6e-e29794ed158d
+                      order: 1
+              byEmail:
+                summary: Find-or-invite by email
+                value:
+                  name: Offer letter
+                  document_ids:
+                    - aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+                  signing_order:
+                    - email: new.hire@example.com
+                      order: 1
+                      full_name: New Hire
+      responses:
+        '201':
+          description: Envelope created (draft)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeSuccessResponse'
+        '400':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseWithData'
+        '401':
+          description: Missing or invalid JWT
+
+  /api/envelopes/{id}/send/:
+    post:
+      tags: [Envelopes]
+      operationId: sendEnvelope
+      summary: Send a draft envelope
+      description: |
+        Creator only. Transitions to `pending`, resets signing workflow, notifies
+        first signer. Integration JWT may record origin and fire `envelope.sent`.
+        Supports `Idempotency-Key`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EnvelopeId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Envelope sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeSuccessResponse'
+              example:
+                status: success
+                message: Envelope sent successfully
+                data:
+                  id: 11111111-2222-3333-4444-555555555555
+                  status: pending
+        '400':
+          description: Invalid state (e.g. self-sign)
+        '403':
+          description: Not the creator
+        '404':
+          description: Envelope not found
+        '409':
+          description: Signing workflow already in progress
+
+  /api/v1/integrations/envelopes/send/:
+    post:
+      tags: [Integrations]
+      operationId: compositeCreateAndSendEnvelope
+      summary: Upload (optional), create, and send an envelope in one call
+      description: |
+        Auth is the **user JWT** (not client credentials). Uses the same create
+        serializer and send service as the three-step flow. Provide either a
+        multipart `file` or JSON `document_ids`. Supports `Idempotency-Key`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+                description:
+                  type: string
+                signing_order:
+                  type: string
+                  description: JSON-encoded SigningOrderItem array
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompositeEnvelopeSendRequest'
+            example:
+              document_ids:
+                - aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+              name: Offer letter
+              signing_order:
+                - email: signer@example.com
+                  order: 1
+      responses:
+        '201':
+          description: Envelope created and sent (pending)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeEnvelopeSendSuccessResponse'
+        '400':
+          description: Validation or missing file/document_ids
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseWithData'
+        '401':
+          description: Missing or invalid JWT
+        '409':
+          description: Signing workflow in progress
+
+  /api/envelopes/{id}/:
+    get:
+      tags: [Envelopes]
+      operationId: getEnvelope
+      summary: Retrieve envelope detail / status
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EnvelopeId'
+      responses:
+        '200':
+          description: Envelope detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeSuccessResponse'
+        '401':
+          description: Missing or invalid JWT
+        '404':
+          description: Not found or not accessible
+
+  /api/envelopes/:
+    get:
+      tags: [Envelopes]
+      operationId: listEnvelopes
+      summary: List envelopes accessible to the user
+      description: |
+        Includes envelopes where the user is creator or signer. Partner-created
+        envelopes appear for the same user who was asserted on token exchange.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Paginated list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvelopeListSuccessResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token from `POST /api/v1/integrations/token/` (or normal login).
+        Integration-minted access tokens default to a 30-minute lifetime.
+
+  parameters:
+    EnvelopeId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Envelope UUID
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 255
+      description: |
+        Opaque key scoped to the authenticated user and endpoint. Same key
+        replays the original success response without duplicate side effects.
+
+  schemas:
+    TokenExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [client_id, client_secret, email]
+      properties:
+        client_id:
+          type: string
+          maxLength: 64
+        client_secret:
+          type: string
+          writeOnly: true
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+          maxLength: 255
+          description: Optional; used for JIT create / empty name fill
+        external_user_id:
+          type: string
+          maxLength: 255
+          description: Optional partner user id; upserts IntegrationUserLink
+
+    IntegrationUser:
+      type: object
+      required: [id, email, full_name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+
+    TokenExchangeData:
+      type: object
+      required: [access, refresh, user]
+      properties:
+        access:
+          type: string
+          description: JWT access token
+        refresh:
+          type: string
+          description: JWT refresh token
+        user:
+          $ref: '#/components/schemas/IntegrationUser'
+
+    TokenExchangeSuccessResponse:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/TokenExchangeData'
+
+    ErrorResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          const: error
+        message:
+          type: string
+
+    ErrorResponseWithData:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+              description: Field-level validation errors
+
+    FileUploadErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          const: error
+        message:
+          type: string
+        errors:
+          type: object
+          additionalProperties: true
+        debug_info:
+          type: object
+          description: Present only when Django DEBUG is true
+
+    SimpleJWTUnauthorized:
+      type: object
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    DocumentUploadSuccessResponse:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+        data:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+            file_name:
+              type: string
+          additionalProperties: true
+
+    SigningOrderItem:
+      type: object
+      required: [order]
+      description: |
+        Provide `signer_id` and/or `email`. Unknown emails are find-or-invited.
+        When both are set they must refer to the same user.
+      properties:
+        signer_id:
+          type: string
+          format: uuid
+          description: Existing e-sign CustomUser UUID (optional if email given)
+        email:
+          type: string
+          format: email
+          description: Signer email; find existing user or invite/create
+        full_name:
+          type: string
+          description: Optional display name when inviting a new user
+        name:
+          type: string
+          description: Alias for full_name on invite
+        order:
+          type: integer
+          minimum: 1
+
+    EnvelopeCreateRequest:
+      type: object
+      required: [document_ids, signing_order]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        document_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+        signing_order:
+          type: array
+          items:
+            $ref: '#/components/schemas/SigningOrderItem'
+        documents_with_positions:
+          type: array
+          description: Optional placement metadata
+          items:
+            type: object
+            additionalProperties: true
+
+    CompositeEnvelopeSendRequest:
+      type: object
+      required: [signing_order]
+      properties:
+        document_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+          description: Required when not uploading a multipart file
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        signing_order:
+          type: array
+          items:
+            $ref: '#/components/schemas/SigningOrderItem'
+        documents_with_positions:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    CompositeEnvelopeSendSuccessResponse:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+        data:
+          type: object
+          required: [envelope_id, status]
+          properties:
+            envelope_id:
+              type: string
+              format: uuid
+            document_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+            status:
+              type: string
+              example: pending
+            envelope:
+              $ref: '#/components/schemas/EnvelopeData'
+            uploaded_document:
+              type: object
+              nullable: true
+              additionalProperties: true
+
+    WebhookEnvelopeEvent:
+      type: object
+      description: |
+        Outbound POST body for admin-registered IntegrationWebhookEndpoint.
+        Signed with X-ESign-Signature HMAC. Not an inbound REST path.
+      required: [event, occurred_at, data]
+      properties:
+        event:
+          type: string
+          enum: [envelope.sent, envelope.completed]
+        occurred_at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          properties:
+            envelope_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+            name:
+              type: string
+            creator_id:
+              type: string
+              format: uuid
+            document_ids:
+              type: array
+              items:
+                type: string
+                format: uuid
+            signing_order:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+
+    EnvelopeData:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          description: e.g. draft, pending, completed
+          examples: [draft, pending]
+      additionalProperties: true
+
+    EnvelopeSuccessResponse:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+        data:
+          $ref: '#/components/schemas/EnvelopeData'
+
+    EnvelopeListSuccessResponse:
+      type: object
+      required: [status, data]
+      properties:
+        status:
+          type: string
+          const: success
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            count:
+              type: integer
+            next:
+              type: string
+              nullable: true
+            previous:
+              type: string
+              nullable: true
+            results:
+              type: array
+              items:
+                $ref: '#/components/schemas/EnvelopeData'
+          additionalProperties: true

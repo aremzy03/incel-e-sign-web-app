@@ -1,0 +1,52 @@
+meta {
+  name: 01 Token Exchange
+  type: http
+  seq: 1
+  tags: [
+    partner-flow
+    smoke
+  ]
+}
+
+post {
+  url: {{baseUrl}}/api/v1/integrations/token/
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "client_id": "{{process.env.ESIGN_CLIENT_ID}}",
+    "client_secret": "{{process.env.ESIGN_CLIENT_SECRET}}",
+    "email": "{{process.env.PARTNER_USER_EMAIL}}",
+    "full_name": "{{process.env.PARTNER_USER_FULL_NAME}}",
+    "external_user_id": "{{process.env.PARTNER_EXTERNAL_USER_ID}}"
+  }
+}
+
+script:post-response {
+  // Use setVar (runtime) so the next requests in this CLI run see the JWT.
+  // Empty env placeholders for accessToken can shadow setEnvVar alone.
+  if (res.status === 200 && res.body && res.body.data) {
+    bru.setVar("accessToken", res.body.data.access);
+    bru.setVar("refreshToken", res.body.data.refresh);
+    bru.setEnvVar("accessToken", res.body.data.access);
+    bru.setEnvVar("refreshToken", res.body.data.refresh);
+    if (res.body.data.user && res.body.data.user.id) {
+      bru.setVar("userId", res.body.data.user.id);
+      bru.setEnvVar("userId", res.body.data.user.id);
+    }
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq success
+  res.body.data.access: isDefined
+  res.body.data.user.id: isDefined
+}
