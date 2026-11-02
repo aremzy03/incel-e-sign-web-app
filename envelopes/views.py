@@ -10,7 +10,7 @@ from rest_framework.generics import ListAPIView, RetrieveAPIView, DestroyAPIView
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.http import Http404 # Import Http404
@@ -757,3 +757,145 @@ class EnvelopeDashboardView(APIView):
                 "recent_activity": recent_activity,
             },
         }, status=status.HTTP_200_OK)
+
+
+class EnvelopePublicDetailView(APIView):
+    """
+    Public API view for retrieving envelope details using a valid SigningToken.
+
+    Endpoint: GET /envelopes/{id}/public/?token={token}
+    Allows recipients to view envelope, documents, fields, and saved signatures
+    without being previously logged in.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+        from signatures.models import UserSignature
+        from signatures.serializers import UserSignatureSerializer
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(
+            token_str,
+            envelope_id=str(pk),
+            allow_used=True,
+        )
+
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                    "recipient_email": signing_token.recipient_email if signing_token else None,
+                },
+                status=status_code,
+            )
+
+        envelope = prefetch_envelope_detail(Envelope.objects.filter(pk=pk)).first()
+        if not envelope:
+            return Response(
+                {
+                    "status": "error",
+                    "code": "ENVELOPE_NOT_FOUND",
+                    "message": "Envelope not found",
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        detail_serializer = EnvelopeDetailSerializer(envelope)
+        documents_in_envelope = envelope.envelopedocument_set.all()
+        doc_serializer = EnvelopeDocumentSerializer(documents_in_envelope, many=True)
+
+        matching_sig = envelope.signatures.filter(
+            signer__email__iexact=signing_token.recipient_email
+        ).select_related("signer").first()
+
+        recipient_user = signing_token.recipient_user or (matching_sig.signer if matching_sig else None)
+        if not recipient_user and signing_token.recipient_email:
+            recipient_user = User.objects.filter(email__iexact=signing_token.recipient_email).first()
+
+        saved_signatures_data = []
+        if recipient_user:
+            user_sigs = UserSignature.objects.filter(user=recipient_user).order_by("-is_default", "-created_at")
+            saved_signatures_data = UserSignatureSerializer(user_sigs, many=True).data
+
+        has_already_signed = bool(
+            signing_token.used_at is not None
+            or (matching_sig and (matching_sig.is_signed or matching_sig.status in ("signed", "processing")))
+        )
+        is_current_signer = bool(
+            not has_already_signed and matching_sig and matching_sig.is_current_signer()
+        )
+
+        response_payload = {
+            **detail_serializer.data,
+            "documents": doc_serializer.data,
+            "recipient": {
+                "email": signing_token.recipient_email,
+                "full_name": getattr(recipient_user, "full_name", None) or signing_token.recipient_email,
+                "user_id": str(recipient_user.id) if recipient_user else None,
+                "is_current_signer": is_current_signer,
+                "has_already_signed": has_already_signed,
+            },
+            "saved_signatures": saved_signatures_data,
+        }
+
+        return Response(
+            {
+                "status": "success",
+                "message": "Envelope retrieved successfully via token",
+                "data": response_payload,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class EnvelopePublicDocumentView(APIView):
+    """
+    Public API view for retrieving envelope documents via signing token.
+
+    Endpoint: GET /envelopes/{id}/documents/public/?token={token}
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        from envelopes.services.signing_token import validate_signing_token
+
+        token_str = request.query_params.get("token") or request.headers.get("X-Signing-Token")
+        signing_token, error_code, error_message = validate_signing_token(
+            token_str,
+            envelope_id=str(pk),
+            allow_used=True,
+        )
+
+        if error_code:
+            status_code = status.HTTP_410_GONE if error_code == "TOKEN_EXPIRED" else status.HTTP_403_FORBIDDEN
+            if error_code in ("MISSING_TOKEN", "INVALID_TOKEN"):
+                status_code = status.HTTP_400_BAD_REQUEST
+            return Response(
+                {
+                    "status": "error",
+                    "code": error_code,
+                    "message": error_message,
+                    "recipient_email": signing_token.recipient_email if signing_token else None,
+                },
+                status=status_code,
+            )
+
+        envelope = get_object_or_404(Envelope, pk=pk)
+        documents_in_envelope = envelope.envelopedocument_set.all()
+        doc_serializer = EnvelopeDocumentSerializer(documents_in_envelope, many=True)
+        return Response(
+            {
+                "status": "success",
+                "data": doc_serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+

@@ -739,7 +739,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
 - Each entry in `documents_with_positions` must have a `document_id` that is present in the main `document_ids` list.
 - Each `signer_document_positions` entry must have a `signer_id` that is present in the main `signing_order`.
 - Optional `position` field within `signer_document_positions` defines signature coordinates: `page` (positive integer), `x`, `y`, `width`, `height` (non-negative numbers, integers or floats). If omitted for a signer/document, default or request-provided coordinates will be used.
-- If no custom `name` is provided, a default name like "Untitled Envelope - YYYY-MM-DD HH:MM" will be generated.
+- If no custom `name` is provided, a default name based on the first document's base filename and remaining document count (e.g., `"Contract"` or `"Contract (+2)"`) will be generated.
 
 **Response (Success - 201):**
 ```json
@@ -1714,7 +1714,7 @@ The Envelope model manages the signing workflow for documents, defining the orde
 - `id` (UUIDField): Unique identifier for the envelope (primary key)
 - `document` (ForeignKey): The document being signed (related_name="envelopes")
 - `creator` (ForeignKey): User who created the envelope (related_name="created_envelopes")
-- `name` (CharField): User-defined name of the envelope (optional, defaults to "Untitled Envelope" + timestamp)
+- `name` (CharField): User-defined name of the envelope (optional, defaults to `<first_doc_base>` or `<first_doc_base> (+<n-1>)`)
 - `description` (TextField): Optional description or notes for recipients about this envelope
 - `status` (CharField): Current status with choices:
   - `draft`: Envelope is being prepared
@@ -1899,7 +1899,7 @@ curl -X POST http://localhost:8000/api/envelopes/create/ \
 - Each entry in `documents_with_positions` must have a `document_id` that is present in the main `document_ids` list.
 - Each `signer_document_positions` entry must have a `signer_id` that is present in the main `signing_order`.
 - Optional `position` field within `signer_document_positions` defines signature coordinates: `page` (positive integer), `x`, `y`, `width`, `height` (non-negative numbers, integers or floats). If omitted for a signer/document, default or request-provided coordinates will be used.
-- If no custom `name` is provided, a default name like "Untitled Envelope - YYYY-MM-DD HH:MM" will be generated.
+- If no custom `name` is provided, a default name based on the first document's base filename and remaining document count (e.g., `"Contract"` or `"Contract (+2)"`) will be generated.
 
 **Response (Success - 201):**
 ```json

@@ -111,11 +111,14 @@ def send_envelope(envelope: Envelope, *, user, request=None) -> Envelope:
             try:
                 recipient_email = getattr(first_signer, "email", None)
                 if recipient_email:
+                    from envelopes.services.signing_token import get_or_create_signing_token
+                    token_obj = get_or_create_signing_token(envelope, recipient_email, first_signer)
                     send_envelope_assigned_email_task.delay(
                         recipient_email,
                         user.full_name or user.username,
                         envelope.name,
                         str(envelope.id),
+                        token_obj.token,
                     )
             except Exception:
                 logger.exception(

@@ -143,3 +143,37 @@ def test_signing_job_retry_after_failure(monkeypatch, settings, tmp_path):
 
     job.refresh_from_db()
     assert job.status == "succeeded"
+
+
+@pytest.mark.django_db
+def test_processing_signature_retains_current_signer_turn():
+    """A signature in 'processing' status remains the current signer until completed."""
+    from envelopes.serializers import _get_envelope_current_signer
+
+    User = get_user_model()
+    signer1 = User.objects.create_user(
+        email="s1@test.com", username="s1", full_name="Signer One", password="pass1234"
+    )
+    signer2 = User.objects.create_user(
+        email="s2@test.com", username="s2", full_name="Signer Two", password="pass1234"
+    )
+
+    envelope = Envelope.objects.create(
+        creator=signer1,
+        name="Multi Signer Turn Test",
+        status="pending",
+        signing_order=[
+            {"signer_id": str(signer1.id), "order": 1},
+            {"signer_id": str(signer2.id), "order": 2},
+        ],
+    )
+    sig1 = Signature.objects.create(envelope=envelope, signer=signer1, status="processing")
+    sig2 = Signature.objects.create(envelope=envelope, signer=signer2, status="pending")
+
+    assert sig1.is_current_signer() is True
+    assert sig2.is_current_signer() is False
+
+    current = _get_envelope_current_signer(envelope)
+    assert current is not None
+    assert current["id"] == str(signer1.id)
+

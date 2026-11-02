@@ -56,7 +56,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: ./build.sh
-    startCommand: celery -A esign worker -l info
+    startCommand: celery -A esign worker -l info -Q default,signing --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0

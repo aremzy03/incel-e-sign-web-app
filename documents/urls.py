@@ -17,5 +17,7 @@ urlpatterns = [
     path('<uuid:pk>/', views.DocumentDetailView.as_view(), name='document_detail'),
     path('<uuid:pk>/delete/', views.DocumentDeleteView.as_view(), name='document_delete'),
     path('<uuid:pk>/preview/', views.DocumentPreviewView.as_view(), name='document_preview'),
+    path('<uuid:pk>/preview-public/', views.DocumentPublicPreviewView.as_view(), name='document_preview_public'),
     path('<uuid:pk>/download/', views.DocumentDownloadView.as_view(), name='document_download'),
+    path('<uuid:pk>/download-public/', views.DocumentPublicDownloadView.as_view(), name='document_download_public'),
 ]
