@@ -1,9 +1,60 @@
+import os
 import uuid
 import secrets
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.utils import timezone # Import timezone for default name
+
+_FILENAME_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ .()[]")
+
+
+def _sanitize_filename_component(value: str, *, fallback: str = "Document", max_len: int = 120) -> str:
+    """
+    Produce a filesystem-safe, human-friendly name component matching /api/documents/merge/.
+    """
+    if not value:
+        return fallback
+
+    cleaned: list[str] = []
+    last_was_space = False
+    for ch in str(value):
+        if ch in ("\n", "\r", "\t"):
+            ch = " "
+        if ch not in _FILENAME_SAFE_CHARS:
+            ch = " "
+
+        if ch == " ":
+            if last_was_space:
+                continue
+            last_was_space = True
+        else:
+            last_was_space = False
+
+        cleaned.append(ch)
+
+    result = "".join(cleaned).strip(" .")
+    if not result:
+        result = fallback
+
+    if len(result) > max_len:
+        result = result[:max_len].rstrip(" .")
+        if not result:
+            result = fallback
+
+    return result
+
+
+def default_envelope_name(first_doc_name: str, total_docs: int) -> str:
+    """
+    Build the default envelope name from the first document's base name and document count:
+    "<first_doc_base>" (1 doc) or "<first_doc_base> (+<n-1>)" (multiple docs).
+    """
+    base, _ext = os.path.splitext(first_doc_name or "")
+    base = _sanitize_filename_component(base, fallback="Document", max_len=80)
+    suffix = f" (+{total_docs - 1})" if total_docs > 1 else ""
+    return f"{base}{suffix}"
+
 
 class Envelope(models.Model):
     """
@@ -114,8 +165,19 @@ class Envelope(models.Model):
     
     def clean(self):
         super().clean()
-        if not self.name:
-            self.name = f"Untitled Envelope - {timezone.now().strftime('%Y-%m-%d %H:%M')}"
+        if not self.name or not str(self.name).strip():
+            env_docs = list(
+                EnvelopeDocument.objects.filter(envelope_id=self.id)
+                .select_related('document')
+                .order_by('order')
+            )
+            if env_docs:
+                self.name = default_envelope_name(
+                    env_docs[0].document.file_name,
+                    len(env_docs),
+                )
+            else:
+                self.name = f"Untitled Envelope - {timezone.now().strftime('%Y-%m-%d %H:%M')}"
 
         # Basic validation for signing_order (more detailed validation is in serializers)
         if not isinstance(self.signing_order, list):

@@ -14,7 +14,7 @@ import logging
 
 from django.db import transaction
 from documents.models import Document
-from envelopes.models import Envelope, EnvelopeDocument
+from envelopes.models import Envelope, EnvelopeDocument, default_envelope_name
 from fields.models import Field as FieldModel
 
 logger = logging.getLogger(__name__)
@@ -412,9 +412,14 @@ class SelfSignSerializer(serializers.Serializer):
         fields_data = validated_data.get('fields', [])
 
         with transaction.atomic():
+            raw_name = (envelope_data.get('name') or '').strip()
+            if not raw_name:
+                first_document = Document.objects.get(id=document_ids[0])
+                raw_name = default_envelope_name(first_document.file_name, len(document_ids))
+
             envelope = Envelope.objects.create(
                 creator=user,
-                name=envelope_data.get('name') or None,
+                name=raw_name,
                 description=envelope_data.get('description'),
                 status="draft",
                 signing_order=[{'signer_id': str(user.id), 'order': 1}],

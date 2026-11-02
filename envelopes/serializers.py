@@ -8,7 +8,7 @@ in the e-signature workflow.
 from rest_framework import serializers
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from .models import Envelope, EnvelopeDocument
+from .models import Envelope, EnvelopeDocument, default_envelope_name
 from documents.models import Document
 from documents.storage import refresh_remote_file_url
 from signatures.serializers import SignatureSerializer # Import SignatureSerializer
@@ -284,7 +284,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         document_ids = validated_data.pop('document_ids')
-        name = validated_data.pop('name', None)
+        name = (validated_data.pop('name', None) or '').strip()
         description = validated_data.pop('description', None)
         signing_order = validated_data.pop('signing_order', [])
         pdf_password_protection_enabled = validated_data.pop('pdf_password_protection_enabled', True)
@@ -298,6 +298,10 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("User authentication required.")
 
         with transaction.atomic():
+            if not name:
+                first_document = Document.objects.get(id=document_ids[0])
+                name = default_envelope_name(first_document.file_name, len(document_ids))
+
             envelope = Envelope.objects.create(
                 creator=creator,
                 name=name,
