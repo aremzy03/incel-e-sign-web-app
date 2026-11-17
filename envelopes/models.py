@@ -144,6 +144,11 @@ class Envelope(models.Model):
         help_text="If True, signed PDFs are password-protected when the envelope is completed."
     )
 
+    allow_recipient_text = models.BooleanField(
+        default=False,
+        help_text="When true, the current signer may add text onto the PDF before signing."
+    )
+
     is_self_sign = models.BooleanField(
         default=False,
         help_text="True when the creator signed their own document(s) without sending to recipients."

@@ -105,6 +105,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
             'description',
             'signing_order',
             'pdf_password_protection_enabled',
+            'allow_recipient_text',
             'documents_with_positions',
             'fields',
         ]
@@ -288,6 +289,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
         description = validated_data.pop('description', None)
         signing_order = validated_data.pop('signing_order', [])
         pdf_password_protection_enabled = validated_data.pop('pdf_password_protection_enabled', True)
+        allow_recipient_text = validated_data.pop('allow_recipient_text', False)
         documents_with_positions_data = validated_data.pop('documents_with_positions', [])
         fields_data = validated_data.pop('fields', [])
 
@@ -309,6 +311,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
                 status="draft",
                 signing_order=signing_order,
                 pdf_password_protection_enabled=pdf_password_protection_enabled,
+                allow_recipient_text=allow_recipient_text,
             )
 
             # Add documents to the envelope via the intermediary model
@@ -535,6 +538,7 @@ class EnvelopeDetailSerializer(serializers.ModelSerializer):
             'documents', 'fields', 'signatures',
             'pdf_lock_password',
             'pdf_password_protection_enabled',
+            'allow_recipient_text',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -588,6 +592,7 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
             'document_ids',
             'signing_order',
             'pdf_password_protection_enabled',
+            'allow_recipient_text',
             'documents_with_positions',
         ]
 
@@ -643,6 +648,12 @@ class EnvelopeUpdateSerializer(serializers.ModelSerializer):
                 'pdf_password_protection_enabled',
                 instance.pdf_password_protection_enabled,
             )
+        if 'allow_recipient_text' in validated_data:
+            if instance.status != 'draft' and validated_data['allow_recipient_text'] != instance.allow_recipient_text:
+                raise serializers.ValidationError({
+                    'allow_recipient_text': 'This setting is locked after the envelope is sent.',
+                })
+            instance.allow_recipient_text = validated_data['allow_recipient_text']
 
         # Update documents and their positions if provided
         if document_ids is not None:
