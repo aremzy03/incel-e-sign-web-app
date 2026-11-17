@@ -195,7 +195,7 @@ class SignatureTestCase(APITestCase):
         self.signature1.refresh_from_db()
         self.assertEqual(self.signature1.status, 'signed')
         self.assertIsNotNone(self.signature1.signed_at)
-        self.assertIsNotNone(self.signature1.signature_image)
+        self.assertIsNone(self.signature1.signature_image)
     
     def test_signing_unlocks_next_signer(self):
         """Test that signing unlocks the next signer."""
@@ -751,7 +751,7 @@ class SignatureTestCase(APITestCase):
         self.assertIn('status', data)
         self.assertIn('signing_order', data)
         self.assertIn('signed_at', data)
-        self.assertIn('signature_image', data)
+        self.assertNotIn('signature_image', data)
         self.assertIn('created_at', data)
         self.assertIn('updated_at', data)
         
