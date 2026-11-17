@@ -6,7 +6,7 @@ in the e-signature workflow.
 """
 
 from django.urls import path
-from . import views
+from . import recipient_text, views
 
 app_name = 'signatures'
 
@@ -23,6 +23,7 @@ urlpatterns = [
     
     # Document signing
     path('self-sign/', views.SelfSignView.as_view(), name='self_sign'),
+    path('<uuid:envelope_id>/documents/<uuid:document_id>/text/', recipient_text.RecipientAddTextView.as_view(), name='recipient_add_text'),
     path('<uuid:envelope_id>/sign/', views.SignDocumentView.as_view(), name='sign_document'),
     path('<uuid:envelope_id>/sign-public/', views.SignDocumentPublicView.as_view(), name='sign_document_public'),
     path('<uuid:envelope_id>/decline/', views.DeclineSignatureView.as_view(), name='decline_signature'),

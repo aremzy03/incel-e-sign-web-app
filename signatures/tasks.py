@@ -218,7 +218,11 @@ def finalize_signer_chord(self, results: list, job_id: str) -> None:
             job.status = "succeeded"
             job.error_message = ""
             job.completed_at = timezone.now()
-            job.save(update_fields=["status", "error_message", "completed_at", "updated_at"])
+            # The signature row and stamped PDF now hold the image. Drop the
+            # job copy so succeeded jobs do not keep a second full PNG in Postgres.
+            # Failed jobs keep signature_image_data so retry can stamp again.
+            job.signature_image_data = ""
+            job.save(update_fields=["status", "error_message", "completed_at", "signature_image_data", "updated_at"])
 
             from audit.utils import log_action
 
