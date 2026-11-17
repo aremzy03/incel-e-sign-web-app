@@ -14,6 +14,20 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import Color, black
 
 
+def _add_page_with_overlay(writer: PdfWriter, page, overlay_page=None):
+    """
+    Add a page to the writer, then merge an overlay onto that writer-owned page.
+
+    pypdf 7 removed PageObject.replace_contents() for pages that are not yet
+    attached to a PdfWriter. merge_page() uses that method, so the overlay has
+    to be applied after add_page().
+    """
+    added = writer.add_page(page)
+    if overlay_page is not None:
+        added.merge_page(overlay_page)
+    return added
+
+
 def _decode_signature_image(signature_image: str) -> bytes:
     """
     Decode base64 signature image. Supports raw base64 or data URLs.
@@ -102,10 +116,9 @@ def embed_signature(pdf_path: str, output_path: str, signature_image: str, page:
                     page_width, page_height, image_bytes, x, pdf_y, width, height
                 )
                 with PdfReader(io.BytesIO(overlay_pdf_bytes)) as overlay_reader:
-                    overlay_page = overlay_reader.pages[0]
-                    page_obj.merge_page(overlay_page)
-
-            writer.add_page(page_obj)
+                    _add_page_with_overlay(writer, page_obj, overlay_reader.pages[0])
+            else:
+                writer.add_page(page_obj)
 
     # Ensure destination directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -188,10 +201,9 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
                     page_width, page_height, text, x, pdf_y, font_family, font_size
                 )
                 with PdfReader(io.BytesIO(overlay_pdf_bytes)) as overlay_reader:
-                    overlay_page = overlay_reader.pages[0]
-                    page_obj.merge_page(overlay_page)
-
-            writer.add_page(page_obj)
+                    _add_page_with_overlay(writer, page_obj, overlay_reader.pages[0])
+            else:
+                writer.add_page(page_obj)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, 'wb') as f:
@@ -322,9 +334,9 @@ def embed_fields_single_pass(
                 c.save()
                 buffer.seek(0)
                 with PdfReader(buffer) as overlay_reader:
-                    page_obj.merge_page(overlay_reader.pages[0])
-
-            writer.add_page(page_obj)
+                    _add_page_with_overlay(writer, page_obj, overlay_reader.pages[0])
+            else:
+                writer.add_page(page_obj)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "wb") as f:
