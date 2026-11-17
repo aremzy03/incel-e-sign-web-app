@@ -496,7 +496,7 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         # Verify signature was updated
         self.signature.refresh_from_db()
         self.assertEqual(self.signature.status, 'signed')
-        self.assertIsNotNone(self.signature.signature_image)
+        self.assertIsNone(self.signature.signature_image)
         self.assertIsNotNone(self.signature.signed_at)
     
     def test_sign_document_with_default_signature(self):
@@ -530,7 +530,7 @@ class SignDocumentWithUserSignatureTest(APITestCase):
         # Verify signature was updated
         self.signature.refresh_from_db()
         self.assertEqual(self.signature.status, 'signed')
-        self.assertIsNotNone(self.signature.signature_image)
+        self.assertIsNone(self.signature.signature_image)
     
     def test_sign_document_no_signature_provided(self):
         """Test signing document without any signature provided."""

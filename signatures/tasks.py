@@ -207,7 +207,7 @@ def finalize_signer_chord(self, results: list, job_id: str) -> None:
                 signature = Signature.objects.filter(envelope=envelope, signer=job.signer).first()
 
             if signature and signature.status == "processing":
-                mark_signature_signed(signature, job.signature_image_data)
+                mark_signature_signed(signature)
 
             remaining_pending = Signature.objects.filter(envelope=envelope, status="pending").count()
             if remaining_pending == 0:
@@ -218,9 +218,9 @@ def finalize_signer_chord(self, results: list, job_id: str) -> None:
             job.status = "succeeded"
             job.error_message = ""
             job.completed_at = timezone.now()
-            # The signature row and stamped PDF now hold the image. Drop the
-            # job copy so succeeded jobs do not keep a second full PNG in Postgres.
-            # Failed jobs keep signature_image_data so retry can stamp again.
+            # The stamped PDF holds the image. Drop the job copy only after the
+            # job is marked succeeded. Failed jobs keep signature_image_data so
+            # retry can stamp again.
             job.signature_image_data = ""
             job.save(update_fields=["status", "error_message", "completed_at", "signature_image_data", "updated_at"])
 
