@@ -189,6 +189,17 @@ def upload_signing_version(envelope_id, document_id, version: int, local_path: s
     return _upload_file_to_key(local_path, key)
 
 
+def build_text_edit_key(document_id, session_id) -> str:
+    """Return a new storage key for one additive-text commit. Never overwrites staging."""
+    return f"edits/{document_id}/{session_id}.pdf"
+
+
+def upload_text_edit_pdf(document_id, session_id, local_path: str | Path) -> str:
+    """Upload a baked text-edit PDF without replacing the original object."""
+    key = build_text_edit_key(document_id, session_id)
+    return _upload_file_to_key(local_path, key)
+
+
 def upload_completed_pdf(envelope_id, document_id, local_path: str | Path) -> str:
     """Upload the final completed PDF for an envelope document."""
     key = build_completed_key(envelope_id, document_id)
