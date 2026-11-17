@@ -42,12 +42,12 @@ class SignatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = Signature
         fields = [
-            'id', 'signer', 'signer_email', 'signer_name', 'status', 
-            'signing_order', 'signed_at', 'signature_image', 
+            'id', 'signer', 'signer_email', 'signer_name', 'status',
+            'signing_order', 'signed_at',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'signer', 'status', 'signed_at', 'signature_image',
+            'id', 'signer', 'status', 'signed_at',
             'created_at', 'updated_at'
         ]
     

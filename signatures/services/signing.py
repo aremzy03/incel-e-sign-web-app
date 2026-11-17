@@ -418,11 +418,15 @@ def embed_signatures_for_signer(
         document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
 
 
-def mark_signature_signed(signature: Signature, signature_image_data: str) -> None:
-    """Mark a signature record as signed and persist the image data."""
+def mark_signature_signed(signature: Signature) -> None:
+    """Mark a signature record as signed.
+
+    The stamped PDF is the record of the signature. The row keeps status and
+    signed_at only, so the PNG is not stored in Postgres.
+    """
     signature.status = "signed"
     signature.signed_at = timezone.now()
-    signature.signature_image = signature_image_data
+    signature.signature_image = None
     signature.save()
 
 

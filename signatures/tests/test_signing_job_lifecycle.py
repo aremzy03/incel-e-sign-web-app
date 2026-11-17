@@ -73,7 +73,7 @@ def test_signing_job_lifecycle_succeeds(settings, tmp_path):
     signature.refresh_from_db()
     assert signature.status == "signed"
     assert signature.signed_at is not None
-    assert signature.signature_image == SIGNATURE_IMAGE
+    assert signature.signature_image in (None, "")
 
     detail_resp = client.get(reverse("signatures:signing-job-detail", kwargs={"id": job_id}))
     assert detail_resp.status_code == 200
@@ -149,7 +149,7 @@ def test_signing_job_retry_after_failure(monkeypatch, settings, tmp_path):
     assert job.signature_image_data == ""
     signature = Signature.objects.get(envelope=envelope, signer=signer)
     assert signature.status == "signed"
-    assert signature.signature_image == SIGNATURE_IMAGE
+    assert signature.signature_image in (None, "")
 
 
 @pytest.mark.django_db

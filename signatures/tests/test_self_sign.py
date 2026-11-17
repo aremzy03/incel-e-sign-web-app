@@ -245,7 +245,7 @@ class SelfSignTestCase(APITestCase):
         envelope = self._envelope_from_job_response(response)
         signature = Signature.objects.get(envelope=envelope)
         self.assertEqual(signature.status, 'signed')
-        self.assertIsNotNone(signature.signature_image)
+        self.assertIsNone(signature.signature_image)
 
     def test_self_sign_rejects_other_user_documents(self):
         foreign_document = self._create_document(owner=self.other_user)

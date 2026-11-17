@@ -499,15 +499,11 @@ class SignWithExplicitSignatureTest(UserSignaturesIntegrationTestCase):
         self.assertEqual(sign_response.data['status'], 'success')
         self.assertIn('job_id', sign_response.data['data'])
 
-        # Verify Signature record was created with image copied from UserSignature
+        # The stamped PDF holds the image. The signature row records status only.
         signature = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
         self.assertEqual(signature.status, 'signed')
-        self.assertIsNotNone(signature.signature_image)
+        self.assertIsNone(signature.signature_image)
         self.assertIsNotNone(signature.signed_at)
-
-        # Verify the signature image is base64 encoded and contains the image data
-        self.assertTrue(signature.signature_image.startswith('data:image/'))
-        self.assertIn('base64,', signature.signature_image)
 
         # Verify audit log was created for async signing completion
         audit_log = AuditLog.objects.filter(
@@ -642,10 +638,8 @@ class SignWithAutoDefaultTest(UserSignaturesIntegrationTestCase):
 
         signature = Signature.objects.get(envelope_id=envelope_id, signer=self.signer1)
         self.assertEqual(signature.status, 'signed')
-        self.assertIsNotNone(signature.signature_image)
+        self.assertIsNone(signature.signature_image)
         self.assertIsNotNone(signature.signed_at)
-        self.assertTrue(signature.signature_image.startswith('data:image/'))
-        self.assertIn('base64,', signature.signature_image)
     
     def test_sign_with_no_default_signature(self):
         """

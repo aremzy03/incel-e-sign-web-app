@@ -426,7 +426,8 @@ class EnvelopeRetrievalTestCase(APITestCase):
         self.assertEqual(len(signatures), 2)
         
         for signature in signatures:
-            signature_required_fields = ['id', 'signer', 'signer_email', 'signer_name', 'status', 'signing_order', 'signed_at', 'signature_image', 'created_at', 'updated_at']
+            signature_required_fields = ['id', 'signer', 'signer_email', 'signer_name', 'status', 'signing_order', 'signed_at', 'created_at', 'updated_at']
+            self.assertNotIn('signature_image', signature)
             for field in signature_required_fields:
                 self.assertIn(field, signature)
     
