@@ -5,6 +5,8 @@ This module defines API views for signature-related operations
 in the e-signature workflow.
 """
 
+from fields.stamps import build_stamp_options
+from fields.validation import SERVER_FILLED_FIELD_TYPES
 from rest_framework.views import APIView
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
@@ -169,6 +171,7 @@ class SignDocumentView(APIView):
                 signature_image_data=signature_image_data,
                 user_signature_id=user_signature_id,
                 fallback_placement=fallback_placement,
+                stamp_options=build_stamp_options(validated_data),
                 request=request,
             )
 
@@ -322,6 +325,7 @@ class SelfSignView(APIView):
                 user_signature_id=user_signature_id,
                 fallback_placement=fallback_placement,
                 is_self_sign=True,
+                stamp_options=build_stamp_options(sign_data),
                 request=request,
             )
         except SignatureImageError as exc:
@@ -693,11 +697,11 @@ class SignDocumentPublicView(APIView):
         field_values = request.data.get('field_values')
         if isinstance(field_values, dict):
             for field_id, val in field_values.items():
-                Field.objects.filter(envelope=envelope, id=field_id, assigned_signer=signature.signer).update(value=val)
+                Field.objects.exclude(type__in=SERVER_FILLED_FIELD_TYPES).filter(envelope=envelope, id=field_id, assigned_signer=signature.signer).update(value=val)
         elif isinstance(field_values, list):
             for item in field_values:
                 if isinstance(item, dict) and 'id' in item and 'value' in item:
-                    Field.objects.filter(envelope=envelope, id=item['id'], assigned_signer=signature.signer).update(value=item['value'])
+                    Field.objects.exclude(type__in=SERVER_FILLED_FIELD_TYPES).filter(envelope=envelope, id=item['id'], assigned_signer=signature.signer).update(value=item['value'])
 
         fallback_placement = {
             'page': validated_data.get('page', 1),
@@ -723,6 +727,7 @@ class SignDocumentPublicView(APIView):
                 signature_image_data=signature_image_data,
                 user_signature_id=user_signature_id,
                 fallback_placement=fallback_placement,
+                stamp_options=build_stamp_options(validated_data),
                 request=request,
             )
             mark_token_used(signing_token)

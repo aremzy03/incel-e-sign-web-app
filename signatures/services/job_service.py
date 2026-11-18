@@ -32,6 +32,7 @@ def create_and_enqueue_signing_job(
     user_signature_id=None,
     fallback_placement: dict,
     is_self_sign: bool = False,
+    stamp_options: dict | None = None,
     request=None,
 ) -> SigningJob:
     """Create a SigningJob, mark signature processing, and enqueue Celery work."""
@@ -49,6 +50,7 @@ def create_and_enqueue_signing_job(
             user_signature_id=user_signature_id,
             fallback_placement=fallback_placement or {},
             is_self_sign=is_self_sign,
+            stamp_options=stamp_options or {},
         )
 
     task_id = enqueue_signing_job(job)

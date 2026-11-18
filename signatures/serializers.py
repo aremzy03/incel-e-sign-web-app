@@ -5,6 +5,7 @@ This module defines serializers for signature-related operations
 in the e-signature workflow.
 """
 
+from fields.stamps import INITIALS_FONTS, INITIALS_STYLES
 from rest_framework import serializers
 from .models import Signature, UserSignature
 from django.core.files.base import ContentFile
@@ -81,6 +82,14 @@ class SignDocumentSerializer(serializers.Serializer):
     y = serializers.FloatField(required=False, help_text="Y coordinate in points from top edge - UI convention (fallback if not defined in envelope)")
     width = serializers.FloatField(required=False, min_value=1, help_text="Signature width in points (fallback if not defined in envelope)")
     height = serializers.FloatField(required=False, min_value=1, help_text="Signature height in points (fallback if not defined in envelope)")
+
+    # Choices for fields the server fills at signing time (see fields/stamps.py).
+    timezone = serializers.CharField(
+        required=False, allow_blank=True, max_length=64,
+        help_text="Signer's IANA time zone from the browser; invalid or missing falls back to Africa/Lagos.",
+    )
+    initials_style = serializers.ChoiceField(choices=INITIALS_STYLES, required=False)
+    initials_font = serializers.ChoiceField(choices=list(INITIALS_FONTS), required=False)
     
     def validate(self, data):
         """
@@ -256,6 +265,9 @@ class SelfSignSerializer(serializers.Serializer):
     y = SignDocumentSerializer().fields['y']
     width = SignDocumentSerializer().fields['width']
     height = SignDocumentSerializer().fields['height']
+    timezone = SignDocumentSerializer().fields['timezone']
+    initials_style = SignDocumentSerializer().fields['initials_style']
+    initials_font = SignDocumentSerializer().fields['initials_font']
 
     def validate(self, attrs):
         from envelopes.serializers import EnvelopeCreateSerializer
@@ -334,6 +346,9 @@ class SelfSignSerializer(serializers.Serializer):
             'width': attrs.get('width', 120),
             'height': attrs.get('height', 40),
         }
+        for key in ('timezone', 'initials_style', 'initials_font'):
+            if attrs.get(key) is not None:
+                sign_payload[key] = attrs[key]
         if attrs.get('signature_image'):
             sign_payload['signature_image'] = attrs['signature_image']
         sign_serializer = SignDocumentSerializer(data=sign_payload, context=self.context)
@@ -344,59 +359,17 @@ class SelfSignSerializer(serializers.Serializer):
         return attrs
 
     def _validate_self_sign_fields(self, fields_data, document_ids):
-        allowed_types = {"initials", "date", "text", "designation"}
+        from fields.validation import validate_field_item
+
         document_ids_in_envelope = set(str(doc_id) for doc_id in document_ids)
-
         for i, item in enumerate(fields_data):
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(f"fields[{i}] must be an object")
-
-            required_keys = ["document_id", "page", "x", "y", "width", "height", "type", "required"]
-            missing = [k for k in required_keys if k not in item]
-            if missing:
-                raise serializers.ValidationError(f"fields[{i}] missing keys: {missing}")
-
-            doc_id = str(item.get('document_id'))
-            if doc_id not in document_ids_in_envelope:
-                raise serializers.ValidationError(
-                    f"fields[{i}].document_id {doc_id} not in document_ids"
-                )
-
-            typ = str(item.get('type'))
-            if typ not in allowed_types:
-                raise serializers.ValidationError(
-                    f"fields[{i}].type must be one of {sorted(list(allowed_types))}"
-                )
-
-            try:
-                page = int(item.get('page'))
-                x = float(item.get('x'))
-                y = float(item.get('y'))
-                width = float(item.get('width'))
-                height = float(item.get('height'))
-            except (TypeError, ValueError) as exc:
-                raise serializers.ValidationError(
-                    f"fields[{i}] numeric fields must be numbers"
-                ) from exc
-            if page < 1 or x < 0 or y < 0 or width < 0 or height < 0:
-                raise serializers.ValidationError(
-                    f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0"
-                )
-
-            if typ in {"text", "designation"}:
-                max_length = item.get('max_length')
-                if max_length is not None and int(max_length) <= 0:
-                    raise serializers.ValidationError(
-                        f"fields[{i}].max_length must be positive when provided"
-                    )
-
-            if bool(item.get('required')):
-                value = item.get('value')
-                prefill_value = item.get('prefill_value')
-                if value in (None, '') and prefill_value in (None, ''):
-                    raise serializers.ValidationError(
-                        f"fields[{i}] requires value or prefill_value when required=true"
-                    )
+            validate_field_item(
+                item,
+                i,
+                document_ids=document_ids_in_envelope,
+                required_keys=("document_id", "page", "x", "y", "width", "height", "type", "required"),
+                require_value_when_required=True,
+            )
 
     def get_sign_data(self):
         return getattr(self, '_sign_data', {})
@@ -458,7 +431,10 @@ class SelfSignSerializer(serializers.Serializer):
                 documents_by_id = {
                     str(doc.id): doc for doc in Document.objects.filter(id__in=document_ids)
                 }
+                from fields.validation import clean_field_values
+
                 for item in fields_data:
+                    item = clean_field_values(item)
                     doc_id = str(item['document_id'])
                     field_value = item.get('value')
                     prefill_value = item.get('prefill_value')
