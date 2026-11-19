@@ -251,6 +251,29 @@ def test_autosave_replaces_ops(tmp_path):
     assert session.ops == [_op(opId="other", text="Two")]
 
 
+@pytest.mark.django_db
+def test_autosave_after_the_session_closed_says_so(tmp_path):
+    """A closed session (saved or discarded elsewhere) is not "document not found"."""
+    user = _user()
+    source = tmp_path / "draft.pdf"
+    _write_pdf(source)
+    document = _document(user, source)
+    client = _client(user)
+    assert _open(client, document).status_code == 200
+    url = reverse("documents:document_text_edits", args=[document.id])
+    assert client.delete(url).status_code == 204
+
+    response = client.put(url, {"ops": [_op(text="One")]}, format="json")
+
+    assert response.status_code == 409
+    assert response.data["reason"] == "session_closed"
+    commit = client.post(reverse("documents:document_text_edits_commit", args=[document.id]), {"ops": []}, format="json")
+    assert commit.status_code == 409 and commit.data["reason"] == "session_closed"
+    # Reopening gives a fresh session the editor can keep saving to.
+    assert _open(client, document).status_code == 200
+    assert client.put(url, {"ops": [_op(text="One")]}, format="json").status_code == 200
+
+
 # --- Text rewrite (docs/plan-full-text-rewrite.md) -------------------------------
 
 
