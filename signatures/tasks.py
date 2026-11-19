@@ -161,6 +161,8 @@ def embed_document_for_signer(self, job_id: str, envelope_document_id: str) -> d
                 env_doc,
                 job.signature_image_data,
                 fallback_placement=job.fallback_placement or {},
+                # Date fields show when the signer pressed sign, not when the worker ran.
+                stamp_context={**(job.stamp_options or {}), "signed_at": job.created_at},
             )
         duration = time.monotonic() - start
         _log_job_event(

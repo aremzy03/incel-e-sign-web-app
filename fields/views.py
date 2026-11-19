@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
+from .validation import SERVER_FILLED_FIELD_TYPES
 from .models import Field
 from .serializers import FieldSerializer, FieldValueSerializer
 
@@ -98,7 +99,8 @@ class SigningFieldsValueSaveView(APIView):
             ser.is_valid(raise_exception=True)
             f = get_object_or_404(Field, pk=ser.validated_data['id'], envelope=envelope, assigned_signer=request.user)
             # If prefill exists, keep as authoritative; otherwise save value
-            if f.prefill_value is None:
+            # Date and initials are filled by the server at signing time.
+            if f.prefill_value is None and f.type not in SERVER_FILLED_FIELD_TYPES:
                 f.value = ser.validated_data.get('value')
                 f.save(update_fields=['value', 'updated_at'])
             updated.append(str(f.id))
@@ -167,7 +169,8 @@ class SigningFieldsValueSavePublicView(APIView):
             if signer_user:
                 field_filter["assigned_signer"] = signer_user
             f = get_object_or_404(Field, **field_filter)
-            if f.prefill_value is None:
+            # Date and initials are filled by the server at signing time.
+            if f.prefill_value is None and f.type not in SERVER_FILLED_FIELD_TYPES:
                 f.value = ser.validated_data.get('value')
                 f.save(update_fields=['value', 'updated_at'])
             updated.append(str(f.id))

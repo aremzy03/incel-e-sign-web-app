@@ -210,6 +210,68 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
         writer.write(f)
 
 
+
+def _resolve_stamp_font(font_family: str | None) -> str:
+    """ReportLab font name for a stamp: a registered name, a TTF path, or Helvetica."""
+    font_family = font_family or "Helvetica"
+    try:
+        if font_family.lower().endswith(".ttf") and os.path.exists(font_family):
+            font_name = os.path.basename(font_family)
+            if font_name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(font_name, font_family))
+            return font_name
+        pdfmetrics.getFont(font_family)
+        return font_family
+    except Exception:
+        return "Helvetica"
+
+
+def _draw_text_stamp(c, stamp: dict, page_height: float, convert_y_axis: bool) -> None:
+    """
+    Draw one text stamp.
+
+    Stamps with width/height are fitted inside their box: shrunk to fit the
+    width, centred vertically, left-aligned (or centred with align="center").
+    Stamps without a box keep the original top-left drawString behaviour.
+    """
+    from fields.stamps import fit_font_size, stamp_baseline, stamp_x
+
+    x = float(stamp["x"])
+    y = float(stamp["y"])
+    text = str(stamp.get("text") or "")
+    font_name = _resolve_stamp_font(stamp.get("font_family"))
+    c.setFillColor(Color(0, 0, 0))
+
+    width = stamp.get("width")
+    height = stamp.get("height")
+    if width and height:
+        width = float(width)
+        height = float(height)
+        max_size = stamp.get("max_font_size")
+        size = fit_font_size(text, font_name, width, height, float(max_size) if max_size else None)
+        box_bottom = page_height - y - height if convert_y_axis else y
+        c.setFont(font_name, size)
+        c.drawString(
+            stamp_x(text, font_name, size, x, width, stamp.get("align") or "left"),
+            stamp_baseline(font_name, size, box_bottom, height),
+            text,
+        )
+        return
+
+    font_size = float(stamp.get("font_size") or 12.0)
+    c.setFont(font_name, font_size)
+    text_height = font_size * 1.2
+    if convert_y_axis:
+        pdf_y = page_height - y - text_height
+        if pdf_y < 0:
+            pdf_y = 0
+        elif pdf_y + text_height > page_height:
+            pdf_y = page_height - text_height
+    else:
+        pdf_y = y
+    c.drawString(x, pdf_y, text)
+
+
 def embed_fields_single_pass(
     pdf_path: str,
     output_path: str,
@@ -301,35 +363,7 @@ def embed_fields_single_pass(
                         )
 
                 for stamp in page_texts:
-                    x = float(stamp["x"])
-                    y = float(stamp["y"])
-                    text = str(stamp.get("text") or "")
-                    font_family = stamp.get("font_family") or "Helvetica"
-                    font_size = float(stamp.get("font_size") or 12.0)
-
-                    try:
-                        if font_family and font_family.lower().endswith(".ttf") and os.path.exists(font_family):
-                            font_name = os.path.basename(font_family)
-                            if font_name not in pdfmetrics.getRegisteredFontNames():
-                                pdfmetrics.registerFont(TTFont(font_name, font_family))
-                            c.setFont(font_name, font_size)
-                        else:
-                            c.setFont(font_family or "Helvetica", font_size)
-                    except Exception:
-                        c.setFont("Helvetica", font_size)
-
-                    text_height = font_size * 1.2
-                    if convert_y_axis:
-                        pdf_y = page_height - y - text_height
-                        if pdf_y < 0:
-                            pdf_y = 0
-                        elif pdf_y + text_height > page_height:
-                            pdf_y = page_height - text_height
-                    else:
-                        pdf_y = y
-
-                    c.setFillColor(Color(0, 0, 0))
-                    c.drawString(x, pdf_y, text)
+                    _draw_text_stamp(c, stamp, page_height, convert_y_axis)
 
                 c.save()
                 buffer.seek(0)

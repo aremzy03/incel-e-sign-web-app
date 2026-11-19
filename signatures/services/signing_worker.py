@@ -26,6 +26,7 @@ def embed_envelope_document_for_signer(
     signature_image_data: str,
     *,
     fallback_placement: dict[str, Any] | None = None,
+    stamp_context: dict[str, Any] | None = None,
 ) -> str:
     """
     Download source PDF, embed signature/fields, upload signing version.
@@ -49,6 +50,7 @@ def embed_envelope_document_for_signer(
             output_path,
             signature_image_data,
             fallback_placement=fallback_placement,
+            stamp_context=stamp_context,
         )
         version = next_signing_version(envelope.id, document.id)
         new_url = upload_signing_version(envelope.id, document.id, version, output_path)

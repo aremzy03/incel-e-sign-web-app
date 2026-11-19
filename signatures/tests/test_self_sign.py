@@ -146,7 +146,7 @@ class SelfSignTestCase(APITestCase):
                         'y': 600,
                         'width': 200,
                         'height': 24,
-                        'type': 'text',
+                        'type': 'designation',
                         'required': True,
                         'value': 'Jane Doe',
                     },
@@ -270,7 +270,7 @@ class SelfSignTestCase(APITestCase):
                         'y': 600,
                         'width': 200,
                         'height': 24,
-                        'type': 'text',
+                        'type': 'designation',
                         'required': True,
                     },
                 ],
@@ -335,3 +335,84 @@ class SelfSignTestCase(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         mock_create_notification.assert_not_called()
+
+    def _field_item(self, document, **overrides):
+        item = {
+            'document_id': str(document.id),
+            'page': 1,
+            'x': 100,
+            'y': 600,
+            'width': 120,
+            'height': 30,
+            'type': 'date',
+            'required': True,
+        }
+        item.update(overrides)
+        return item
+
+    def test_self_sign_rejects_retired_text_field(self):
+        document = self._create_document()
+        response = self.client.post(
+            self.url,
+            self._self_sign_payload(document, fields=[self._field_item(document, type='text', value='Hi')]),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Add text', str(response.data))
+
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_server_fills_date_and_initials(self, _mock_complete):
+        from fields.models import Field
+
+        document = self._create_document()
+        response = self.client.post(
+            self.url,
+            self._self_sign_payload(
+                document,
+                fields=[
+                    self._field_item(document, value='1999-01-01', date_format='DD/MM/YYYY'),
+                    self._field_item(document, type='initials', y=650, value='ZZ'),
+                ],
+                timezone='Europe/Paris',
+                initials_style='full_name',
+                initials_font='allura',
+            ),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.data)
+
+        job = SigningJob.objects.get(id=response.data['data']['job_id'])
+        self.assertEqual(
+            job.stamp_options,
+            {'timezone': 'Europe/Paris', 'initials_style': 'full_name', 'initials_font': 'allura'},
+        )
+        fields = Field.objects.filter(envelope=job.envelope)
+        self.assertEqual(fields.count(), 2)
+        for field in fields:
+            self.assertIsNone(field.value)
+            self.assertIsNone(field.prefill_value)
+
+    @patch('signatures.services.signing.upload_completed_pdf', side_effect=lambda e, d, p: f"https://fake-s3.local/completed/{e}/{d}.pdf")
+    def test_self_sign_invalid_timezone_falls_back_to_lagos(self, _mock_complete):
+        document = self._create_document()
+        response = self.client.post(
+            self.url,
+            self._self_sign_payload(document, timezone='Not/AZone'),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED, response.data)
+        job = SigningJob.objects.get(id=response.data['data']['job_id'])
+        self.assertEqual(job.stamp_options['timezone'], 'Africa/Lagos')
+
+    def test_self_sign_rejects_unknown_initials_font_and_date_format(self):
+        document = self._create_document()
+        bad_font = self.client.post(
+            self.url, self._self_sign_payload(document, initials_font='comic-sans'), format='json',
+        )
+        self.assertEqual(bad_font.status_code, status.HTTP_400_BAD_REQUEST)
+        bad_format = self.client.post(
+            self.url,
+            self._self_sign_payload(document, fields=[self._field_item(document, date_format='DD.MM.YY')]),
+            format='json',
+        )
+        self.assertEqual(bad_format.status_code, status.HTTP_400_BAD_REQUEST)

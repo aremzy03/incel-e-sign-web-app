@@ -9,7 +9,6 @@ import logging
 import os
 import secrets
 import string
-from datetime import datetime
 from typing import Any
 
 from django.conf import settings
@@ -140,6 +139,70 @@ def resolve_job_signature_image(job) -> str:
     return resolve_signature_image(job.signer, {})
 
 
+
+def build_field_stamps(signer_fields, signer, stamp_context: dict[str, Any] | None) -> list[dict]:
+    """
+    Text to draw for a signer's non-signature fields, fitted to each field's box.
+
+    Date and initials come from the server (signing time in the signer's zone;
+    the signer's account name in their chosen style and font). A sender
+    prefill on those types is honoured only for fields created before the
+    server filled them.
+    """
+    from fields.stamps import (
+        build_stamp_options,
+        format_signing_date,
+        initials_reportlab_font,
+        initials_text,
+    )
+
+    context = stamp_context or {}
+    options = build_stamp_options(context)
+    signed_at = context.get('signed_at') or timezone.now()
+
+    stamps = []
+    for field in signer_fields:
+        if field.type not in ('initials', 'text', 'designation', 'date'):
+            continue
+        legacy_prefill = field.prefill_value not in (None, '')
+        font_family = field.font_family or 'Helvetica'
+        max_font_size = float(field.font_size or 12)
+        align = 'left'
+
+        if field.type == 'date':
+            text = (
+                str(field.prefill_value) if legacy_prefill
+                else format_signing_date(signed_at, options['timezone'], field.date_format)
+            )
+        elif field.type == 'initials':
+            if legacy_prefill:
+                text = str(field.prefill_value)
+            else:
+                text = initials_text(getattr(signer, 'full_name', ''), options['initials_style'])
+                font_family = initials_reportlab_font(options['initials_font'])
+                max_font_size = None
+            align = 'center'
+        else:
+            value = field.prefill_value if field.prefill_value is not None else field.value
+            text = str(value) if value else ''
+
+        if not text:
+            continue
+        stamps.append({
+            'page': field.page,
+            'x': float(field.x),
+            'y': field.y,
+            'width': float(field.width),
+            'height': float(field.height),
+            'text': text,
+            'font_family': font_family,
+            'font_size': float(field.font_size or 12),
+            'max_font_size': max_font_size,
+            'align': align,
+        })
+    return stamps
+
+
 def embed_document_pdf_for_signer(
     envelope: Envelope,
     signer,
@@ -149,9 +212,13 @@ def embed_document_pdf_for_signer(
     signature_image_data: str,
     *,
     fallback_placement: dict[str, Any] | None = None,
+    stamp_context: dict[str, Any] | None = None,
 ) -> None:
     """
     Embed signature images and assigned field text for one envelope document.
+
+    stamp_context: signing job's ``stamp_options`` plus ``signed_at`` (the
+    moment the signer pressed sign). Defaults to now in Africa/Lagos.
 
     Reads from input_pdf_path and writes to output_pdf_path (local paths only).
     """
@@ -227,43 +294,7 @@ def embed_document_pdf_for_signer(
                 assigned_signer=signer,
             )
 
-            text_stamps = []
-            for field in signer_fields:
-                field_value = field.prefill_value if field.prefill_value is not None else field.value
-                if not field_value:
-                    continue
-                if field.type not in ['initials', 'text', 'designation', 'date']:
-                    continue
-
-                text_to_draw = str(field_value)
-                if field.type == 'date' and field.date_format:
-                    try:
-                        parsed = None
-                        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-                            try:
-                                parsed = datetime.strptime(text_to_draw, fmt)
-                                break
-                            except ValueError:
-                                continue
-                        if parsed:
-                            fmt_map = {
-                                'YYYY-MM-DD': "%Y-%m-%d",
-                                'DD/MM/YYYY': "%d/%m/%Y",
-                                'MMM D, YYYY': "%b %-d, %Y",
-                            }
-                            out_fmt = fmt_map.get(field.date_format, "%Y-%m-%d")
-                            text_to_draw = parsed.strftime(out_fmt)
-                    except Exception:
-                        pass
-
-                text_stamps.append({
-                    'page': field.page,
-                    'x': float(field.x) + SIGNATURE_X_OFFSET,
-                    'y': field.y,
-                    'text': text_to_draw,
-                    'font_family': field.font_family or 'Helvetica',
-                    'font_size': float(field.font_size or 12),
-                })
+            text_stamps = build_field_stamps(signer_fields, signer, stamp_context)
 
             if use_legacy_patched_embed:
                 current_pdf_path = input_pdf_path
@@ -297,7 +328,7 @@ def embed_document_pdf_for_signer(
                         output_path=os.path.abspath(output_pdf_path),
                         text=stamp['text'],
                         page=stamp['page'],
-                        x=stamp['x'],
+                        x=float(stamp['x']) + SIGNATURE_X_OFFSET,
                         y=stamp['y'],
                         font_family=stamp['font_family'],
                         font_size=stamp['font_size'],

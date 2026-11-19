@@ -10,3 +10,8 @@ def test_import_pypdf():
     import pypdf  # noqa: F401
 
 
+
+
+def test_import_pymupdf():
+    # Text rewrite engine (docs/plan-full-text-rewrite.md).
+    import fitz  # noqa: F401

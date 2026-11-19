@@ -173,73 +173,21 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
     def validate_fields(self, value):
         # Schema + document checks here; signer membership in validate().
-        allowed_types = {"initials", "date", "text", "designation"}
+        from fields.validation import validate_field_item
+
         document_ids_in_envelope = set(
             str(doc_id) for doc_id in self.initial_data.get("document_ids", [])
         )
-
         for i, item in enumerate(value):
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(f"fields[{i}] must be an object")
-
-            required_keys = [
-                "document_id",
-                "page",
-                "x",
-                "y",
-                "width",
-                "height",
-                "type",
-                "assigned_signer",
-                "required",
-            ]
-            missing = [k for k in required_keys if k not in item]
-            if missing:
-                raise serializers.ValidationError(
-                    f"fields[{i}] missing keys: {missing}"
-                )
-
-            doc_id = str(item.get("document_id"))
-            if doc_id not in document_ids_in_envelope:
-                raise serializers.ValidationError(
-                    f"fields[{i}].document_id {doc_id} not in document_ids"
-                )
-
-            typ = str(item.get("type"))
-            if typ not in allowed_types:
-                raise serializers.ValidationError(
-                    f"fields[{i}].type must be one of {sorted(list(allowed_types))}"
-                )
-
-            try:
-                page = int(item.get("page"))
-                x = float(item.get("x"))
-                y = float(item.get("y"))
-                width = float(item.get("width"))
-                height = float(item.get("height"))
-            except Exception:
-                raise serializers.ValidationError(
-                    f"fields[{i}] numeric fields must be numbers"
-                )
-            if page < 1 or x < 0 or y < 0 or width < 0 or height < 0:
-                raise serializers.ValidationError(
-                    f"fields[{i}] invalid coordinates: page>=1; x,y,width,height>=0"
-                )
-
-            if typ in {"text", "designation"}:
-                max_length = item.get("max_length")
-                if max_length is not None and int(max_length) <= 0:
-                    raise serializers.ValidationError(
-                        f"fields[{i}].max_length must be positive when provided"
-                    )
-
-            if typ == "date":
-                dv = item.get("prefill_value")
-                if dv is not None and len(str(dv)) > 64:
-                    raise serializers.ValidationError(
-                        f"fields[{i}].prefill_value too long for date"
-                    )
-
+            validate_field_item(
+                item,
+                i,
+                document_ids=document_ids_in_envelope,
+                required_keys=(
+                    "document_id", "page", "x", "y", "width", "height",
+                    "type", "assigned_signer", "required",
+                ),
+            )
         return value
 
     def validate(self, attrs):
@@ -340,6 +288,8 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
 
             # Create fields if provided
             if fields_data:
+                from fields.validation import clean_field_values
+
                 # Map documents for quick lookup and ensure membership already validated
                 documents_by_id = {str(doc.id): doc for doc in Document.objects.filter(id__in=document_ids)}
                 signer_ids_in_envelope = {str(s['signer_id']) for s in signing_order}
@@ -351,6 +301,7 @@ class EnvelopeCreateSerializer(serializers.ModelSerializer):
                     if doc_id not in documents_by_id or assigned_signer_id not in signer_ids_in_envelope:
                         raise serializers.ValidationError("Invalid field references to document or signer.")
 
+                    item = clean_field_values(item)
                     FieldModel.objects.create(
                         envelope=envelope,
                         document=documents_by_id[doc_id],

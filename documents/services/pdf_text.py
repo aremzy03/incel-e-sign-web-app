@@ -313,3 +313,75 @@ def apply_add_text(source_path: str, dest_path: str, ops: list[dict]) -> None:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     with open(dest_path, "wb") as handle:
         writer.write(handle)
+
+
+# --- Sessions with both op types (plan: docs/plan-full-text-rewrite.md) --------
+
+
+def validate_text_session_ops(ops: list, pages: list[dict], *, allow_rewrite: bool) -> list[dict]:
+    """
+    Validate a session's ops: `add_text` (this module) and `edit_text`
+    (documents.services.pdf_rewrite). `edit_text` is refused when the rewrite
+    engine isn't available.
+    """
+    if not isinstance(ops, list):
+        return [{"opId": None, "reason": "invalid_ops"}]
+    adds, edits, errors = [], [], []
+    for raw in ops:
+        kind = raw.get("op") if isinstance(raw, dict) else None
+        if kind == "edit_text":
+            edits.append(raw)
+        elif kind == "add_text" or not isinstance(raw, dict):
+            adds.append(raw)
+        else:
+            errors.append({"opId": raw.get("opId"), "reason": "unknown_op"})
+    errors.extend(validate_add_text_ops(adds, pages))
+    if edits:
+        if not allow_rewrite:
+            errors.extend({"opId": raw.get("opId"), "reason": "rewrite_unavailable"} for raw in edits)
+        else:
+            from documents.services.pdf_rewrite import validate_edit_text_ops
+
+            errors.extend(validate_edit_text_ops(edits, pages))
+    return errors
+
+
+def split_session_ops(ops: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(edit_text ops, drawable add_text ops). Every edit counts: empty text deletes the run."""
+    edits = [op for op in ops if op.get("op") == "edit_text"]
+    adds = drawable_ops([op for op in ops if op.get("op") == "add_text"])
+    return edits, adds
+
+
+def apply_text_session(source_path: str, dest_path: str, ops: list[dict]) -> list[dict]:
+    """
+    Write a session's ops into dest_path; return warnings.
+
+    Rewrites run first (PyMuPDF deletes old glyphs, draws replacements), then
+    add-text boxes are painted on top (ReportLab). The other order would let a
+    redaction rectangle delete freshly added text. A session with only
+    add_text ops never touches PyMuPDF, so Plan 1 output is unchanged.
+    """
+    import tempfile
+
+    edits, adds = split_session_ops(ops)
+    if not edits:
+        apply_add_text(source_path, dest_path, adds)
+        return []
+
+    from documents.services.pdf_rewrite import rewrite_text
+
+    if not adds:
+        return rewrite_text(source_path, dest_path, edits)
+
+    fd, middle = tempfile.mkstemp(suffix=".pdf", prefix="pdf-rewrite-")
+    os.close(fd)
+    try:
+        warnings = rewrite_text(source_path, middle, edits)
+        apply_add_text(middle, dest_path, adds)
+        return warnings
+    finally:
+        try:
+            os.remove(middle)
+        except OSError:
+            pass
