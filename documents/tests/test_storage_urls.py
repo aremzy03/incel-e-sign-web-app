@@ -89,12 +89,12 @@ def test_refresh_remote_file_url_regenerates_signed_url(settings):
     mock_storage = MagicMock()
     mock_storage.url.return_value = fresh_url
 
-    with patch("documents.storage.get_permanent_s3_storage", return_value=mock_storage):
+    with patch("documents.storage.get_unprefixed_s3_storage", return_value=mock_storage):
         result = refresh_remote_file_url(stored_url)
 
     assert result == fresh_url
     mock_storage.url.assert_called_once_with(
-        "staging/11111111-1111-1111-1111-111111111111.pdf"
+        "incel-esign-app/staging/11111111-1111-1111-1111-111111111111.pdf"
     )
 
 
@@ -144,12 +144,12 @@ def test_refresh_remote_file_url_avoids_double_location_prefix(settings):
     mock_storage = MagicMock()
     mock_storage.url.return_value = fresh_url
 
-    with patch("documents.storage.get_permanent_s3_storage", return_value=mock_storage):
+    with patch("documents.storage.get_unprefixed_s3_storage", return_value=mock_storage):
         result = refresh_remote_file_url(stored_url)
 
     assert result == fresh_url
     mock_storage.url.assert_called_once_with(
-        "completed/634dd246-3035-40b3-9be1-993ca5377e64/"
+        "incel-esign-app/completed/634dd246-3035-40b3-9be1-993ca5377e64/"
         "a7ad8a85-3d53-49ae-8c13-b0a61523462b.pdf"
     )
     assert "/incel-esign-app/incel-esign-app/" not in result
@@ -184,10 +184,37 @@ def test_document_serializer_refreshes_remote_urls(settings):
     )
     fresh_url = stored_url.replace("Expires=1", "Expires=999").replace("old", "new")
 
-    with patch("documents.storage.get_permanent_s3_storage") as mock_get_storage:
+    with patch("documents.storage.get_unprefixed_s3_storage") as mock_get_storage:
         mock_get_storage.return_value.url.return_value = fresh_url
         data = DocumentSerializer(document).data
 
     assert data["file_url"] == fresh_url
     assert data["signed_file_url"] == fresh_url
     assert data["current_file_url"] == fresh_url
+
+
+def test_refresh_keeps_a_file_stored_under_another_environment_prefix(settings):
+    """A file written under incel-esign-app/ while the app now runs with incel-esign-dev/."""
+    settings.USE_S3 = True
+    settings.AWS_LOCATION = "incel-esign-dev"
+    settings.AWS_S3_CUSTOM_DOMAIN = "cdn.example.net"
+    settings.AWS_CLOUDFRONT_KEY_ID = None
+    settings.AWS_CLOUDFRONT_KEY = None
+    settings.AWS_QUERYSTRING_AUTH = False
+    stored = "https://cdn.example.net/incel-esign-app/completed/env/doc.pdf"
+
+    result = refresh_remote_file_url(stored)
+
+    assert result == stored
+    assert "incel-esign-dev" not in result
+
+
+def test_delete_uses_the_full_stored_key(settings):
+    from documents.services.pdf_files import delete_storage_url
+
+    settings.AWS_LOCATION = "incel-esign-dev"
+    mock_storage = MagicMock()
+    with patch("documents.services.pdf_files.get_unprefixed_s3_storage", return_value=mock_storage):
+        delete_storage_url("https://cdn.example.net/incel-esign-app/signing/env/doc/v1.pdf")
+
+    mock_storage.delete.assert_called_once_with("incel-esign-app/signing/env/doc/v1.pdf")

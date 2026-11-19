@@ -10,6 +10,7 @@ from rest_framework import serializers
 from .models import Signature, UserSignature
 from django.core.files.base import ContentFile
 from PIL import Image
+from signatures.utils.signature_images import shrink_signature
 from io import BytesIO
 import logging
 
@@ -558,7 +559,9 @@ class UserSignatureSerializer(serializers.ModelSerializer):
 
         # Now enforce transparency for white / near-white pixels using Pillow
         try:
-            img = Image.open(BytesIO(processed_bytes)).convert("RGBA")
+            # Shrink first: smaller to store and to load on every sign page, and the per-pixel
+            # pass below is far quicker on 800x400 than on a 4000x3000 photo.
+            img = shrink_signature(Image.open(BytesIO(processed_bytes)).convert("RGBA"))
             datas = img.getdata()
 
             new_data = []
@@ -574,7 +577,7 @@ class UserSignatureSerializer(serializers.ModelSerializer):
             img.putdata(new_data)
 
             output = BytesIO()
-            img.save(output, format="PNG")
+            img.save(output, format="PNG", optimize=True)
             processed_bytes = output.getvalue()
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Pillow background post-processing failed: %s", exc, exc_info=True)

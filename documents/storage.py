@@ -77,6 +77,19 @@ def get_permanent_s3_storage():
     return TimezoneAwareS3Boto3Storage()
 
 
+def get_unprefixed_s3_storage():
+    """
+    The S3 storage without the environment prefix (AWS_LOCATION).
+
+    For files already stored, whose URL path is the full object key. Their prefix is the
+    one in force when they were written, which isn't always the current one (older dev
+    files sit under ``incel-esign-app/``). Stripping the current prefix and letting the
+    storage add it back produced ``incel-esign-dev/incel-esign-app/...``: a key that
+    doesn't exist, so CloudFront answered 403.
+    """
+    return TimezoneAwareS3Boto3Storage(location="")
+
+
 def storage_relative_key(key: str) -> str:
     """
     Return a storage-relative key suitable for S3Boto3Storage.url().
@@ -202,6 +215,7 @@ def refresh_remote_file_url(url: str | None) -> str | None:
     if not key:
         return url
 
-    refreshed = get_permanent_s3_storage().url(storage_relative_key(key))
+    # The full stored key, whatever environment prefix it was written under.
+    refreshed = get_unprefixed_s3_storage().url(key)
     return normalize_remote_file_url(refreshed)
 

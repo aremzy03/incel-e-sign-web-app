@@ -129,11 +129,62 @@ def _notify_next_signer(envelope):
             LOGGER.error("Error sending turn-to-sign email: %s", exc)
 
 
+def _current_url(document) -> str:
+    return document.signed_file_url or document.file_url or ""
+
+
+def _record_document_sources(job: SigningJob) -> None:
+    """Remember which file each document is at before this job stamps it (once per job)."""
+    if job.document_sources:
+        return
+    from documents.models import Document
+
+    documents = Document.objects.filter(envelopedocument_set__envelope=job.envelope)
+    job.document_sources = {
+        str(doc.id): {"file_url": doc.file_url, "signed_file_url": doc.signed_file_url}
+        for doc in documents
+    }
+    job.save(update_fields=["document_sources", "updated_at"])
+
+
+def _already_stamped_by_job(job: SigningJob, document) -> bool:
+    """True when this job already replaced the document's file (a redelivered or repeated embed)."""
+    source = (job.document_sources or {}).get(str(document.id))
+    if not source:
+        return False
+    return _current_url(document) != (source.get("signed_file_url") or source.get("file_url") or "")
+
+
+def _restore_document_sources(job: SigningJob) -> None:
+    """
+    Put back the files a failed job already stamped, so the next attempt (a retry or a new
+    sign) starts from unsigned documents instead of stamping some of them twice.
+    """
+    from documents.models import Document
+    from documents.services.pdf_files import delete_storage_url
+
+    for document_id, source in (job.document_sources or {}).items():
+        document = Document.objects.filter(pk=document_id).first()
+        if document is None or not _already_stamped_by_job(job, document):
+            continue
+        stamped_url = _current_url(document)
+        document.file_url = source.get("file_url")
+        document.signed_file_url = source.get("signed_file_url")
+        document.save(update_fields=["file_url", "signed_file_url", "updated_at"])
+        if f"signing/{job.envelope_id}/{document_id}/" in stamped_url:
+            delete_storage_url(stamped_url)
+        _log_job_event(job, "signing_job_document_restored", document_id=document_id)
+
+
 def _mark_job_failed(job: SigningJob, error_message: str) -> None:
     job.status = "failed"
     job.error_message = error_message[:2000]
     job.completed_at = timezone.now()
     job.save(update_fields=["status", "error_message", "completed_at", "updated_at"])
+    signed = bool(job.signature_id) and Signature.objects.filter(pk=job.signature_id, status="signed").exists()
+    if not signed:
+        # The signer hasn't signed: undo any document this job already stamped.
+        _restore_document_sources(job)
     if job.signature_id:
         Signature.objects.filter(pk=job.signature_id, status="processing").update(status="pending")
     from audit.utils import log_action
@@ -153,6 +204,10 @@ def embed_document_for_signer(self, job_id: str, envelope_document_id: str) -> d
     job = SigningJob.objects.select_related("envelope", "signer").get(pk=job_id)
     env_doc = EnvelopeDocument.objects.select_related("document").get(pk=envelope_document_id)
     start = time.monotonic()
+    if _already_stamped_by_job(job, env_doc.document):
+        # acks_late redelivers a task whose worker died after the upload: don't stamp twice.
+        _log_job_event(job, "embed_document_skipped_already_stamped", document_id=str(env_doc.document_id))
+        return {"envelope_document_id": envelope_document_id, "ok": True}
     try:
         with _sentry_signing_span("signing.embed_document", job, document_id=str(env_doc.document_id)):
             embed_envelope_document_for_signer(
@@ -288,6 +343,7 @@ def process_signing_job(self, job_id: str) -> None:
     if not envelope_documents:
         _mark_job_failed(job, "No documents found in envelope")
         return
+    _record_document_sources(job)
 
     try:
         with _sentry_signing_span("signing.process_job", job):

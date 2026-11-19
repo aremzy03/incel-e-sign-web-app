@@ -67,7 +67,9 @@ def test_document_upload_failure_does_not_leave_orphan_row(settings, tmp_path, m
 
     monkeypatch.setattr("documents.services.document_creation.upload_staging_pdf", _raise_storage_error)
 
-    upload = SimpleUploadedFile("doc.pdf", b"%PDF-1.4\n%EOF", content_type="application/pdf")
+    pdf_path = tmp_path / "doc.pdf"
+    _write_valid_pdf(pdf_path)  # uploads are checked: it must be a real PDF
+    upload = SimpleUploadedFile("doc.pdf", pdf_path.read_bytes(), content_type="application/pdf")
     response = client.post(reverse("documents:document_upload"), {"file": upload}, format="multipart")
 
     assert response.status_code == 500, response.data

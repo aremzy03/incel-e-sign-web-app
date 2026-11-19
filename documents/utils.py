@@ -58,10 +58,14 @@ def convert_word_to_pdf(input_abs_path: str, output_dir_abs: str) -> str:
 
     # Run LibreOffice in headless mode to convert to PDF
     # Note: Requires LibreOffice to be installed and available as `soffice`.
+    # Its own LibreOffice profile: soffice refuses to start a second conversion while another
+    # one holds the shared profile, so concurrent uploads would fail.
+    profile_dir = os.path.join(output_dir_abs, ".lo-profile")
     try:
         subprocess.run(
             [
                 "soffice",
+                f"-env:UserInstallation=file://{profile_dir}",
                 "--headless",
                 "--convert-to",
                 "pdf",
@@ -72,7 +76,11 @@ def convert_word_to_pdf(input_abs_path: str, output_dir_abs: str) -> str:
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            # A malformed document can hang LibreOffice; don't hold the web worker forever.
+            timeout=getattr(settings, "WORD_CONVERSION_TIMEOUT", 120),
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("LibreOffice conversion timed out") from exc
     except FileNotFoundError as exc:
         # 'soffice' command not found
         raise RuntimeError(

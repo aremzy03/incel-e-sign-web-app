@@ -213,6 +213,14 @@ class SigningJob(models.Model):
         blank=True,
         help_text="Signer choices for server-filled fields: timezone, initials_style, initials_font.",
     )
+    document_sources = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Document id -> the file URL this job signs. A document whose URL has moved on was "
+            "already stamped by this job (skipped on a re-run); a failed job puts it back."
+        ),
+    )
     error_message = models.TextField(blank=True, default='')
     attempt_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
