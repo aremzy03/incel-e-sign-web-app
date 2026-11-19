@@ -19,6 +19,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from . import health
+from core.search import GlobalSearchView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -33,6 +34,7 @@ urlpatterns = [
     path('api/notifications/', include('notifications.urls')),
     path('api/audit/', include('audit.urls')),
     path('api/contacts/', include('contacts.urls')),
+    path('api/search/', GlobalSearchView.as_view(), name='global-search'),
     path('api/v1/integrations/', include('integrations.urls')),
 ]
 

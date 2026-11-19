@@ -9,14 +9,13 @@ import logging
 import os
 import secrets
 import string
-from datetime import datetime
 from typing import Any
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from documents.services.pdf_files import download_pdf_to_temp, upload_completed_pdf
+from documents.services.pdf_files import copy_completed_pdf, download_pdf_to_temp, upload_completed_pdf
 from envelopes.models import Envelope, EnvelopeDocument
 from envelopes.utils.pdf_security import lock_pdf_with_password
 from signatures.models import Signature, UserSignature
@@ -140,6 +139,70 @@ def resolve_job_signature_image(job) -> str:
     return resolve_signature_image(job.signer, {})
 
 
+
+def build_field_stamps(signer_fields, signer, stamp_context: dict[str, Any] | None) -> list[dict]:
+    """
+    Text to draw for a signer's non-signature fields, fitted to each field's box.
+
+    Date and initials come from the server (signing time in the signer's zone;
+    the signer's account name in their chosen style and font). A sender
+    prefill on those types is honoured only for fields created before the
+    server filled them.
+    """
+    from fields.stamps import (
+        build_stamp_options,
+        format_signing_date,
+        initials_reportlab_font,
+        initials_text,
+    )
+
+    context = stamp_context or {}
+    options = build_stamp_options(context)
+    signed_at = context.get('signed_at') or timezone.now()
+
+    stamps = []
+    for field in signer_fields:
+        if field.type not in ('initials', 'text', 'designation', 'date'):
+            continue
+        legacy_prefill = field.prefill_value not in (None, '')
+        font_family = field.font_family or 'Helvetica'
+        max_font_size = float(field.font_size or 12)
+        align = 'left'
+
+        if field.type == 'date':
+            text = (
+                str(field.prefill_value) if legacy_prefill
+                else format_signing_date(signed_at, options['timezone'], field.date_format)
+            )
+        elif field.type == 'initials':
+            if legacy_prefill:
+                text = str(field.prefill_value)
+            else:
+                text = initials_text(getattr(signer, 'full_name', ''), options['initials_style'])
+                font_family = initials_reportlab_font(options['initials_font'])
+                max_font_size = None
+            align = 'center'
+        else:
+            value = field.prefill_value if field.prefill_value is not None else field.value
+            text = str(value) if value else ''
+
+        if not text:
+            continue
+        stamps.append({
+            'page': field.page,
+            'x': float(field.x),
+            'y': field.y,
+            'width': float(field.width),
+            'height': float(field.height),
+            'text': text,
+            'font_family': font_family,
+            'font_size': float(field.font_size or 12),
+            'max_font_size': max_font_size,
+            'align': align,
+        })
+    return stamps
+
+
 def embed_document_pdf_for_signer(
     envelope: Envelope,
     signer,
@@ -149,9 +212,13 @@ def embed_document_pdf_for_signer(
     signature_image_data: str,
     *,
     fallback_placement: dict[str, Any] | None = None,
+    stamp_context: dict[str, Any] | None = None,
 ) -> None:
     """
     Embed signature images and assigned field text for one envelope document.
+
+    stamp_context: signing job's ``stamp_options`` plus ``signed_at`` (the
+    moment the signer pressed sign). Defaults to now in Africa/Lagos.
 
     Reads from input_pdf_path and writes to output_pdf_path (local paths only).
     """
@@ -227,43 +294,7 @@ def embed_document_pdf_for_signer(
                 assigned_signer=signer,
             )
 
-            text_stamps = []
-            for field in signer_fields:
-                field_value = field.prefill_value if field.prefill_value is not None else field.value
-                if not field_value:
-                    continue
-                if field.type not in ['initials', 'text', 'designation', 'date']:
-                    continue
-
-                text_to_draw = str(field_value)
-                if field.type == 'date' and field.date_format:
-                    try:
-                        parsed = None
-                        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-                            try:
-                                parsed = datetime.strptime(text_to_draw, fmt)
-                                break
-                            except ValueError:
-                                continue
-                        if parsed:
-                            fmt_map = {
-                                'YYYY-MM-DD': "%Y-%m-%d",
-                                'DD/MM/YYYY': "%d/%m/%Y",
-                                'MMM D, YYYY': "%b %-d, %Y",
-                            }
-                            out_fmt = fmt_map.get(field.date_format, "%Y-%m-%d")
-                            text_to_draw = parsed.strftime(out_fmt)
-                    except Exception:
-                        pass
-
-                text_stamps.append({
-                    'page': field.page,
-                    'x': float(field.x) + SIGNATURE_X_OFFSET,
-                    'y': field.y,
-                    'text': text_to_draw,
-                    'font_family': field.font_family or 'Helvetica',
-                    'font_size': float(field.font_size or 12),
-                })
+            text_stamps = build_field_stamps(signer_fields, signer, stamp_context)
 
             if use_legacy_patched_embed:
                 current_pdf_path = input_pdf_path
@@ -297,7 +328,7 @@ def embed_document_pdf_for_signer(
                         output_path=os.path.abspath(output_pdf_path),
                         text=stamp['text'],
                         page=stamp['page'],
-                        x=stamp['x'],
+                        x=float(stamp['x']) + SIGNATURE_X_OFFSET,
                         y=stamp['y'],
                         font_family=stamp['font_family'],
                         font_size=stamp['font_size'],
@@ -465,7 +496,17 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
         source_url = document.signed_file_url or document.file_url
         upload_path = None
         temp_download = None
-        if source_url:
+        locked_temp = None
+        if source_url and not (envelope.pdf_password_protection_enabled and final_password):
+            # Nothing to change in the file: copy it inside S3 instead of downloading and re-uploading.
+            try:
+                locked_url = copy_completed_pdf(envelope.id, document.id, source_url)
+            except Exception:
+                LOGGER.exception(
+                    "Server-side copy of completed PDF failed for document %s; uploading instead",
+                    document.id,
+                )
+        if source_url and not locked_url:
             try:
                 if source_url.startswith('/media/') or (
                     not source_url.startswith('http://') and not source_url.startswith('https://')
@@ -477,7 +518,9 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
             except (ValueError, FileNotFoundError):
                 upload_path = None
 
-        if upload_path and os.path.exists(upload_path):
+        if locked_url:
+            pass
+        elif upload_path and os.path.exists(upload_path):
             if envelope.pdf_password_protection_enabled and final_password:
                 locked_path = lock_pdf_with_password(
                     pdf_path=upload_path,
@@ -485,6 +528,13 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
                 )
                 if locked_path:
                     upload_path = locked_path
+                    locked_temp = locked_path
+                else:
+                    LOGGER.error(
+                        "Could not password-protect document %s in envelope %s; storing it unprotected",
+                        document.id,
+                        envelope.id,
+                    )
             try:
                 locked_url = upload_completed_pdf(envelope.id, document.id, upload_path)
             except Exception:
@@ -501,9 +551,11 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
                 source_url,
             )
 
-        if temp_download is not None:
+        for temp_path in (temp_download, locked_temp):
+            if temp_path is None:
+                continue
             try:
-                os.remove(str(temp_download))
+                os.remove(str(temp_path))
             except OSError:
                 pass
 

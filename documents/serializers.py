@@ -36,6 +36,29 @@ class MergeDocumentsSerializer(serializers.Serializer):
             )
         return value
 
+def check_pdf_bytes(data: bytes) -> None:
+    """
+    Reject files that would only fail later, when someone tries to sign them: not a PDF,
+    damaged, empty, or locked with an open password.
+    """
+    import fitz
+
+    if b"%PDF-" not in data[:1024]:
+        raise serializers.ValidationError("This file isn't a valid PDF.")
+    try:
+        with fitz.open(stream=data, filetype="pdf") as pdf:
+            if pdf.needs_pass:
+                raise serializers.ValidationError(
+                    "This PDF is password-protected. Remove the password and upload it again."
+                )
+            if pdf.page_count == 0:
+                raise serializers.ValidationError("This PDF has no pages.")
+    except serializers.ValidationError:
+        raise
+    except Exception:
+        raise serializers.ValidationError("This PDF is damaged and can't be opened.")
+
+
 class DocumentUploadSerializer(serializers.Serializer):
     """
     Serializer for document upload functionality.
@@ -74,7 +97,12 @@ class DocumentUploadSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"File size must not exceed 20MB. Current size: {value.size / (1024 * 1024):.2f}MB"
             )
-        
+
+        if lower_name.endswith('.pdf'):
+            data = b"".join(value.chunks())
+            value.seek(0)
+            check_pdf_bytes(data)
+
         return value
     
     def save(self, owner):
@@ -95,33 +123,34 @@ class DocumentUploadSerializer(serializers.Serializer):
         ext = ext.lower()
         
         if ext in ('.doc', '.docx'):
-            # Save the uploaded Word file to a temporary location on disk
+            import shutil
+            import tempfile
+
             from .utils import convert_word_to_pdf
-            
-            tmp_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp_uploads')
-            os.makedirs(tmp_dir, exist_ok=True)
-            tmp_input_abs = os.path.join(tmp_dir, f"{owner.id}_{original_name}")
-            
-            # Write uploaded bytes to temp path
-            with open(tmp_input_abs, 'wb') as tmp_fp:
-                for chunk in file.chunks():
-                    tmp_fp.write(chunk)
-            
-            # Convert to PDF using LibreOffice
-            pdf_output_dir = os.path.join(str(settings.MEDIA_ROOT), 'tmp_converted')
+
+            # A private directory per upload: two users uploading "Contract.docx" at once must
+            # not overwrite each other's file, and nothing is left behind afterwards.
+            work_dir = tempfile.mkdtemp(prefix="esign_word_")
             try:
-                output_pdf_abs = convert_word_to_pdf(tmp_input_abs, pdf_output_dir)
-            except RuntimeError as exc:
-                raise serializers.ValidationError({
-                    'file': [
-                        'Word-to-PDF conversion failed. Ensure LibreOffice is installed on the server and `soffice` is on PATH.',
-                        str(exc)
-                    ]
-                })
-            
-            # Read back converted PDF bytes
-            with open(output_pdf_abs, 'rb') as fpdf:
-                pdf_bytes = fpdf.read()
+                tmp_input_abs = os.path.join(work_dir, f"source{ext}")
+                with open(tmp_input_abs, 'wb') as tmp_fp:
+                    for chunk in file.chunks():
+                        tmp_fp.write(chunk)
+
+                try:
+                    output_pdf_abs = convert_word_to_pdf(tmp_input_abs, os.path.join(work_dir, 'out'))
+                except RuntimeError as exc:
+                    raise serializers.ValidationError({
+                        'file': [
+                            'Word-to-PDF conversion failed. Ensure LibreOffice is installed on the server and `soffice` is on PATH.',
+                            str(exc)
+                        ]
+                    })
+
+                with open(output_pdf_abs, 'rb') as fpdf:
+                    pdf_bytes = fpdf.read()
+            finally:
+                shutil.rmtree(work_dir, ignore_errors=True)
             
             file_name_for_record = f"{base_name}.pdf"
             file_size_for_record = len(pdf_bytes)

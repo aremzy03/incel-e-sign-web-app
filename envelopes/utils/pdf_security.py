@@ -48,12 +48,12 @@ def lock_pdf_with_password(
 
     try:
         with PdfReader(pdf_path) as reader:
-            writer = PdfWriter()
-            for page in reader.pages:
-                writer.add_page(page)
+            # The whole document (outline, metadata, forms), not just its pages.
+            writer = PdfWriter(clone_from=reader)
 
-            # Use the same password for user and owner for simplicity.
-            writer.encrypt(user_password=password, owner_password=password)
+            # Use the same password for user and owner for simplicity. AES-256: pypdf's default
+            # (RC4) is broken and can be removed without the password.
+            writer.encrypt(user_password=password, owner_password=password, algorithm="AES-256")
     except Exception as exc:
         logger.error("lock_pdf_with_password: failed to encrypt PDF %s: %s", pdf_path, exc)
         return None

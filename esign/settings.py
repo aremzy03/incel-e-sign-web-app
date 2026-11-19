@@ -276,6 +276,11 @@ except ImportError:
         }
     }
 
+# Local copies of stored PDFs (documents/services/pdf_files.py), checked against the
+# object's ETag before use. 0 turns the cache off. Per machine: workers share it.
+PDF_CACHE_DIR = config('PDF_CACHE_DIR', default=None)
+PDF_CACHE_MAX_BYTES = config('PDF_CACHE_MAX_BYTES', default=256 * 1024 * 1024, cast=int)
+
 # Use SQLite for tests to avoid external DB dependencies
 if 'pytest' in sys.modules:
     DATABASES = {
@@ -284,6 +289,8 @@ if 'pytest' in sys.modules:
             'NAME': BASE_DIR / 'test_db.sqlite3',
         }
     }
+    # Off in tests: mocked S3 objects must not leak between tests. Cache tests turn it on.
+    PDF_CACHE_MAX_BYTES = 0
 
 
 # Django REST Framework

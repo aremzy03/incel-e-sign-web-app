@@ -16,3 +16,13 @@ def test_get_boto3_s3_client_uses_bounded_timeouts(settings):
 
     assert client.meta.config.connect_timeout == 7
     assert client.meta.config.read_timeout == 42
+
+
+def test_get_boto3_s3_client_is_reused_until_settings_change(settings):
+    settings.AWS_S3_REGION_NAME = "us-east-1"
+    settings.AWS_ACCESS_KEY_ID = "test-key"
+    settings.AWS_SECRET_ACCESS_KEY = "test-secret"
+    first = get_boto3_s3_client()
+    assert get_boto3_s3_client() is first
+    settings.AWS_S3_READ_TIMEOUT = 13
+    assert get_boto3_s3_client() is not first

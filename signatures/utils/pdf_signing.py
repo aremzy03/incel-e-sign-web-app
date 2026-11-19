@@ -1,6 +1,7 @@
 import io
 import os
 import base64
+import logging
 from typing import Tuple
 from urllib.parse import unquote
 
@@ -12,6 +13,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import Color, black
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _add_page_with_overlay(writer: PdfWriter, page, overlay_page=None):
@@ -210,6 +213,103 @@ def embed_text(pdf_path: str, output_path: str, text: str, page: int, x: float, 
         writer.write(f)
 
 
+
+def _resolve_stamp_font(font_family: str | None) -> str:
+    """ReportLab font name for a stamp: a registered name, a TTF path, or Helvetica."""
+    font_family = font_family or "Helvetica"
+    try:
+        if font_family.lower().endswith(".ttf") and os.path.exists(font_family):
+            font_name = os.path.basename(font_family)
+            if font_name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(TTFont(font_name, font_family))
+            return font_name
+        pdfmetrics.getFont(font_family)
+        return font_family
+    except Exception:
+        return "Helvetica"
+
+
+def _draw_text_stamp(c, stamp: dict, page_height: float, convert_y_axis: bool) -> None:
+    """
+    Draw one text stamp.
+
+    Stamps with width/height are fitted inside their box: shrunk to fit the
+    width, centred vertically, left-aligned (or centred with align="center").
+    Stamps without a box keep the original top-left drawString behaviour.
+    """
+    from fields.stamps import fit_font_size, stamp_baseline, stamp_x
+
+    x = float(stamp["x"])
+    y = float(stamp["y"])
+    text = str(stamp.get("text") or "")
+    font_name = _resolve_stamp_font(stamp.get("font_family"))
+    c.setFillColor(Color(0, 0, 0))
+
+    width = stamp.get("width")
+    height = stamp.get("height")
+    if width and height:
+        width = float(width)
+        height = float(height)
+        max_size = stamp.get("max_font_size")
+        size = fit_font_size(text, font_name, width, height, float(max_size) if max_size else None)
+        box_bottom = page_height - y - height if convert_y_axis else y
+        c.setFont(font_name, size)
+        c.drawString(
+            stamp_x(text, font_name, size, x, width, stamp.get("align") or "left"),
+            stamp_baseline(font_name, size, box_bottom, height),
+            text,
+        )
+        return
+
+    font_size = float(stamp.get("font_size") or 12.0)
+    c.setFont(font_name, font_size)
+    text_height = font_size * 1.2
+    if convert_y_axis:
+        pdf_y = page_height - y - text_height
+        if pdf_y < 0:
+            pdf_y = 0
+        elif pdf_y + text_height > page_height:
+            pdf_y = page_height - text_height
+    else:
+        pdf_y = y
+    c.drawString(x, pdf_y, text)
+
+
+# Print resolution for stamped signatures: sharp on paper, a fraction of a phone photo's size.
+SIGNATURE_DPI = 300
+
+
+def _fit_signature_image(image_bytes: bytes, positions: list[dict]) -> bytes:
+    """
+    Scale a signature image down to SIGNATURE_DPI for the largest box it is drawn in.
+
+    Signatures are often camera photos or large canvas exports (1000+ px wide) drawn into
+    a box a couple of inches wide; embedded as is, each one adds hundreds of KB to every
+    signed PDF. Smaller images, and anything that fails to decode, are returned unchanged.
+    """
+    try:
+        from PIL import Image
+
+        widest = max(float(pos["width"]) for pos in positions)
+        tallest = max(float(pos["height"]) for pos in positions)
+        limit = (max(1, round(widest * SIGNATURE_DPI / 72)), max(1, round(tallest * SIGNATURE_DPI / 72)))
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if image.width <= limit[0] and image.height <= limit[1]:
+                return image_bytes
+            scale = min(limit[0] / image.width, limit[1] / image.height)
+            size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+            if image.mode not in ("RGB", "RGBA", "L", "LA"):
+                image = image.convert("RGBA")
+            resized = image.resize(size, Image.LANCZOS)
+            out = io.BytesIO()
+            resized.save(out, format="PNG", optimize=True)
+        smaller = out.getvalue()
+        return smaller if len(smaller) < len(image_bytes) else image_bytes
+    except Exception:  # an image reportlab can still read is better than no signature
+        LOGGER.warning("Could not downscale signature image", exc_info=True)
+        return image_bytes
+
+
 def embed_fields_single_pass(
     pdf_path: str,
     output_path: str,
@@ -239,6 +339,8 @@ def embed_fields_single_pass(
     txt_stamps = text_stamps or []
 
     image_bytes = _decode_signature_image(signature_image) if (sig_positions and signature_image) else None
+    if image_bytes:
+        image_bytes = _fit_signature_image(image_bytes, sig_positions)
 
     with PdfReader(pdf_path) as reader:
         num_pages = len(reader.pages)
@@ -301,35 +403,7 @@ def embed_fields_single_pass(
                         )
 
                 for stamp in page_texts:
-                    x = float(stamp["x"])
-                    y = float(stamp["y"])
-                    text = str(stamp.get("text") or "")
-                    font_family = stamp.get("font_family") or "Helvetica"
-                    font_size = float(stamp.get("font_size") or 12.0)
-
-                    try:
-                        if font_family and font_family.lower().endswith(".ttf") and os.path.exists(font_family):
-                            font_name = os.path.basename(font_family)
-                            if font_name not in pdfmetrics.getRegisteredFontNames():
-                                pdfmetrics.registerFont(TTFont(font_name, font_family))
-                            c.setFont(font_name, font_size)
-                        else:
-                            c.setFont(font_family or "Helvetica", font_size)
-                    except Exception:
-                        c.setFont("Helvetica", font_size)
-
-                    text_height = font_size * 1.2
-                    if convert_y_axis:
-                        pdf_y = page_height - y - text_height
-                        if pdf_y < 0:
-                            pdf_y = 0
-                        elif pdf_y + text_height > page_height:
-                            pdf_y = page_height - text_height
-                    else:
-                        pdf_y = y
-
-                    c.setFillColor(Color(0, 0, 0))
-                    c.drawString(x, pdf_y, text)
+                    _draw_text_stamp(c, stamp, page_height, convert_y_axis)
 
                 c.save()
                 buffer.seek(0)

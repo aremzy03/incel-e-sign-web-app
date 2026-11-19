@@ -28,6 +28,26 @@ class FieldSerializer(serializers.ModelSerializer):
         max_length = attrs.get('max_length', getattr(self.instance, 'max_length', None))
         date_format = attrs.get('date_format', getattr(self.instance, 'date_format', None))
 
+        from .validation import (
+            RETIRED_FIELD_TYPES,
+            SERVER_FILLED_FIELD_TYPES,
+            TEXT_RETIRED_MESSAGE,
+            validate_date_format,
+        )
+
+        # No new text fields (or changes to text); existing ones can still be
+        # moved or resized.
+        creating_or_retyping = self.instance is None or ('type' in attrs and attrs['type'] != self.instance.type)
+        if creating_or_retyping and field_type in RETIRED_FIELD_TYPES:
+            raise serializers.ValidationError({'type': TEXT_RETIRED_MESSAGE})
+        if field_type == 'date':
+            validate_date_format(date_format)
+        if field_type in SERVER_FILLED_FIELD_TYPES:
+            # Filled by the server at signing time.
+            attrs['prefill_value'] = None
+            attrs['value'] = None
+            prefill_value = value = None
+
         if field_type in ('text', 'designation') and max_length is not None:
             if max_length <= 0:
                 raise serializers.ValidationError({'max_length': 'max_length must be positive.'})
