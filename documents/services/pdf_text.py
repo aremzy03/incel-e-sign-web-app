@@ -27,8 +27,27 @@ MAX_FONT_SIZE = 72
 FRAME_TOLERANCE = 0.5
 MAX_PAGES = 200
 MAX_FILE_BYTES = 50 * 1024 * 1024
-BASELINE_RATIO = 0.8
 LINE_STEP_RATIO = 1.2
+
+# Where the editor's browser box puts the first baseline, as a fraction of the font size
+# below the box top. CSS centres the font's content area (ascent + descent) in each 1.2
+# line, so the baseline sits at half the leftover leading plus the ascent. The editor
+# renders with Arial / Times New Roman / Courier New (or Liberation Sans / Serif / Mono),
+# which share these vertical metrics (hhea, per 1 em) on every platform:
+#   sans   ascent 0.9053, descent 0.2119
+#   serif  ascent 0.8911, descent 0.2163
+#   mono   ascent 0.8325, descent 0.3003
+# A single ratio (0.8) drew text about 0.15 em higher than the editor showed it.
+def _first_baseline_ratio(ascent: float, descent: float) -> float:
+    return (LINE_STEP_RATIO - (ascent + descent)) / 2 + ascent
+
+
+BASELINE_RATIOS = {
+    "Helvetica": _first_baseline_ratio(0.9053, 0.2119),
+    "Times-Roman": _first_baseline_ratio(0.8911, 0.2163),
+    "Courier": _first_baseline_ratio(0.8325, 0.3003),
+}
+BASELINE_RATIO = BASELINE_RATIOS["Helvetica"]
 
 FONT_FACES = {
     ("Helvetica", False, False): "Helvetica",
@@ -260,11 +279,12 @@ def _draw_op(pdf_canvas, op: dict, page_width: float, page_height: float) -> Non
     height = float(op["height"])
     pdf_canvas.setFont(font_name, font_size)
     pdf_canvas.setFillColor(_parse_color(op["color"]))
+    baseline_ratio = BASELINE_RATIOS.get(op["font"], BASELINE_RATIO)
     paragraphs = str(op["text"]).split("\n")
     line_index = 0
     for paragraph in paragraphs:
         for line in _wrap_paragraph(paragraph, font_name, font_size, width):
-            baseline_from_top = y + (font_size * BASELINE_RATIO) + line_index * (font_size * LINE_STEP_RATIO)
+            baseline_from_top = y + (font_size * baseline_ratio) + line_index * (font_size * LINE_STEP_RATIO)
             line_index += 1
             if baseline_from_top > y + height + 0.01:
                 return
