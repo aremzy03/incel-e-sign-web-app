@@ -58,6 +58,7 @@ EDIT_COPY = {
     "box_covers_other_text": "This edit would remove text on another line. Undo it and pick the word again.",
     "rotated_text": "Rotated text can’t be edited.",
     "invalid_fit": "An edit’s layout is invalid. Undo it and edit the text again.",
+    "session_closed": "This editing session was closed (saved or discarded elsewhere). Reopen the document to keep editing.",
 }
 
 
@@ -210,7 +211,10 @@ class DocumentTextEditSessionView(APIView):
             return _not_found()
         session = _open_session(document, request.user)
         if session is None:
-            return _not_found()
+            # The document exists but has no open session: it was saved or discarded
+            # (another tab, or a reopen after saving failed). Distinct from "no such document"
+            # so the editor can open a new session and keep the user's work.
+            return _error("session_closed", status.HTTP_409_CONFLICT)
         if _base_changed(session, document):
             return _error("base_changed", status.HTTP_409_CONFLICT)
         ops = request.data.get("ops") if isinstance(request.data, dict) else None
@@ -244,7 +248,7 @@ class DocumentTextEditCommitView(APIView):
             return _not_found()
         session = _open_session(document, request.user)
         if session is None:
-            return _not_found()
+            return _error("session_closed", status.HTTP_409_CONFLICT)
         if _base_changed(session, document):
             return _error("base_changed", status.HTTP_409_CONFLICT)
         # One download: it is checked, then rewritten. The session's base is the current
