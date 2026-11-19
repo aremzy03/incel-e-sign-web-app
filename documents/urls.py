@@ -20,6 +20,7 @@ urlpatterns = [
     path('<uuid:pk>/preview-public/', views.DocumentPublicPreviewView.as_view(), name='document_preview_public'),
     path('<uuid:pk>/text-edits/', text_edit_views.DocumentTextEditSessionView.as_view(), name='document_text_edits'),
     path('<uuid:pk>/text-edits/commit/', text_edit_views.DocumentTextEditCommitView.as_view(), name='document_text_edits_commit'),
+    path('<uuid:pk>/text-edits/fonts/<int:xref>/', text_edit_views.DocumentTextEditFontView.as_view(), name='document_text_edits_font'),
     path('<uuid:pk>/download/', views.DocumentDownloadView.as_view(), name='document_download'),
     path('<uuid:pk>/download-public/', views.DocumentPublicDownloadView.as_view(), name='document_download_public'),
 ]

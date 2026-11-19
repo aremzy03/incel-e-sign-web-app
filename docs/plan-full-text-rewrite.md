@@ -8,9 +8,25 @@ This plan starts only after [Plan 1](plan-additive-text-edits.md) is in producti
 
 Sejda’s browser behavior is the interaction model: pdf.js reads the text, HTML boxes sit on the words, and save sends an operation list. Sejda’s server is not available. The operation shape below is ours. The field names inside Sejda’s `editTextOperations` were never captured ([08-evidence-and-open-questions.md](../../incel-e-sign-web-app-front-end/sedja-references/docs/08-evidence-and-open-questions.md), first open question). Do not spend time matching them.
 
-**Date:** 2026-11-17
+**Date:** 2026-11-17 (revised 2026-11-18, see “Changes since this plan was written” below)
 
-**Depends on:** Plan 1’s editor route, session model, revision model, guards, and `apply_add_text`.
+**Depends on:** Plan 1’s editor route, session model, revision model, guards, and `apply_add_text`. Plan 1 is in production.
+
+**License:** PyMuPDF is AGPL-3.0 (or commercial from Artifex). The app is internal and open source, so the AGPL is accepted. No commercial license is needed.
+
+## Changes since this plan was written
+
+The editor changed after this plan was drafted. Where the sections below disagree with this list, this list wins. The affected sections have been updated to match.
+
+1. **One screen for edit and sign.** `/dashboard/documents/[id]/edit` is now the edit-and-sign screen. It has an **Edit document** group (Add text) and a **Sign** group (signature, initials, date signed, designation). **Sign & complete** commits pending text into the PDF, then self-signs. Opened with `?from=wizard`, only the Edit group shows. The old self-sign editor is gone; `/dashboard/envelopes/self-sign` is only a document picker.
+2. **The viewer is `VerticalPDFViewer`, not `text-edit-viewer.tsx`.** `text-edit-viewer.tsx` is no longer used by any route. The editor renders with `VerticalPDFViewer` in `fitToWidth` mode (the page fills the canvas width, zoom multiplies that). Added text is drawn through its `renderPageOverlay` slot, which passes each page’s size in CSS px and in points. The run layer goes in the same slot.
+3. **Three layers, not two.** Bottom to top: canvas, overlay slot (run layer, then add-text boxes), signature/initials/date/designation fields. Field boxes win a click, then add-text boxes, then runs.
+4. **Add text is a tool, not a bare click.** A click on empty page space creates a text box only while the **Add text** tool is on, so stray clicks don’t make boxes. Rewrite keeps that: clicking a run edits it in any mode; empty space adds text only in Add text mode.
+5. **One undo history lives in the editor page**, covering added text and placed fields (`src/app/dashboard/documents/[id]/edit/page.tsx`). `edit_text` ops join that history. `use-text-edit-session` still owns the server session, autosave, restore, and commit.
+6. **Placed signing fields are stored in PDF points** and converted to px for display, so zoom and window size never move them. Run geometry is already in points from pdf.js; keep it that way.
+7. **Signing after a rewrite.** Because Sign & complete saves text first, a rewrite is committed before signing. A `422 rewrite_failed` must stop the signing step and show the message on the screen; it must not sign the unchanged file.
+8. **Signers’ Add text during signing** (`signatures/recipient_text.py`, the sign page) stays add-only. Rewrite is for the document owner in the editor only.
+9. **Bundled fonts.** `signatures/fonts/initials/` now holds the handwriting fonts for initials. The Liberation fonts for rewrite go in `documents/fonts/` as planned; the two sets are separate.
 
 **Sejda notes:** [`incel-e-sign-web-app-front-end/sedja-references`](../../incel-e-sign-web-app-front-end/sedja-references/README.md)
 
@@ -42,7 +58,7 @@ On the same editor route, `/dashboard/documents/[id]/edit`, the sender can:
 3. Find a string and replace the runs that contain it.
 4. Save once. The server removes the old runs, draws the replacements, then paints any new Plan 1 boxes.
 
-The editor copy can say **Edit PDF** once this plan ships. Until the rewrite path is on, Plan 1 stays labeled **Add text**.
+The screen is the edit-and-sign screen, so it is not renamed. Once this plan ships, its **Edit document** group gains **Edit text** (click a word to change it) and **Find & replace** next to **Add text**. Until the rewrite path is on (`rewrite: false`, section 12), the group shows only **Add text**.
 
 A rewrite is one existing text run replaced by a new string in the same place. It is not a word processor. It does not reflow the paragraph, resize the page, or move the following words out of the way. If the new string is wider than the old run, it can overlap the next run. The editor warns. It still saves, because that is how this class of tool behaves and because refusing every overflow blocks legitimate short edits that only look wide in the fallback font.
 
@@ -55,6 +71,7 @@ A rewrite is one existing text run replaced by a new string in the same place. I
 - Rotated runs (the text matrix is not horizontal) and pages with `/Rotate != 0`. Plan 1 already rejects rotated pages. This plan also rejects a single rotated run on an upright page.
 - Type 3 fonts. pdf.js can flag them. Skip those runs.
 - Editing inside Place Fields, pending envelopes, non-draft documents, or encrypted files. Same guards as Plan 1 (`assert_document_editable`).
+- Rewriting text during signing. A signer’s Add text on the sign page stays add-only.
 - True redaction of an arbitrary rectangle as a separate product button. The rewrite engine removes text inside the run’s box, which is a redaction of that box. A freeform “redact this area” tool can call the same `apply_redactions` later. It is not required to ship rewrite. Do not label a white rectangle as redaction. Sejda’s whiteout is that white rectangle, and the product warns that the text remains in the file ([04-editing-tools.md §4.7](../../incel-e-sign-web-app-front-end/sedja-references/docs/04-editing-tools.md), [07-rebuild-blueprint.md §7.4](../../incel-e-sign-web-app-front-end/sedja-references/docs/07-rebuild-blueprint.md)).
 - Reconstructing the original subset font when the new string needs characters the subset does not contain. Fall back to a bundled font and tell the user. Section 8.
 - Client-side rewrite with `pdf-lib`. `pdf-lib` can draw new text. It cannot reliably delete existing text operators. The server is the writer, same rule as Plan 1. [07-rebuild-blueprint.md §7.1](../../incel-e-sign-web-app-front-end/sedja-references/docs/07-rebuild-blueprint.md) says the same thing: the browser-only route loses “edit existing text,” and the full route needs PDFBox or PyMuPDF on a server. We take the PyMuPDF side of that choice. Their note names PDFBox as the other option. Either library can do step 10. This codebase is Python, so PyMuPDF is the one we add.
@@ -93,7 +110,7 @@ If the first 10 pages have no text items with a non-empty string, show a banner:
 2. Click. The run becomes `contenteditable`. The box is opaque, filled with white, so the canvas word underneath is hidden while typing. The PDF on the server is unchanged. Sejda’s text layer does this with boxes built from `getTextContent()`, then `contenteditable` on the one you clicked ([04-editing-tools.md §4.2](../../incel-e-sign-web-app-front-end/sedja-references/docs/04-editing-tools.md), [03-rendering-with-pdfjs.md §3.5](../../incel-e-sign-web-app-front-end/sedja-references/docs/03-rendering-with-pdfjs.md)). Their changed run becomes an `editTextOperations` entry. Ours becomes an `edit_text` op. The white fill is only on the HTML box. It is not a whiteout shape in the file.
 3. The original string, the original box, the baseline, the font size, and the color are kept on the operation as `remove` and `original`. The text the user typed is `text`.
 4. If the user clears the box and leaves it empty, commit treats it as a deletion of that run: remove the glyphs, write nothing.
-5. Escape or click away commits the HTML edit into the session. Undo restores the previous session, which drops the rewrite op and shows the canvas word again (the white box is gone).
+5. Escape or click away commits the HTML edit into the session. Undo (the editor page’s one history) restores the previous snapshot, which drops the rewrite op and shows the canvas word again (the white box is gone).
 6. A run that is rotated, Type 3, or a complex script does not become editable. The tooltip explains why.
 
 Moving an existing run to a new place on the page is not supported. The replacement is drawn at the original baseline. If the user needs the words elsewhere, they delete the run (empty text) and add a Plan 1 box. Dragging the rewrite box would desync the deletion rectangle from the new text. Sejda does allow dragging edited text ([04-editing-tools.md §4.2](../../incel-e-sign-web-app-front-end/sedja-references/docs/04-editing-tools.md), “Drag text with your mouse to move it”). We can add that later by keeping `remove` fixed on the original glyphs and adding a separate draw position, which is what their `originalItems` versus the new box is for ([07-rebuild-blueprint.md §7.2](../../incel-e-sign-web-app-front-end/sedja-references/docs/07-rebuild-blueprint.md), `EditText.originalItems`). Leave the draw position equal to the original baseline in this plan.
@@ -114,15 +131,16 @@ Replace all is capped at 200 runs, the same box cap as Plan 1. Above that, the p
 
 ### 4.4 Add text
 
-The Plan 1 click-on-empty-space behavior stays. Hit testing order:
+Add text stays a tool: empty-space clicks create a box only while **Add text** is on. Hit testing order:
 
-1. If the click is inside an existing rewrite box or an add-text box, select that box.
-2. Else if the click is inside an unedited run, start a rewrite.
-3. Else start an add-text box.
+1. If the click is inside a signing field (signature, initials, date, designation), select that field.
+2. Else if it is inside an existing rewrite box or an add-text box, select that box.
+3. Else if it is inside an unedited run, start a rewrite (in any mode).
+4. Else, if the Add text tool is on, start an add-text box. Otherwise deselect.
 
 ### 4.5 Save
 
-One commit. Body is the full op list: `add_text` ops from Plan 1 and `edit_text` ops from this plan.
+One commit. Body is the full op list: `add_text` ops from Plan 1 and `edit_text` ops from this plan. The editor sends it from **Save changes**, and from **Sign & complete** before it self-signs. If the commit returns `422`, Sign & complete stops and does not sign.
 
 Server order, fixed:
 
@@ -222,7 +240,9 @@ const viewport = page.getViewport({ scale: 1 })
 const content = await page.getTextContent()
 ```
 
-react-pdf’s `Document` `onLoadSuccess` receives the pdf.js document proxy. Thread that proxy into the text-edit viewer. Do not load the file a second time.
+react-pdf’s `Document` `onLoadSuccess` receives the pdf.js document proxy. `VerticalPDFViewer` owns that `Document` and does not expose the proxy yet. Add an `onDocumentProxy?: (documentId, pdf) => void` prop that it calls from `onLoadSuccess`, and build runs from that proxy in the editor page. Do not load the file a second time.
+
+The proxy is replaced when the file changes (for example after **Save changes** commits text: the document gets a new URL and the `Document` remounts). Runs built from the old proxy describe the old file. Drop them and rebuild from the new proxy; keep no `edit_text` ops across a commit (commit clears ops, as Plan 1 already does).
 
 ### 6.1 Grouping items into runs
 
@@ -245,10 +265,10 @@ Cap display: if a page has more than 2 000 runs after joining, stop making runs 
 
 ### 6.2 Painting
 
-Runs are absolutely positioned divs over the canvas, using the same CSS conversion as Plan 1, but from the bottom-left `remove` box:
+Runs are absolutely positioned divs over the canvas, drawn in `VerticalPDFViewer`’s `renderPageOverlay` slot, using the same CSS conversion as Plan 1, but from the bottom-left `remove` box. The slot passes `widthPx`, `heightPx`, `widthPt` and `heightPt` for the page, so `scale = widthPx / widthPt` follows fit-to-width and zoom without extra work:
 
 ```
-scale = pageCssWidth / pageWidthPt
+scale = pageCssWidth / pageWidthPt   // = widthPx / widthPt from the overlay slot
 left = remove.x * scale
 top = (pageHeightPt - remove.y - remove.height) * scale
 width = remove.width * scale
@@ -265,7 +285,9 @@ paddingTop = (remove.y + remove.height - baseline.y - fontSize * 0.8) * scale
 
 Check this on the ReportLab fixture. If the white box does not cover the old canvas glyphs, increase `remove.height` slightly (the 1.25 factor) rather than painting a page-sized plate.
 
-New Plan 1 boxes sit above the run layer so a click on an add-text box wins.
+New Plan 1 boxes sit above the run layer so a click on an add-text box wins. Signing fields sit above both (the viewer’s field layer is above the overlay slot), so a click on a placed field wins over everything.
+
+Keep the slot click-through: the overlay wrapper is `pointer-events: none`. Runs and boxes opt in with `pointer-events: auto`; the empty-space surface only catches clicks while the Add text tool is on.
 
 ### 6.3 Fonts while typing
 
@@ -275,7 +297,62 @@ The canvas word uses the embedded font. The HTML replacement will not, unless th
 
 ## 7. Server apply
 
-New dependency: `pymupdf` in `requirements.txt`. Pin a current 1.24+ or 1.26+ release at implementation time and record the version in this file when it is pinned. Import name is `fitz`.
+New dependency: `pymupdf` in `requirements.txt`, **pinned to `pymupdf==1.26.7`** (Phase A, 2026-11-18). Import name is `fitz`. License: AGPL-3.0, accepted for this internal, open-source app (see the header). The constant names in §7.1 were checked against 1.26.7 and exist as written.
+
+### Phase A as built (2026-11-18)
+
+Built in `documents/services/pdf_rewrite.py`, `apply_text_session` in `documents/services/pdf_text.py`, and the session/commit views. All 12 Liberation files (sans, serif, mono × regular, bold, italic, bold italic) are in `documents/fonts/` with `LICENSE-Liberation.txt` (SIL OFL 1.1). Where the build differs from the text below, this list is what the code does:
+
+1. **Coordinates.** `remove` and `baseline` are converted with `page.transformation_matrix` instead of `height − y`. It is the same formula for an ordinary page and also handles a MediaBox that does not start at (0, 0).
+2. **No-fill redaction is explicit.** `add_redact_annot(rect, fill=False, cross_out=False)`. PyMuPDF fills with white by default; deletions (empty `text`) pass `fill=(1, 1, 1)`.
+3. **Standard fonts that were never embedded** (Helvetica, Arial, Times, Courier) use their metric-compatible Liberation twin **without** `font_replaced`: nothing was embedded to keep, so “It was missing characters you typed” would be untrue. If the run is bold/italic and that file is missing, the warning is `style_replaced`. `font_replaced` is kept for an embedded font that really cannot draw the new text, and for a client-requested `fallbackFont`.
+4. **A character no font can draw** (the chosen font, embedded or Liberation, lacks it — e.g. CJK) is refused: `400 unsupported_character` with `opIds`. Nothing is inserted with a font that failed the coverage check.
+5. **Verification also checks the run’s own position.** Besides the characters inside `remove` (§10), the server reads the original run’s characters from the source page (on its baseline, from its baseline x, spelling `originalText`) and fails the op if every one of them is still drawn at the same position in the output. A box that misses the word entirely would otherwise pass: the new word drawn on top hides the old one from the box check.
+6. **Pre-checks before anything is deleted**, from PyMuPDF’s character map: a box containing characters from another line → `400 box_covers_other_text`; a box containing non-horizontal text → `400 rotated_text`. Overlapping boxes from two ops are rejected at validation as `boxes_overlap`.
+7. **Engine missing.** If PyMuPDF does not import, the session reports `rewrite: false` and `edit_text` ops are rejected with `rewrite_unavailable`.
+8. **The output is written only after verification passes**, so a failed rewrite leaves no file and the document and open session are untouched.
+
+### Phase B as built (2026-11-18)
+
+Frontend: `src/lib/pdf-edit/text-runs.ts` (grouping, locks, stable ids, CSS box), `classifyPdfFont` in `src/lib/pdf-edit/fonts.ts` (same order as the server), `src/components/pdf-edit/use-text-runs.ts` (reads text through the viewer’s pdf.js document), `src/components/pdf-edit/text-run-layer.tsx` (hit targets and in-place editing), `VerticalPDFViewer`’s `onDocumentProxy`, and the editor page. `text-edit-viewer.tsx` is deleted. Differences from the sections below:
+
+1. **Add text mode wins the page.** While the Add text tool is on, a click anywhere places a box, including over words; runs only take clicks when it is off. With no mode for editing words, that keeps the two gestures unambiguous. (§4.4 said runs win in any mode.)
+2. **All pages are read in the background** once the document loads (one page after another), not only visible pages. Find & replace (Phase C) needs them anyway. The sidebar shows “Reading the document’s text…” until done, and “No editable text found. You can still add text.” when the first 10 pages have none.
+3. **Runs carry `page.view`**, so CSS boxes subtract the view origin (pages whose CropBox does not start at 0,0), matching the server’s `transformation_matrix`.
+4. **Colour is `#000000`.** pdf.js text content has no colour; reading it from the operator list is left for Phase C.
+5. **Unchanged edits are not sent.** An edit whose text equals the original (opened then closed, or undone back) is dropped when the run is left, isn’t counted as a change, and is filtered out of the commit.
+6. **The font fallback is decided on the server only.** The editor previews with the serif/sans/mono stack and shows “Original font replaced. It was missing characters you typed.” after a save that reports `font_replaced`. Predicting it before save from the font’s cmap is not built.
+7. **Failed edits are outlined.** A save that returns `opIds` (e.g. `rewrite_failed`, `box_covers_other_text`) outlines those runs in red with “This change couldn’t be saved. Undo it or try again.”
+8. **`VerticalPDFViewer` keys its `Document` on the file URL**, so a save that changes the file remounts it cleanly (the same `sendWithPromise` crash the signing viewer had).
+
+Checked in the browser on a test document: “Please pay the invoice.” → “Please pay the receipt.” and “Jose Martinez” → “José Martínez” in one save; the downloaded file contains the new text and not the old, revision `edit_text`. A second save on the same document worked, and the previously rewritten lines were editable again (§14). Sign & complete with a pending rewrite uses the same save path but was not run end-to-end (the dev database is missing signatures migration 0006).
+
+### Phase C as built (2026-11-18)
+
+Frontend: `src/lib/pdf-edit/find-replace.ts` (matching and replacing over runs), `src/components/pdf-edit/find-replace-panel.tsx` (in the sidebar’s Edit document group; Ctrl/⌘+F opens it), match highlighting and the overflow warning in `text-run-layer.tsx`. Server verification and the box-covers-other-text check were already built in Phase A. Notes:
+
+1. **Find & replace** matches each run’s current text (pending replacement, else original), case-insensitive unless Match case is on. Find next steps in reading order and stops at the end (“No more matches. Press Find next to start from the top.”). Replace and Replace all replace every occurrence of the query inside a matching run. Replace all is one undo step, waits until every page’s text has been read, and refuses more than 200 matches.
+2. **Overflow warning.** A replacement wider than the original run by more than 4 pt gets an amber outline and, while typing, “Longer than the original. It may overlap the words after it.” Saving is still allowed.
+3. **Pages with too many text pieces** are listed in the Edit text card (“…too many text pieces to edit. You can still add text there.”).
+4. **Verification tells old letters from new by font.** A replacement that starts with the original (“Ref: A1” → “Ref: A1-2026”) drawn in a metric-compatible Liberation font puts its first letters exactly where the old ones were; the check counts only characters in the original run’s font as left behind. Where the original embedded font was reused, fonts can’t tell them apart and a replacement that contains the original is allowed (§10’s rule). This was found in the browser: the first version refused that edit with `rewrite_failed`.
+5. **Not built:** the XFA banner, and predicting the font fallback before save.
+
+### Colour and style (2026-11-18)
+
+Replacements keep the original text’s colour and weight.
+
+1. **Server reads styles when the session opens.** `page_text_styles` (in `pdf_rewrite.py`) returns, per page, `[x0, y0, x1, y1, "#rrggbb", bold, italic, font_name]` for every span (box in PDF user space). It runs in `assert_document_editable`, on the file that is already downloaded: about 2 ms and 1 KB a page (29-page document: ~62 ms, 27 KB). Only the open response carries `text_styles`; autosave keeps the ones it has.
+2. **`font_name` is the real name** inside the embedded font program (“Arial Black”, “Calibri Light”); many PDFs only say “CIDFont+F3”. The editor uses it for the preview’s family and weight.
+3. **The editor** looks up each pdf.js text piece’s span by its centre, takes the colour and bold/italic from it, and starts a new run where colour or style changes (a red “E-mail:” next to a blue link become two runs).
+4. **On save the original letters decide.** `rewrite_text` reads the colour and bold/italic most of the run’s characters are drawn with and uses them, ignoring the client’s colour unless the run can’t be found. It works on copies of the ops, so the stored session isn’t modified.
+5. **Font lookup accepts either name**: the PDF’s (“CIDFont+F3”) or the real one (“Arial Black”), compared without case, spaces, hyphens or a trailing “Regular”.
+6. **Whitespace-insensitive “new text landed” check.** A reused subset font can map its space glyph to U+00A0, so “Weight: 1,800” reads back as “Weight:\xa01,800”.
+7. **Same font, new text containing the old** (“Zenith Bank” → “Zenith Bank Plc”) is allowed, as §10 says; one clause had still refused it.
+8. **A second save in the same visit works.** Commit closes the server session; the editor now opens a new one right after, on the new file (also bringing that file’s styles). Before, the next autosave and save got 404.
+
+Checked on a copy of the Hivolt invoice: the grey “Weight: 1,759.5kg”, dark red Arial Black heading and black “Zenith Bank” previewed and saved in their own colours and fonts (Calibri Light, Arial Black, Calibri reused, no font warnings), in two saves without reloading.
+
+Checked in the browser on a two-page test document: “invoice” found 3 times; Find next highlighted the first; Replace changed one; Replace all changed the rest; one undo restored the whole replace-all and redo re-applied it; an overlong replacement showed the warning; the save produced “receipt” on both pages and the long reference line, revision `edit_text`.
 
 New module: `documents/services/pdf_rewrite.py`.
 
@@ -485,25 +562,31 @@ Dependency: `pymupdf` in `requirements.txt`. System packages are the wheels PyMu
 
 ## 13. Frontend changes
 
-On top of the Plan 1 files:
+On top of the current editor files:
 
 | File | Change |
 | --- | --- |
-| `src/components/pdf-edit/text-edit-viewer.tsx` | After the pdf proxy loads, build runs per visible page. Render hit targets under the add-text boxes |
+| `src/components/envelope/VerticalPDFViewer.tsx` | `onDocumentProxy(documentId, pdf)` prop, called from `onLoadSuccess` |
+| `src/app/dashboard/documents/[id]/edit/page.tsx` | Build runs from the proxy per loaded page. Render the run layer in `renderPageOverlay` under the add-text boxes. `edit_text` ops join the page’s one undo history. Handle `rewrite_failed` and `font_replaced` from commit, and stop Sign & complete on `422` |
 | `src/components/pdf-edit/text-run.tsx` | Transparent hit target. Becomes the editor when clicked |
-| `src/components/pdf-edit/find-replace-panel.tsx` | Query, replace, replace all |
+| `src/components/pdf-edit/text-run-layer.tsx` | The page’s runs plus in-progress rewrites, for the overlay slot (sibling of `signing-page-text-layer.tsx`, which draws add-text boxes) |
+| `src/components/pdf-edit/find-replace-panel.tsx` | Query, replace, replace all. Shown in the editor sidebar’s Edit document group |
+| `src/components/document-editor/editor-tools-sidebar.tsx` | **Edit text** and **Find & replace** in the Edit document group, hidden when `rewrite: false` |
 | `src/lib/pdf-edit/text-runs.ts` | Group `getTextContent` items, horizontal test, script test, stable `runId` |
 | `src/lib/pdf-edit/fonts.ts` | Fallback classification shared with the warning copy |
-| `src/components/pdf-edit/use-text-edit-session.ts` | Hold both op types. One undo stack |
-| `src/lib/api/documents.ts` | Types for `EditTextOp` and warnings |
+| `src/components/pdf-edit/use-text-edit-session.ts` | Hold both op types for autosave, restore and commit (the undo history is the page’s) |
+| `src/lib/api/documents.ts` | Types for `EditTextOp`, warnings and `rewrite_failed` |
+
+`src/components/pdf-edit/text-edit-viewer.tsx` is no longer used by any route. Do not extend it; delete it when this plan starts.
 
 Page stack, bottom to top:
 
 ```
 canvas
-run layer (hit targets and in-progress rewrites)
-add-text layer (Plan 1 boxes)
-find bar (page chrome, not on the page)
+overlay slot: run layer (hit targets and in-progress rewrites)
+overlay slot: add-text layer (Plan 1 boxes)
+signing fields (signature, initials, date, designation)
+find panel (sidebar, not on the page)
 ```
 
 Build runs when the page’s pdf.js page has loaded, not for every off-screen page up front. The viewer already knows which pages are mounted. When a page unmounts, keep its runs in a map so Find can see pages the user has visited. **Replace all** only covers pages whose runs are loaded. Before replace-all, load text content for every page (a progress label: “Reading text…”). That pass does not render canvases. It only calls `getPage` and `getTextContent`.
@@ -522,7 +605,9 @@ Unchanged from Plan 1, with one extra rule:
 | --- | --- | --- |
 | 1 | PyMuPDF `rewrite_text` | Deletes old runs, inserts replacements |
 | 2 | ReportLab `apply_add_text` | Paints new boxes on top |
-| 3 | Later, at sign time, unchanged | `embed_fields_single_pass` paints signer fields |
+| 3 | Later, at sign time, unchanged | `embed_fields_single_pass` paints signer fields (signature images; date, initials and designation text fitted to their boxes, filled by the server) |
+
+On the edit-and-sign screen, steps 1–2 and step 3 can happen in one click: **Sign & complete** commits the text session, then calls self-sign with the new file. Placed signing fields are in PDF points and are not affected by the rewrite (a rewrite never moves or resizes the page).
 
 A rewritten word is page content. Place Fields does not see it as a field. Sign flatten does not redraw it.
 
@@ -547,7 +632,7 @@ Exit: API commit can replace `Hello` with `Goodbye` on a fixture PDF. Extracted 
 ### Phase B — Hit targets
 
 1. `text-runs.ts` grouping and tests, including a line with a missing space encoded as a gap.
-2. Run layer on the editor. Click to edit. Opaque box. Save sends `edit_text`.
+2. `VerticalPDFViewer` `onDocumentProxy`. Run layer in the editor’s overlay slot. Click to edit. Opaque box. Save and Sign & complete send `edit_text`.
 3. Warnings for font fallback rendered on the box after commit, and predicted before commit when the cmap is known.
 
 Exit: the browser acceptance script in section 17, items 1–4.
@@ -613,6 +698,8 @@ Fixture helper: build PDFs with ReportLab in the test, the same way `signatures/
 6. Replace all on a word that appears twice. One undo restores both, before save. After save, undo is gone and the file has the new words.
 7. A scanned page shows the no-editable-text banner. Add text still saves.
 8. A pending envelope still cannot be opened in the editor.
+9. On the edit-and-sign screen, change a word, place a signature, and press **Sign & complete** without saving first. The signed file has the new word, not the old one, and the signature where it was placed. If the rewrite fails verification, nothing is signed and the message is shown.
+10. Zoom in and resize the window after editing a run. The edit box stays over the original word.
 
 ---
 
@@ -631,6 +718,8 @@ Fixture helper: build PDFs with ReportLab in the test, the same way `signatures/
 | PyMuPDF wheel size and startup | Import inside the rewrite function or the view, not at Django startup if startup time regresses. The dependency test still imports it |
 | A Plan 1 overlay from an earlier save is what the user clicks | That is supported. It is ordinary text. The acceptance test covers it |
 | Commit applies redaction after add-text and deletes the new box | `apply_text_session` order is rewrite, then add. Test `test_rewrite_then_add_text` |
+| Sign & complete signs the unchanged file after a failed rewrite | The editor awaits the commit and stops on any error before calling self-sign (it already does this for add-text). Acceptance item 9 |
+| Runs built from the previous file after Save changes | Rebuild runs when `onDocumentProxy` fires with a new proxy. Commit clears ops |
 
 ---
 
@@ -642,3 +731,51 @@ Fixture helper: build PDFs with ReportLab in the test, the same way `signatures/
 - A bad rectangle does not become the document’s `file_url`.
 - Place Fields, pending-envelope lock, and the signing pipeline are unchanged.
 - Scans and rotated pages have an explicit message and a safe path (add text, or refuse to open).
+
+### Preview fonts
+
+The editor previews replacement text in the PDF's own font where it can, falling back in this order:
+
+1. **The embedded font.** `page_text_styles` adds a ninth element to each span: the xref of an embedded TrueType/OpenType program the browser can load (it must map at least one ASCII letter or digit, so subsets without a cmap, such as PyMuPDF's own, are skipped). `GET /api/documents/{id}/text-edits/fonts/{xref}/` returns the bytes (owner only, `Cache-Control: private`). The editor fetches a font only when a run that uses it is edited, registers it with `FontFace` for every weight (`weight: '1 1000'`) and turns `font-synthesis` off, so Arial Black isn't bolded twice. Letters missing from a subset fall back per character, as they do on save.
+2. **The installed font by its real name.** `localFamilyNames` turns "Arial-Black" into `'Arial Black', 'Arial'` and "TimesNewRomanPS-BoldMT" into `'Times New Roman'`.
+3. **Liberation**, the server's fallback.
+
+The weight comes from the font name (`fontWeightFromName`: Thin 100 … Black/Heavy 900), or 700 when only the PDF's bold flag is set. Font ids belong to the session's file: a save renumbers xrefs, and the reopened session sends new ids.
+
+### Borders and alignment (2026-11-19)
+
+A replacement now stays inside the space its original text had, instead of running across borders and into the next column.
+
+**What the server sends.** Opening a session adds `text_rules`: per page, `[0, x, y0, y1]` for vertical rules and `[1, y, x0, x1]` for horizontal ones, in user space (`page_rules` in `pdf_rewrite.py`). Lines, thin filled rectangles (how Word draws table borders) and the four edges of larger boxes count. Clip paths, white patches and page-sized backgrounds don't. About 20 ms per page.
+
+**The slot** (`findRunFits`, `lib/pdf-edit/text-fit.ts`), worked out once per page when runs are built:
+- **Ink edges.** Each run's left and right edges are the visible letters, without padding spaces (about a quarter em each).
+- **Right limit.** The nearest vertical border crossing the line, less a 2 pt (or 0.2 em) pad. Without a border, the page's text margin. A word further along the same line, less a word gap, wins over both. Left limit likewise.
+- **Never narrower than the original.**
+- **Wrap floor.** The first text or horizontal rule below the line within the slot's width, or 36 pt above the page's bottom edge.
+- **Alignment** by votes from nearby lines (within 12 lines) that aren't on the same line:
+  - a shared left edge with a different right edge votes left;
+  - a shared right edge with a different left edge votes right (figure columns);
+  - a shared centre with different edges votes centre.
+  - With no votes, a cell bordered on both sides decides from its gaps. Otherwise left.
+- **Anchor.** The text is pinned at its start, middle or end. Shorter replacements of right-aligned figures stay right-aligned.
+
+The op carries `fit: {left, right, bottom, align, anchor}`; `validate_fit` checks it (reason `invalid_fit`). Ops without `fit` (older drafts) draw as before.
+
+**The policy** (`text_fit.py` and its TypeScript mirror; same tests on both sides):
+1. Fits: one line at the original size.
+2. Fits at 90% or more: shrunk.
+3. Fits wrapped (greedy, by words, line height 1.2) above the floor: wrapped.
+4. Fits at 75% or more: shrunk.
+5. Otherwise one line at 75%, flagged. The editor outlines it in amber and the save warns `text_overflows`.
+
+**Who measures.** The server measures with the font it draws with, so it decides. Before wrapping it checks that the lines below are still empty once the old text is gone, and falls back to steps 4–5 if not. The preview measures in the browser with the font the save will use:
+- the PDF's embedded font when it has every letter typed (checked per character by measuring against two different fallbacks);
+- otherwise the Liberation face the server substitutes.
+
+A status line tells the user when text was shrunk ("Shrunk to 84% to fit."), wrapped, or doesn't fit.
+
+**Known limits:**
+- Words don't break inside themselves, so a long reference with no spaces can only shrink.
+- Justified paragraph lines are treated as left-aligned.
+- Wrapped lines don't push the text below them down.

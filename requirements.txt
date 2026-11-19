@@ -14,6 +14,9 @@ django-cors-headers
 django-storages
 boto3
 pypdf==7.1.0
+pymupdf==1.26.7
+# Subsets fonts added by text edits (MIT).
+fonttools==4.55.0
 celery
 requests
 redis
