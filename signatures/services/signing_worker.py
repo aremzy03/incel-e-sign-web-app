@@ -56,7 +56,8 @@ def embed_envelope_document_for_signer(
         new_url = upload_signing_version(envelope.id, document.id, version, output_path)
         document.signed_file_url = new_url
         document.file_url = new_url
-        document.save(update_fields=["signed_file_url", "file_url", "updated_at"])
+        document.file_size = os.path.getsize(output_path)
+        document.save(update_fields=["signed_file_url", "file_url", "file_size", "updated_at"])
         return new_url
     finally:
         for path in (str(input_path), f"{input_path}.signed.pdf"):

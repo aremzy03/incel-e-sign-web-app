@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db import models
 from django.http import FileResponse, Http404, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils.http import content_disposition_header
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import DestroyAPIView, ListAPIView, RetrieveAPIView
@@ -26,7 +27,7 @@ from core.query_filters import parse_search_query_param, parse_status_query_para
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer, MergeDocumentsSerializer
 from .services.document_creation import create_draft_document_from_local_pdf
-from .services.pdf_files import download_pdf_to_temp, temp_pdf_file
+from .services.pdf_files import download_pdf_to_temp, resolve_s3_key_from_url, temp_pdf_file
 from .services.s3_client import get_boto3_s3_client
 from signatures.utils.pdf_signing import get_media_absolute_path_from_url
 from envelopes.models import Envelope, EnvelopeDocument
@@ -156,8 +157,21 @@ class DocumentUploadView(APIView):
         
         if serializer.is_valid():
             try:
-                # Save the document
                 document = serializer.save(owner=request.user)
+            except ValidationError as exc:
+                # e.g. a Word file that wouldn't convert: the file's fault, not a server error.
+                return Response(
+                    {'status': 'error', 'message': 'Invalid file data', 'errors': exc.detail},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            except Exception as e:
+                logger.error(f"Error uploading document - User: {request.user.id}, Error: {str(e)}", exc_info=True)
+                error_message = f'Error uploading document: {str(e)}' if settings.DEBUG else 'Error uploading document'
+                return Response(
+                    {'status': 'error', 'message': error_message},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+            try:
                 
                 logger.info(f"Document uploaded successfully - ID: {document.id}, User: {request.user.id}, File: {document.file_name}")
                 
@@ -456,7 +470,7 @@ class DocumentDownloadView(APIView):
                 response = StreamingHttpResponse(iter_stream(), content_type=content_type)
                 if content_length is not None:
                     response['Content-Length'] = str(content_length)
-                response['Content-Disposition'] = f'attachment; filename="{document.file_name}"'
+                response['Content-Disposition'] = content_disposition_header(True, document.file_name)
 
                 # Log the download action
                 from audit.utils import log_action
@@ -498,7 +512,7 @@ class DocumentDownloadView(APIView):
                 as_attachment=True,
             )
             # Explicitly set Content-Disposition so browsers use document.file_name
-            response["Content-Disposition"] = f'attachment; filename="{document.file_name}"'
+            response["Content-Disposition"] = content_disposition_header(True, document.file_name)
             
             # Log the download action
             from audit.utils import log_action
@@ -538,6 +552,21 @@ class DocumentDownloadView(APIView):
             )
 
 
+def _set_preview_cache_headers(request, response) -> None:
+    """
+    Let the browser keep a versioned preview.
+
+    The editor and viewers request ``/preview/?v=<updated_at>``; every change to the file
+    (text edits, signing) moves ``updated_at``, so one URL always means the same bytes and
+    reopening a document needn't stream it through the backend again. Unversioned requests
+    stay uncached.
+    """
+    if request.query_params.get("v"):
+        response["Cache-Control"] = "private, max-age=86400"
+    else:
+        response["Cache-Control"] = "private, no-cache"
+
+
 class DocumentPreviewView(APIView):
     """
     API view for inline preview of documents.
@@ -568,9 +597,8 @@ class DocumentPreviewView(APIView):
             # Remote storage (e.g. S3) – stream via boto3 using bucket/key instead of HTTP GET on a signed URL
             if source_url.startswith('http'):
                 try:
-                    parsed = urlparse(source_url)
-                    encoded_key = parsed.path.lstrip('/')
-                    key = unquote(encoded_key)
+                    # Same lookup as downloads and signing: handles path-style URLs (bucket in the path).
+                    key = resolve_s3_key_from_url(source_url)
 
                     s3_client = get_boto3_s3_client()
 
@@ -611,7 +639,8 @@ class DocumentPreviewView(APIView):
                 response = StreamingHttpResponse(iter_stream(), content_type=content_type)
                 if content_length is not None:
                     response['Content-Length'] = str(content_length)
-                response['Content-Disposition'] = f'inline; filename="{document.file_name}"'
+                response['Content-Disposition'] = content_disposition_header(False, document.file_name)
+                _set_preview_cache_headers(request, response)
 
                 from audit.utils import log_action
                 log_action(
@@ -646,7 +675,8 @@ class DocumentPreviewView(APIView):
                 content_type='application/pdf',
                 as_attachment=False,
             )
-            response['Content-Disposition'] = f'inline; filename="{document.file_name}"'
+            response['Content-Disposition'] = content_disposition_header(False, document.file_name)
+            _set_preview_cache_headers(request, response)
 
             from audit.utils import log_action
             log_action(
@@ -901,7 +931,7 @@ def _stream_document_file_response(document, as_attachment: bool = False, actor=
         response = StreamingHttpResponse(iter_stream(), content_type=content_type)
         if content_length is not None:
             response['Content-Length'] = str(content_length)
-        response['Content-Disposition'] = f'{disposition}; filename="{document.file_name}"'
+        response['Content-Disposition'] = content_disposition_header(as_attachment, document.file_name)
 
         from audit.utils import log_action
         action_name = "DOWNLOAD_DOC" if as_attachment else "PREVIEW_DOC"
@@ -940,7 +970,7 @@ def _stream_document_file_response(document, as_attachment: bool = False, actor=
         as_attachment=as_attachment,
         filename=document.file_name,
     )
-    response['Content-Disposition'] = f'{disposition}; filename="{document.file_name}"'
+    response['Content-Disposition'] = content_disposition_header(as_attachment, document.file_name)
 
     from audit.utils import log_action
     action_name = "DOWNLOAD_DOC" if as_attachment else "PREVIEW_DOC"

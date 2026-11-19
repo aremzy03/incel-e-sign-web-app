@@ -27,7 +27,11 @@ def test_document_upload_stores_locally_under_temp_uploads(settings, tmp_path):
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
-    pdf_bytes = b"%PDF-1.4\n%EOF"
+    import fitz
+
+    with fitz.open() as pdf:  # a real one-page PDF: uploads are checked
+        pdf.new_page()
+        pdf_bytes = pdf.tobytes()
     upload = SimpleUploadedFile("doc.pdf", pdf_bytes, content_type="application/pdf")
 
     resp = client.post(reverse("documents:document_upload"), {"file": upload}, format="multipart")

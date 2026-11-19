@@ -208,6 +208,33 @@ class UserSignatureSerializerTest(TestCase):
             self.assertIsInstance(instance, UserSignature)
 
 
+    def test_large_signature_uploads_are_scaled_down(self):
+        """A phone-photo-sized signature is stored at most 800x400, aspect kept."""
+        from signatures.serializers import UserSignatureSerializer
+        from signatures.utils.signature_images import MAX_SIGNATURE_SIZE
+
+        image_file = io.BytesIO()
+        Image.new('RGB', (1280, 746), color='white').save(image_file, format='PNG')
+        uploaded = SimpleUploadedFile('photo.png', image_file.getvalue(), content_type='image/png')
+
+        class DummyRequest:
+            def __init__(self, user):
+                self.user = user
+
+        serializer = UserSignatureSerializer(
+            data={'image': uploaded, 'is_default': False},
+            context={'request': DummyRequest(self.user)},
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        with self.assertLogs('signatures.serializers', level='WARNING'):
+            instance = serializer.save()
+
+        with instance.image.open('rb') as handle, Image.open(handle) as stored:
+            self.assertLessEqual(stored.width, MAX_SIGNATURE_SIZE[0])
+            self.assertLessEqual(stored.height, MAX_SIGNATURE_SIZE[1])
+            self.assertAlmostEqual(stored.width / stored.height, 1280 / 746, places=1)
+
+
 class UserSignatureAPITest(APITestCase):
     """Test cases for UserSignature API endpoints."""
     

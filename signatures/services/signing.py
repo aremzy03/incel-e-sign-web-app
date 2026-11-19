@@ -15,7 +15,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from documents.services.pdf_files import download_pdf_to_temp, upload_completed_pdf
+from documents.services.pdf_files import copy_completed_pdf, download_pdf_to_temp, upload_completed_pdf
 from envelopes.models import Envelope, EnvelopeDocument
 from envelopes.utils.pdf_security import lock_pdf_with_password
 from signatures.models import Signature, UserSignature
@@ -496,7 +496,17 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
         source_url = document.signed_file_url or document.file_url
         upload_path = None
         temp_download = None
-        if source_url:
+        locked_temp = None
+        if source_url and not (envelope.pdf_password_protection_enabled and final_password):
+            # Nothing to change in the file: copy it inside S3 instead of downloading and re-uploading.
+            try:
+                locked_url = copy_completed_pdf(envelope.id, document.id, source_url)
+            except Exception:
+                LOGGER.exception(
+                    "Server-side copy of completed PDF failed for document %s; uploading instead",
+                    document.id,
+                )
+        if source_url and not locked_url:
             try:
                 if source_url.startswith('/media/') or (
                     not source_url.startswith('http://') and not source_url.startswith('https://')
@@ -508,7 +518,9 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
             except (ValueError, FileNotFoundError):
                 upload_path = None
 
-        if upload_path and os.path.exists(upload_path):
+        if locked_url:
+            pass
+        elif upload_path and os.path.exists(upload_path):
             if envelope.pdf_password_protection_enabled and final_password:
                 locked_path = lock_pdf_with_password(
                     pdf_path=upload_path,
@@ -516,6 +528,13 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
                 )
                 if locked_path:
                     upload_path = locked_path
+                    locked_temp = locked_path
+                else:
+                    LOGGER.error(
+                        "Could not password-protect document %s in envelope %s; storing it unprotected",
+                        document.id,
+                        envelope.id,
+                    )
             try:
                 locked_url = upload_completed_pdf(envelope.id, document.id, upload_path)
             except Exception:
@@ -532,9 +551,11 @@ def complete_envelope(envelope: Envelope, *, notify_creator: bool = True) -> Non
                 source_url,
             )
 
-        if temp_download is not None:
+        for temp_path in (temp_download, locked_temp):
+            if temp_path is None:
+                continue
             try:
-                os.remove(str(temp_download))
+                os.remove(str(temp_path))
             except OSError:
                 pass
 

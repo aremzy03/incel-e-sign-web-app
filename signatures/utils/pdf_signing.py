@@ -1,6 +1,7 @@
 import io
 import os
 import base64
+import logging
 from typing import Tuple
 from urllib.parse import unquote
 
@@ -12,6 +13,8 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import Color, black
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _add_page_with_overlay(writer: PdfWriter, page, overlay_page=None):
@@ -272,6 +275,41 @@ def _draw_text_stamp(c, stamp: dict, page_height: float, convert_y_axis: bool) -
     c.drawString(x, pdf_y, text)
 
 
+# Print resolution for stamped signatures: sharp on paper, a fraction of a phone photo's size.
+SIGNATURE_DPI = 300
+
+
+def _fit_signature_image(image_bytes: bytes, positions: list[dict]) -> bytes:
+    """
+    Scale a signature image down to SIGNATURE_DPI for the largest box it is drawn in.
+
+    Signatures are often camera photos or large canvas exports (1000+ px wide) drawn into
+    a box a couple of inches wide; embedded as is, each one adds hundreds of KB to every
+    signed PDF. Smaller images, and anything that fails to decode, are returned unchanged.
+    """
+    try:
+        from PIL import Image
+
+        widest = max(float(pos["width"]) for pos in positions)
+        tallest = max(float(pos["height"]) for pos in positions)
+        limit = (max(1, round(widest * SIGNATURE_DPI / 72)), max(1, round(tallest * SIGNATURE_DPI / 72)))
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if image.width <= limit[0] and image.height <= limit[1]:
+                return image_bytes
+            scale = min(limit[0] / image.width, limit[1] / image.height)
+            size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+            if image.mode not in ("RGB", "RGBA", "L", "LA"):
+                image = image.convert("RGBA")
+            resized = image.resize(size, Image.LANCZOS)
+            out = io.BytesIO()
+            resized.save(out, format="PNG", optimize=True)
+        smaller = out.getvalue()
+        return smaller if len(smaller) < len(image_bytes) else image_bytes
+    except Exception:  # an image reportlab can still read is better than no signature
+        LOGGER.warning("Could not downscale signature image", exc_info=True)
+        return image_bytes
+
+
 def embed_fields_single_pass(
     pdf_path: str,
     output_path: str,
@@ -301,6 +339,8 @@ def embed_fields_single_pass(
     txt_stamps = text_stamps or []
 
     image_bytes = _decode_signature_image(signature_image) if (sig_positions and signature_image) else None
+    if image_bytes:
+        image_bytes = _fit_signature_image(image_bytes, sig_positions)
 
     with PdfReader(pdf_path) as reader:
         num_pages = len(reader.pages)

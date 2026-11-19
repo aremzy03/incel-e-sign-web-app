@@ -20,8 +20,10 @@ from django.core.files.base import ContentFile
 
 from documents.services.s3_client import get_boto3_s3_client
 from documents.storage import (
+    absolute_s3_key,
     get_permanent_s3_storage,
     get_temp_local_storage,
+    get_unprefixed_s3_storage,
     persistable_storage_url,
     storage_relative_key,
 )
@@ -296,7 +298,8 @@ def delete_storage_url(url: str | None) -> None:
         return
 
     try:
-        get_permanent_s3_storage().delete(storage_relative_key(key))
+        # The full stored key: the file may predate the current AWS_LOCATION prefix.
+        get_unprefixed_s3_storage().delete(key)
     except Exception:
         LOGGER.warning("Failed to delete remote storage file %s", url, exc_info=True)
 
@@ -328,6 +331,41 @@ def upload_completed_pdf(envelope_id, document_id, local_path: str | Path) -> st
     """Upload the final completed PDF for an envelope document."""
     key = build_completed_key(envelope_id, document_id)
     return _upload_file_to_key(local_path, key)
+
+
+def copy_completed_pdf(envelope_id, document_id, source_url: str) -> str | None:
+    """
+    Copy a stored PDF to its completed key inside S3 (no download, no upload).
+
+    Completing an envelope without a password changes no bytes, so this replaces a full
+    download and re-upload with one CopyObject request. Returns None when the source
+    isn't an S3 object (the caller then uploads as before).
+    """
+    if not _use_s3_storage() or not source_url.startswith(("http://", "https://")):
+        return None
+    source_key = resolve_s3_key_from_url(source_url)
+    if not source_key:
+        return None
+    storage = get_permanent_s3_storage()
+    name = storage.get_available_name(build_completed_key(envelope_id, document_id))
+    target_key = absolute_s3_key(storage_relative_key(name))
+    bucket = settings.AWS_STORAGE_BUCKET_NAME
+    get_boto3_s3_client().copy_object(
+        Bucket=bucket,
+        Key=target_key,
+        CopySource={"Bucket": bucket, "Key": source_key},
+        MetadataDirective="COPY",
+    )
+    url = persistable_storage_url(storage.url(name))
+    # Same bytes, same ETag: the cached copy of the source serves the new key too.
+    entry = _cache_entry(source_url)
+    if entry is not None:
+        try:
+            with open(entry[1], encoding="ascii") as handle:
+                _store_in_cache(url, entry[0], handle.read().strip())
+        except OSError:
+            pass
+    return url
 
 
 def next_signing_version(envelope_id, document_id) -> int:

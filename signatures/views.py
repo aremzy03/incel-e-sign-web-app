@@ -35,6 +35,8 @@ import logging
 
 LOGGER = logging.getLogger(__name__)
 
+SIGNING_IN_PROGRESS_MESSAGE = "Your signature is being applied. You can't decline while it's in progress."
+
 
 class SignDocumentView(APIView):
     """
@@ -237,12 +239,32 @@ class SigningJobRetryView(APIView):
                 "message": f"Only failed jobs can be retried. Current status: {job.status}",
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if job.envelope.status != "pending":
+            return Response({
+                "status": "error",
+                "message": f"Envelope must be in 'pending' status to sign. Current status: {job.envelope.status}",
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         from django.db import transaction
 
         with transaction.atomic():
             job = SigningJob.objects.select_for_update().get(pk=job.pk)
+            if job.status != "failed":
+                return Response({
+                    "status": "success",
+                    "message": "Signing job queued",
+                    "data": signing_job_response_data(job),
+                }, status=status.HTTP_202_ACCEPTED)
             if job.signature_id:
-                Signature.objects.filter(pk=job.signature_id).update(status="processing")
+                signature = Signature.objects.select_for_update().get(pk=job.signature_id)
+                if signature.status != "pending":
+                    # Signed already (or declined): stamping again would add a second signature.
+                    return Response({
+                        "status": "error",
+                        "message": f"This signature is already {signature.status}; there is nothing to retry.",
+                    }, status=status.HTTP_409_CONFLICT)
+                signature.status = "processing"
+                signature.save(update_fields=["status", "updated_at"])
             job.status = "queued"
             job.error_message = ""
             job.completed_at = None
@@ -407,6 +429,12 @@ class DeclineSignatureView(APIView):
                 "status": "error",
                 "message": f"You have already {signature.status} this document."
             }, status=status.HTTP_403_FORBIDDEN) # Changed to 403 Forbidden
+
+        if signature.is_processing:
+            return Response({
+                "status": "error",
+                "message": SIGNING_IN_PROGRESS_MESSAGE,
+            }, status=status.HTTP_409_CONFLICT)
         
         # Validate the request
         serializer = DeclineSignatureSerializer(data=request.data)
@@ -694,15 +722,6 @@ class SignDocumentPublicView(APIView):
         signature_image_data = validated_data.get('signature_image', '')
         user_signature_id = validated_data.get('signature_id')
 
-        field_values = request.data.get('field_values')
-        if isinstance(field_values, dict):
-            for field_id, val in field_values.items():
-                Field.objects.exclude(type__in=SERVER_FILLED_FIELD_TYPES).filter(envelope=envelope, id=field_id, assigned_signer=signature.signer).update(value=val)
-        elif isinstance(field_values, list):
-            for item in field_values:
-                if isinstance(item, dict) and 'id' in item and 'value' in item:
-                    Field.objects.exclude(type__in=SERVER_FILLED_FIELD_TYPES).filter(envelope=envelope, id=item['id'], assigned_signer=signature.signer).update(value=item['value'])
-
         fallback_placement = {
             'page': validated_data.get('page', 1),
             'x': validated_data.get('x', 100),
@@ -719,6 +738,32 @@ class SignDocumentPublicView(APIView):
                     "message": "Document signed successfully",
                     "data": SignatureSerializer(signature).data
                 }, status=status.HTTP_200_OK)
+
+            # A second submit (double click, or two tabs racing past the token check) joins the
+            # job already running instead of queueing another one that would stamp again.
+            active_job = get_active_signing_job(envelope, signature.signer)
+            if active_job or signature.is_processing:
+                job = active_job or SigningJob.objects.filter(
+                    envelope=envelope, signer=signature.signer
+                ).order_by("-created_at").first()
+                return Response({
+                    "status": "success",
+                    "message": "Signing job queued",
+                    "data": signing_job_response_data(job),
+                }, status=status.HTTP_202_ACCEPTED)
+
+            # Field values only change while no job is reading them.
+            field_values = request.data.get('field_values')
+            if isinstance(field_values, dict):
+                items = [{'id': field_id, 'value': val} for field_id, val in field_values.items()]
+            elif isinstance(field_values, list):
+                items = [item for item in field_values if isinstance(item, dict) and 'id' in item and 'value' in item]
+            else:
+                items = []
+            for item in items:
+                Field.objects.exclude(type__in=SERVER_FILLED_FIELD_TYPES).filter(
+                    envelope=envelope, id=item['id'], assigned_signer=signature.signer
+                ).update(value=item['value'])
 
             job = create_and_enqueue_signing_job(
                 envelope=envelope,
@@ -788,6 +833,18 @@ class DeclineSignaturePublicView(APIView):
                 "status": "error",
                 "message": "No signature assignment found for this recipient."
             }, status=status.HTTP_403_FORBIDDEN)
+
+        if signature.is_signed or signature.is_declined:
+            return Response({
+                "status": "error",
+                "message": f"You have already {signature.status} this document."
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if signature.is_processing:
+            return Response({
+                "status": "error",
+                "message": SIGNING_IN_PROGRESS_MESSAGE,
+            }, status=status.HTTP_409_CONFLICT)
 
         decline_message = request.data.get('decline_message', 'Declined via public signing link.')
         signature.status = "declined"
